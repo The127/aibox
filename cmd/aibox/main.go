@@ -1,7 +1,17 @@
+// Command aibox runs Claude Code inside a microVM.
 package main
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/the127/aibox/internal/cli"
+)
 
 func main() {
-	fmt.Println("hello world")
+	if err := cli.NewRootCommand().Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

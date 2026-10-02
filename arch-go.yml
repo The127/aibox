@@ -1,0 +1,36 @@
+# Package dependency rules, checked by
+# `go tool -modfile=hack/tools/go.mod arch-go`. Patterns are regular
+# expressions after arch-go's rewriting, so a single package is anchored
+# with $ and `x.**` covers x and everything below it.
+version: 1
+threshold:
+  compliance: 100
+  coverage: 100
+dependenciesRules:
+  # the version reads what the Go toolchain wrote into the binary and
+  # nothing else
+  - package: '**.internal.version$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      standard:
+        - os
+        - os/exec
+        - net
+        - syscall
+  # the cli defines the commands. It is the only package that knows
+  # urfave/cli
+  - package: '**.internal.cli$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.version$'
+  # a command only runs the root command of the cli, the commands
+  # themselves live in the cli
+  - package: '**.cmd.**'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.cli$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'

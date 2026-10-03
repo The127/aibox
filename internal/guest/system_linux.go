@@ -2,10 +2,14 @@ package guest
 
 import (
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/mdlayher/vsock"
+	"golang.org/x/sys/unix"
 )
 
 // Linux is the System of the running kernel.
@@ -35,6 +39,40 @@ func (Linux) ReadCmdline() (string, error) {
 // OpenConsole opens the terminal for reading and writing.
 func (Linux) OpenConsole(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // the path comes from the kernel command line
+}
+
+// BringLoopbackUp brings the loopback interface up. The kernel then gives it
+// 127.0.0.1 by itself.
+func (Linux) BringLoopbackUp() error {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = unix.Close(fd) }()
+
+	request, err := unix.NewIfreq("lo")
+	if err != nil {
+		return err
+	}
+
+	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, request); err != nil {
+		return err
+	}
+
+	request.SetUint16(request.Uint16() | unix.IFF_UP)
+
+	return unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, request)
+}
+
+// Listen listens on a TCP address.
+func (Linux) Listen(address string) (net.Listener, error) {
+	return net.Listen("tcp", address)
+}
+
+// DialHost connects to the host over vsock.
+func (Linux) DialHost(port uint32) (net.Conn, error) {
+	return vsock.Dial(vsock.Host, port, nil)
 }
 
 // Sethostname sets the hostname of the VM.

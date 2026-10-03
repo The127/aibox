@@ -5,13 +5,18 @@
 package guest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/the127/aibox/internal/tunnel"
 )
 
 const (
@@ -30,16 +35,32 @@ const (
 	// the tags of the shares, as the host names them
 	projectShare = "project"
 	homeShare    = "home"
+
+	// where Claude Code finds the proxy inside the VM
+	guestProxyAddress = "127.0.0.1:3128"
 )
+
+// ErrBadProxyPort is a kernel command line whose aibox.proxy word is not a
+// vsock port.
+var ErrBadProxyPort = errors.New("aibox.proxy is not a port")
 
 // Options come from the kernel command line.
 type Options struct {
-	Console string
-	Shell   bool
+	Console   string
+	Shell     bool
+	ProxyPort uint32
+}
+
+// Network is what the proxy side of the VM needs from the kernel.
+type Network interface {
+	BringLoopbackUp() error
+	Listen(address string) (net.Listener, error)
+	DialHost(port uint32) (net.Conn, error)
 }
 
 // System is what Run needs from the kernel.
 type System interface {
+	Network
 	Mount(source, target, fstype string, flags uintptr, data string) error
 	Symlink(target, path string) error
 	ReadCmdline() (string, error)
@@ -90,9 +111,12 @@ var (
 )
 
 // ParseCmdline reads the options from the kernel command line. The last
-// console= word wins.
-func ParseCmdline(cmdline string) Options {
+// console= word wins. A word that cannot be read is left out of the options
+// and reported in the error.
+func ParseCmdline(cmdline string) (Options, error) {
 	options := Options{Console: "/dev/console"}
+
+	var err error
 
 	for _, word := range strings.Fields(cmdline) {
 		key, value, _ := strings.Cut(word, "=")
@@ -104,10 +128,23 @@ func ParseCmdline(cmdline string) Options {
 			}
 		case "aibox.shell":
 			options.Shell = true
+		case "aibox.proxy":
+			options.ProxyPort, err = parsePort(value)
 		}
 	}
 
-	return options
+	return options, err
+}
+
+// parsePort reads a vsock port. 0 and the highest value are not ports a
+// listener can have.
+func parsePort(value string) (uint32, error) {
+	port, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || port == 0 || port == 0xFFFFFFFF {
+		return 0, fmt.Errorf("%w: %q", ErrBadProxyPort, value)
+	}
+
+	return uint32(port), nil
 }
 
 // Command is Claude Code, or a shell when the options ask for one, set up to
@@ -128,6 +165,18 @@ func Command(options Options, console *os.File) *exec.Cmd {
 		"TERM=xterm-256color",
 		"LANG=C.UTF-8",
 	}
+
+	// the proxy speaks CONNECT only, which is how HTTPS goes through a proxy.
+	// Tools like curl read the lower case names.
+	if options.ProxyPort != 0 {
+		cmd.Env = append(cmd.Env,
+			"HTTPS_PROXY=http://"+guestProxyAddress,
+			"https_proxy=http://"+guestProxyAddress,
+			"NO_PROXY=localhost,127.0.0.1",
+			"no_proxy=localhost,127.0.0.1",
+		)
+	}
+
 	cmd.Stdin = console
 	cmd.Stdout = console
 	cmd.Stderr = console
@@ -139,6 +188,28 @@ func Command(options Options, console *os.File) *exec.Cmd {
 	}
 
 	return cmd
+}
+
+// Forward joins each client of the listener with a connection from dial. A
+// client whose dial fails gets a 502 and the failure goes to the log. Forward
+// returns when the context ends.
+func Forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, error), log io.Writer) error {
+	return tunnel.Serve(ctx, listener, func(ctx context.Context, client net.Conn) {
+		host, err := dial()
+		if err != nil {
+			say(log, "aibox: connect to the proxy on the host: %v\n", err)
+			_, _ = io.WriteString(client, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+
+			return
+		}
+
+		defer func() { _ = host.Close() }()
+
+		stop := context.AfterFunc(ctx, func() { _ = host.Close() })
+		defer stop()
+
+		tunnel.Join(client, host)
+	})
 }
 
 // Run sets the VM up, runs the command until it exits and powers off. The
@@ -172,11 +243,15 @@ func setup(sys System) (*os.File, Options, error) {
 		return nil, Options{}, fmt.Errorf("read the kernel command line: %w", err)
 	}
 
-	options := ParseCmdline(cmdline)
+	options, badWord := ParseCmdline(cmdline)
 
 	console, err := sys.OpenConsole(options.Console)
 	if err != nil {
 		return nil, options, fmt.Errorf("open the console %s: %w", options.Console, err)
+	}
+
+	if badWord != nil {
+		say(console, "aibox: %v\n", badWord)
 	}
 
 	for _, m := range mounts {
@@ -195,7 +270,37 @@ func setup(sys System) (*os.File, Options, error) {
 		say(console, "aibox: set the hostname: %v\n", err)
 	}
 
+	if options.ProxyPort != 0 {
+		if err := startProxy(sys, options.ProxyPort, console); err != nil {
+			return console, options, err
+		}
+	}
+
 	return console, options, nil
+}
+
+// startProxy listens on the proxy address of the VM and forwards each
+// connection to the proxy on the host over vsock.
+func startProxy(network Network, port uint32, console io.Writer) error {
+	if err := network.BringLoopbackUp(); err != nil {
+		return fmt.Errorf("bring the loopback interface up: %w", err)
+	}
+
+	listener, err := network.Listen(guestProxyAddress)
+	if err != nil {
+		return fmt.Errorf("listen for the proxy on %s: %w", guestProxyAddress, err)
+	}
+
+	dial := func() (net.Conn, error) { return network.DialHost(port) }
+
+	// the forwarder lives as long as the VM
+	go func() {
+		if err := Forward(context.Background(), listener, dial, console); err != nil {
+			say(console, "aibox: the proxy forwarder stopped: %v\n", err)
+		}
+	}()
+
+	return nil
 }
 
 // supervise runs the command and reaps every child until the command

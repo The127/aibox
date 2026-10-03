@@ -3,12 +3,20 @@
 package guest_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,15 +33,30 @@ func TestParseCmdline(t *testing.T) {
 		"console=ttyS0 aibox.shell=1 panic=-1": {Console: "/dev/ttyS0", Shell: true},
 		"console=tty0 console=ttyS0,115200n8":  {Console: "/dev/ttyS0"},
 		"console= quiet":                       {Console: "/dev/console"},
+		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
 	}
 
 	for cmdline, want := range tests {
 		t.Run(cmdline, func(t *testing.T) {
 			// act
-			options := guest.ParseCmdline(cmdline)
+			options, err := guest.ParseCmdline(cmdline)
 
 			// assert
+			require.NoError(t, err)
 			assert.Equal(t, want, options)
+		})
+	}
+}
+
+func TestParseCmdlineRejectsABadProxyPort(t *testing.T) {
+	for _, value := range []string{"x", "0", "4294967295", "99999999999", ""} {
+		t.Run(value, func(t *testing.T) {
+			// act
+			options, err := guest.ParseCmdline("console=ttyS0 aibox.proxy=" + value)
+
+			// assert
+			assert.ErrorIs(t, err, guest.ErrBadProxyPort)
+			assert.Equal(t, guest.Options{Console: "/dev/ttyS0"}, options)
 		})
 	}
 }
@@ -59,6 +82,215 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	assert.Same(t, tty, cmd.Stdin)
 	assert.Same(t, tty, cmd.Stdout)
 	assert.Same(t, tty, cmd.Stderr)
+}
+
+func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name(), ProxyPort: 4321}, tty)
+
+	// assert
+	assert.Contains(t, cmd.Env, "HTTPS_PROXY=http://127.0.0.1:3128")
+	assert.Contains(t, cmd.Env, "https_proxy=http://127.0.0.1:3128")
+	assert.Contains(t, cmd.Env, "NO_PROXY=localhost,127.0.0.1")
+	assert.Contains(t, cmd.Env, "no_proxy=localhost,127.0.0.1")
+}
+
+func TestCommandWithoutAProxy(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty)
+
+	// assert
+	require.NotEmpty(t, cmd.Env)
+
+	for _, variable := range cmd.Env {
+		assert.NotContains(t, strings.ToUpper(variable), "PROXY")
+	}
+}
+
+// forwarder runs Forward on a listener of its own and returns the address
+// to connect to, the log and a function that stops it.
+func forwarder(t *testing.T, dial func() (net.Conn, error)) (string, *strings.Builder, func() error) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	var log strings.Builder
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- guest.Forward(ctx, listener, dial, &log) }()
+
+	stop := func() error {
+		cancel()
+
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("Forward did not return")
+
+			return nil
+		}
+	}
+
+	return listener.Addr().String(), &log, stop
+}
+
+func dialWithDeadline(t *testing.T, address string) net.Conn {
+	t.Helper()
+
+	conn, err := net.Dial("tcp", address)
+	require.NoError(t, err)
+	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
+}
+
+func TestForwardJoinsEachClientWithTheHost(t *testing.T) {
+	// arrange
+	hostSide, forwarderSide := net.Pipe()
+	address, _, stop := forwarder(t, func() (net.Conn, error) { return forwarderSide, nil })
+	t.Cleanup(func() { assert.NoError(t, stop()) })
+	client := dialWithDeadline(t, address)
+
+	// act
+	go func() { _, _ = io.WriteString(client, "to the host") }()
+
+	toHost := make([]byte, 11)
+	_, err := io.ReadFull(hostSide, toHost)
+	require.NoError(t, err)
+
+	go func() { _, _ = io.WriteString(hostSide, "to the client") }()
+
+	toClient := make([]byte, 13)
+	_, err = io.ReadFull(client, toClient)
+	require.NoError(t, err)
+
+	// assert
+	assert.Equal(t, "to the host", string(toHost))
+	assert.Equal(t, "to the client", string(toClient))
+}
+
+func TestForwardAnswersWith502WhenTheHostCannotBeReached(t *testing.T) {
+	// arrange
+	address, log, stop := forwarder(t, func() (net.Conn, error) { return nil, errors.New("vsock is down") })
+	t.Cleanup(func() { assert.NoError(t, stop()) })
+	client := dialWithDeadline(t, address)
+
+	// act
+	answer, err := io.ReadAll(client)
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(answer), "HTTP/1.1 502 Bad Gateway\r\n"), string(answer))
+	assert.Contains(t, log.String(), "vsock is down")
+}
+
+func TestForwardClosesTheTunnelsWhenTheContextEnds(t *testing.T) {
+	// arrange
+	hostSide, forwarderSide := net.Pipe()
+	address, _, stop := forwarder(t, func() (net.Conn, error) { return forwarderSide, nil })
+	client := dialWithDeadline(t, address)
+
+	go func() { _, _ = io.WriteString(client, "hello") }()
+
+	_, err := io.ReadFull(hostSide, make([]byte, 5))
+	require.NoError(t, err)
+
+	// act
+	err = stop()
+
+	// assert
+	require.NoError(t, err)
+
+	_, err = client.Read(make([]byte, 1))
+	assert.Error(t, err)
+}
+
+func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=4321"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.calls, "loopback up")
+	assert.Contains(t, sys.calls, "start /usr/local/bin/claude")
+
+	listen := slices.Index(sys.calls, "listen 127.0.0.1:3128")
+	require.NotEqual(t, -1, listen)
+	assert.Less(t, listen, slices.Index(sys.calls, "start /usr/local/bin/claude"))
+
+	// the forwarder is running on the listener and dials the host port
+	client := dialWithDeadline(t, sys.listener.Addr().String())
+	answer, err := io.ReadAll(client)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(answer), "HTTP/1.1 502"), string(answer))
+	assert.Eventually(t, func() bool { return slices.Contains(sys.callsCopy(), "dial host 4321") }, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=4321", failLoopback: errors.New("not permitted")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "loopback")
+	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.Equal(t, "poweroff", lastCall(t, sys))
+}
+
+func TestRunReportsABadProxyPortAndGoesOnWithoutAProxy(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=x"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.consoleOutput(), "aibox.proxy")
+	assert.NotContains(t, sys.calls, "listen 127.0.0.1:3128")
+	assert.Contains(t, sys.calls, "start /usr/local/bin/claude")
+}
+
+func TestRunWithoutAProxy(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "console=ttyS0"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.calls, "loopback up")
+	assert.NotContains(t, sys.calls, "listen 127.0.0.1:3128")
+}
+
+func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=4321", failListen: errors.New("address in use")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "address in use")
+	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.Equal(t, "poweroff", lastCall(t, sys))
 }
 
 func TestCommandRunsAShellWhenAsked(t *testing.T) {
@@ -259,7 +491,11 @@ type fakeSystem struct {
 	orphans      int
 	waits        int
 	child        int
+	listener     net.Listener
+	mu           sync.Mutex
 	failMount    string
+	failLoopback error
+	failListen   error
 	failOpen     error
 	failHostname error
 	failStart    error
@@ -309,6 +545,51 @@ func (s *fakeSystem) OpenConsole(path string) (*os.File, error) {
 	s.tty = newConsoleFile(s.t)
 
 	return s.tty, nil
+}
+
+func (s *fakeSystem) BringLoopbackUp() error {
+	s.record("loopback up")
+
+	return s.failLoopback
+}
+
+// Listen listens on a free port instead of the proxy address, so that the
+// tests do not take port 3128 on the machine they run on.
+func (s *fakeSystem) Listen(address string) (net.Listener, error) {
+	s.record("listen " + address)
+
+	if s.failListen != nil {
+		return nil, s.failListen
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(s.t, err)
+	s.t.Cleanup(func() { _ = listener.Close() })
+	s.listener = listener
+
+	return listener, nil
+}
+
+func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
+	s.record(fmt.Sprintf("dial host %d", port))
+
+	return nil, errors.New("no host in the test")
+}
+
+// record is for the calls the forwarder goroutine makes while the test reads
+// the list.
+func (s *fakeSystem) record(call string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.calls = append(s.calls, call)
+}
+
+func (s *fakeSystem) callsCopy() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return slices.Clone(s.calls)
 }
 
 func (s *fakeSystem) Sethostname(name string) error {

@@ -53,12 +53,15 @@ dependenciesRules:
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
-  # the cli defines the commands. It is the only package that knows
-  # urfave/cli
+  # the cli defines the commands and wires the other packages together.
+  # It is the only package that knows urfave/cli
   - package: '**.internal.cli$'
     shouldOnlyDependsOn:
       internal:
         - '**.internal.version$'
+        - '**.internal.project$'
+        - '**.internal.launch$'
+        - '**.internal.vm$'
   # a command only runs the root command of the cli, the commands
   # themselves live in the cli
   - package: '**.cmd.**'

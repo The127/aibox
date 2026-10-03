@@ -10,6 +10,11 @@ build:
 image:
     miso build -o out image
 
+# copy the VM image to where aibox run looks for it
+install-image: image
+    mkdir -p ~/.aibox/image
+    cp --reflink=auto out/vmlinuz out/os.ext4 ~/.aibox/image/
+
 # test
 test:
     go test -race ./...

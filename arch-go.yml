@@ -62,12 +62,25 @@ dependenciesRules:
         - '**.internal.project$'
         - '**.internal.launch$'
         - '**.internal.vm$'
+  # the guest is the init of the VM. It knows nothing of the host side
+  - package: '**.internal.guest$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # a command only runs the root command of the cli, the commands
   # themselves live in the cli
-  - package: '**.cmd.**'
+  - package: '**.cmd.aibox$'
     shouldOnlyDependsOn:
       internal:
         - '**.internal.cli$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
+  # the init only runs the guest
+  - package: '**.cmd.aibox-init$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.guest$'

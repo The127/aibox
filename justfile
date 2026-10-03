@@ -6,6 +6,10 @@ default:
 build:
     CGO_ENABLED=0 go build -o bin/aibox ./cmd/aibox
 
+# build the VM image into out/
+image:
+    miso build -o out image
+
 # test
 test:
     go test -race ./...

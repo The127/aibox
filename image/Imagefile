@@ -1,0 +1,56 @@
+# The VM aibox runs Claude Code in, booted on QEMU's microvm machine without
+# an initrd and without systemd.
+#
+#   miso build -o out image
+#
+# leaves out/vmlinuz and out/os.ext4.
+
+FROM debian:sid AS kernel
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential bc bison flex libelf-dev libssl-dev cpio xz-utils linux-source
+RUN mkdir /src && tar -xf /usr/src/linux-source-*.tar.xz -C /src && mv /src/linux-source-* /src/linux
+
+COPY kernel.config /src/kernel.config
+RUN cd /src/linux && make x86_64_defconfig && \
+    scripts/kconfig/merge_config.sh -m .config /src/kernel.config && make olddefconfig
+# merge_config.sh only warns about an option it could not set
+RUN cd /src/linux && grep '^CONFIG_.*=y$' /src/kernel.config | while read -r option; do \
+      grep -qx "$option" .config || { echo "$option did not stick"; exit 1; }; \
+    done
+RUN cd /src/linux && make -j"$(nproc)" bzImage
+
+OUTPUT kernel vmlinuz --path=/src/linux/arch/x86/boot/bzImage
+
+# The programs of the VM, each collected with the libraries it loads into a
+# tree of its own under /out.
+FROM debian:sid AS tools
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      pax-utils busybox-static bash git ca-certificates curl
+# The installer puts Claude Code in the home directory.
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
+
+RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
+RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
+RUN lddtree --copy-to-tree /out/claude /usr/local/bin/claude
+
+FROM scratch
+
+# busybox gives the stage a shell, so the RUN steps below work.
+COPY --from=tools /bin/busybox /bin/busybox
+COPY sh /bin/sh
+RUN /bin/busybox --install -s /bin
+RUN mkdir -p /run /tmp /root /project
+
+COPY --from=tools /out/bash/ /
+COPY --from=tools /out/git/ /
+COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
+COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
+COPY --from=tools /out/claude/ /
+COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY passwd group /etc/
+COPY init /sbin/init
+
+OUTPUT rootfs os.ext4

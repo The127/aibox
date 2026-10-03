@@ -53,6 +53,14 @@ dependenciesRules:
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
+  # the proxy only knows net. Where its listener comes from is not its business
+  - package: '**.internal.proxy$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the cli defines the commands and wires the other packages together.
   # It is the only package that knows urfave/cli
   - package: '**.internal.cli$'

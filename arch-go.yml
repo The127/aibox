@@ -19,6 +19,20 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # the vm only builds command lines. Starting the programs happens
+  # elsewhere
+  - package: '**.internal.vm$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os
+        - os/exec
+        - net
+        - syscall
   # the cli defines the commands. It is the only package that knows
   # urfave/cli
   - package: '**.internal.cli$'

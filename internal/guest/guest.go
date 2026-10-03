@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/the127/aibox/internal/tunnel"
+	"github.com/the127/aibox/internal/vm"
 )
 
 const (
@@ -26,11 +27,6 @@ const (
 	claude   = "/usr/local/bin/claude"
 	bash     = "/usr/bin/bash"
 	userName = "user"
-
-	// the user of image/passwd, with the ID the project files have on the
-	// host
-	uid uint32 = 1000
-	gid uint32 = 1000
 
 	// the tags of the shares, as the host names them
 	projectShare = "project"
@@ -181,7 +177,7 @@ func Command(options Options, console *os.File) *exec.Cmd {
 	cmd.Stdout = console
 	cmd.Stderr = console
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: uid, Gid: gid},
+		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
 		Setsid:     true,
 		Setctty:    true,
 		Ctty:       0,

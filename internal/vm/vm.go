@@ -2,15 +2,23 @@
 package vm
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+)
+
+// GuestUID and GuestGID are the user Claude Code runs as in the VM.
+const (
+	GuestUID uint32 = 1000
+	GuestGID uint32 = 1000
 )
 
 const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1"
 
 // Machine is a VM that boots a kernel with a root disk. Shell boots it into
 // a shell instead of Claude Code. ProxyPort is the vsock port of the proxy
-// on the host, and 0 means there is none.
+// on the host, and 0 means there is none. Owner is the host user the VM
+// user stands for in the shares, and nil leaves the ids as they are.
 type Machine struct {
 	Kernel    string
 	Rootfs    string
@@ -20,6 +28,14 @@ type Machine struct {
 	GuestCID  uint32
 	Shell     bool
 	ProxyPort uint32
+	Owner     *Owner
+}
+
+// Owner is a user on the host. In the shares, the VM user sees this user's
+// files as its own. Files of other host users appear as nobody.
+type Owner struct {
+	UID uint32
+	GID uint32
 }
 
 // Share is a host folder that virtiofsd serves to the VM. The guest mounts it
@@ -74,12 +90,25 @@ func (m Machine) cmdline() string {
 	return strings.Join(words, " ")
 }
 
-// VirtiofsdArgs returns the arguments for virtiofsd.
-func (s Share) VirtiofsdArgs() []string {
-	return []string{
+// VirtiofsdArgs returns the arguments for virtiofsd that serve the share to
+// the VM user standing for the owner.
+func (s Share) VirtiofsdArgs(owner *Owner) []string {
+	args := []string{
 		"--socket-path=" + s.Socket,
 		"--shared-dir=" + s.Dir,
 	}
+
+	if owner == nil {
+		return args
+	}
+
+	// virtiofsd takes one flag per direction
+	return append(args,
+		fmt.Sprintf("--translate-uid=guest:%d:%d:1", GuestUID, owner.UID),
+		fmt.Sprintf("--translate-uid=host:%d:%d:1", owner.UID, GuestUID),
+		fmt.Sprintf("--translate-gid=guest:%d:%d:1", GuestGID, owner.GID),
+		fmt.Sprintf("--translate-gid=host:%d:%d:1", owner.GID, GuestGID),
+	)
 }
 
 // escape doubles commas, because QEMU separates the parts of an option value

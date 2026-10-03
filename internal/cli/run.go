@@ -82,6 +82,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer func() { _ = log.Close() }()
 
+	owner := deps.owner()
+
 	machine := vm.Machine{
 		Kernel:    kernel,
 		Rootfs:    rootfs,
@@ -91,6 +93,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 			{Tag: "project", Dir: cwd},
 			{Tag: "home", Dir: p.Home},
 		},
+		Owner:    &owner,
 		GuestCID: randomCID(),
 		Shell:    cmd.Bool("shell"),
 	}

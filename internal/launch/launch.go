@@ -65,7 +65,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	machine.Shares = withSockets(machine.Shares, sockets)
 
-	died, stopDaemons, err := startDaemons(machine.Shares, options)
+	died, stopDaemons, err := startDaemons(machine.Shares, machine.Owner, options)
 	defer stopDaemons()
 
 	if err != nil {
@@ -91,7 +91,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 // startDaemons starts virtiofsd for each share. The channel gets the exit
 // of each daemon, and the returned function stops the daemons and waits
 // for them.
-func startDaemons(shares []vm.Share, options Options) (<-chan error, func(), error) {
+func startDaemons(shares []vm.Share, owner *vm.Owner, options Options) (<-chan error, func(), error) {
 	// the daemons stop after QEMU, not with it, so a cancelled context ends
 	// QEMU first
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +106,7 @@ func startDaemons(shares []vm.Share, options Options) (<-chan error, func(), err
 	died := make(chan error, len(shares))
 
 	for _, share := range shares {
-		daemon := command(ctx, options.Virtiofsd, share.VirtiofsdArgs())
+		daemon := command(ctx, options.Virtiofsd, share.VirtiofsdArgs(owner))
 		daemon.Stderr = options.Stderr
 		// a Ctrl-C from the terminal reaches QEMU alone
 		daemon.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -17,6 +17,7 @@ import (
 type dependencies struct {
 	getwd    func() (string, error)
 	aiboxDir func() (string, error)
+	owner    func() vm.Owner
 	run      func(ctx context.Context, machine vm.Machine, options launch.Options) error
 }
 
@@ -25,6 +26,7 @@ func NewRootCommand() *cli.Command {
 	return newRootCommand(dependencies{
 		getwd:    os.Getwd,
 		aiboxDir: aiboxDir,
+		owner:    owner,
 		run:      launch.Run,
 	})
 }
@@ -36,6 +38,10 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Version:  version.Get(),
 		Commands: []*cli.Command{runCommand(deps)},
 	}
+}
+
+func owner() vm.Owner {
+	return vm.Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())} //nolint:gosec // never negative on Linux
 }
 
 func aiboxDir() (string, error) {

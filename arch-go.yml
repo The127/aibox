@@ -96,6 +96,7 @@ dependenciesRules:
     shouldOnlyDependsOn:
       internal:
         - '**.internal.tunnel$'
+        - '**.internal.vm$'
     shouldNotDependsOn:
       internal:
         - '**.cmd.**'

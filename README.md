@@ -3,7 +3,8 @@
 Run Claude Code inside a microVM, with your project folder mounted into it.
 
 - The VM runs on QEMU's microvm machine type.
-- The project folder is shared into the VM with virtio-fs.
+- The project folder is shared into the VM with virtio-fs. Your user on the
+  host is the user inside the VM.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
   host, which only lets through hosts on an allowlist.
 - Settings for each project live outside the project, in
@@ -36,8 +37,6 @@ Not there yet:
   the host's own loopback or LAN is reached.
 - There is no way to pass secrets into the VM. You log in with
   `claude /login` inside it.
-- The VM user has uid 1000. On a host where your uid differs, the guest
-  cannot write the project folder.
 - Memory and CPUs are flags of `aibox run`, not settings in `config.yaml`.
 
 ## Contributing

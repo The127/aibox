@@ -61,6 +61,7 @@ func newFixture(t *testing.T) *fixture {
 	f.deps = dependencies{
 		getwd:    func() (string, error) { return f.cwd, nil },
 		aiboxDir: func() (string, error) { return f.aiboxDir, nil },
+		owner:    func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
 		run:      f.launch.run,
 	}
 
@@ -128,6 +129,7 @@ func TestRunSharesTheProjectAndItsHome(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, []vm.Share{{Tag: "project", Dir: f.cwd}, {Tag: "home", Dir: home}}, f.launch.machine.Shares)
+	assert.Equal(t, &vm.Owner{UID: 1234, GID: 100}, f.launch.machine.Owner)
 	assert.DirExists(t, home)
 }
 

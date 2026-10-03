@@ -125,11 +125,41 @@ func TestVirtiofsdArgs(t *testing.T) {
 	share := vm.Share{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"}
 
 	// act
-	args := share.VirtiofsdArgs()
+	args := share.VirtiofsdArgs(nil)
 
 	// assert
 	assert.Equal(t, []string{
 		"--socket-path=/run/aibox/project.sock",
 		"--shared-dir=/home/someone/project",
 	}, args)
+}
+
+func TestVirtiofsdArgsTranslateTheOwnerToTheVMUser(t *testing.T) {
+	// arrange
+	share := vm.Share{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"}
+
+	// act
+	args := share.VirtiofsdArgs(&vm.Owner{UID: 1234, GID: 100})
+
+	// assert
+	assert.Equal(t, []string{
+		"--socket-path=/run/aibox/project.sock",
+		"--shared-dir=/home/someone/project",
+		"--translate-uid=guest:1000:1234:1",
+		"--translate-uid=host:1234:1000:1",
+		"--translate-gid=guest:1000:100:1",
+		"--translate-gid=host:100:1000:1",
+	}, args)
+}
+
+func TestVirtiofsdArgsTranslateRootToo(t *testing.T) {
+	// arrange
+	share := vm.Share{Tag: "project", Dir: "/root/project", Socket: "/run/aibox/project.sock"}
+
+	// act
+	args := share.VirtiofsdArgs(&vm.Owner{})
+
+	// assert
+	assert.Contains(t, args, "--translate-uid=guest:1000:0:1")
+	assert.Contains(t, args, "--translate-gid=host:0:1000:1")
 }

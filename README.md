@@ -15,15 +15,25 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
 
 ## Status
 
-Early work in progress. Nothing runs yet.
+The first version works: `aibox run` in a project folder boots the VM in
+about a second and starts Claude Code in it, with the folder at `/project`
+and a home directory that keeps the login between runs. `aibox run --shell`
+opens a shell in the VM instead.
 
-The first version will:
+```
+just install-image   # build the image and copy it to ~/.aibox/image
+aibox run
+```
 
-- let all traffic through the proxy, as if the allowlist allowed every host;
-- have no way to pass secrets into the VM. You log in by running
-  `claude /login` inside the VM.
+Not there yet:
 
-The allowlist and secrets come later.
+- The proxy lets every host through, including services on the host's own
+  loopback. The allowlist comes next.
+- There is no way to pass secrets into the VM. You log in with
+  `claude /login` inside it.
+- The VM user has uid 1000. On a host where your uid differs, the guest
+  cannot write the project folder.
+- The per-project `config.yaml` does not exist yet.
 
 ## Contributing
 

@@ -33,6 +33,18 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # the project only manages folders on the host
+  - package: '**.internal.project$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os/exec
+        - net
+        - syscall
   # the cli defines the commands. It is the only package that knows
   # urfave/cli
   - package: '**.internal.cli$'

@@ -4,10 +4,13 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -26,6 +29,26 @@ type Options struct {
 	Allow func(host string) bool
 	// OnRefused is called with the host name of each refused request.
 	OnRefused func(host string)
+	// Resolve looks a host name up. Nil uses the system resolver.
+	Resolve func(ctx context.Context, host string) ([]net.IP, error)
+}
+
+// errNotPublic is a name whose addresses all lie in the networks of the
+// machine aibox runs on.
+var errNotPublic = errors.New("no public address")
+
+// notPublic are address ranges that IsGlobalUnicast counts as public but
+// that belong to the machine's own networks or to nobody: 0.0.0.0/8,
+// carrier-grade NAT (which Tailscale uses), and the ranges reserved for
+// documentation and benchmarks.
+var notPublic = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
 }
 
 // Serve accepts connections until the context ends.
@@ -40,14 +63,18 @@ func Serve(ctx context.Context, listener net.Listener, options Options) error {
 func handle(ctx context.Context, conn net.Conn, options Options) {
 	reader := bufio.NewReader(conn)
 
-	target, ok := handshake(conn, reader, options)
+	host, port, ok := handshake(conn, reader, options)
 	if !ok {
 		return
 	}
 
-	dialer := net.Dialer{Timeout: dialTimeout}
+	upstream, err := connect(ctx, host, port, options)
+	if errors.Is(err, errNotPublic) {
+		refuse(conn, host, options)
 
-	upstream, err := dialer.DialContext(ctx, "tcp", target)
+		return
+	}
+
 	if err != nil {
 		writeStatus(conn, http.StatusBadGateway)
 
@@ -72,14 +99,14 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	tunnel.Join(conn, upstream)
 }
 
-// handshake reads the CONNECT request and returns the target to dial. It
-// answers the client itself when there is nothing to dial.
-func handshake(conn net.Conn, reader *bufio.Reader, options Options) (string, bool) {
+// handshake reads the CONNECT request and returns the host and port to
+// reach. It answers the client itself when there is nothing to reach.
+func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port string, ok bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 
 	request, err := http.ReadRequest(reader)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 
 	_ = conn.SetReadDeadline(time.Time{})
@@ -87,27 +114,94 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (string, bo
 	if request.Method != http.MethodConnect {
 		writeStatus(conn, http.StatusMethodNotAllowed)
 
-		return "", false
+		return "", "", false
 	}
 
-	host, port, err := net.SplitHostPort(request.Host)
+	host, port, err = net.SplitHostPort(request.Host)
 	if err != nil || host == "" || port == "" {
 		writeStatus(conn, http.StatusBadRequest)
 
-		return "", false
+		return "", "", false
 	}
 
 	if options.Allow != nil && !options.Allow(host) {
-		writeStatus(conn, http.StatusForbidden)
+		refuse(conn, host, options)
 
-		if options.OnRefused != nil {
-			options.OnRefused(host)
-		}
-
-		return "", false
+		return "", "", false
 	}
 
-	return request.Host, true
+	return host, port, true
+}
+
+func refuse(conn net.Conn, host string, options Options) {
+	writeStatus(conn, http.StatusForbidden)
+
+	if options.OnRefused != nil {
+		options.OnRefused(host)
+	}
+}
+
+// connect reaches the host on the port. An address in the request is dialed
+// as given. A name is resolved here, and only its public addresses are
+// dialed, so that a name cannot lead into the machine's own networks and a
+// changed DNS answer cannot lead elsewhere than the checked address.
+func connect(ctx context.Context, host, port string, options Options) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+
+	addresses := []net.IP{net.ParseIP(host)}
+	if addresses[0] == nil {
+		resolve := options.Resolve
+		if resolve == nil {
+			resolve = lookup
+		}
+
+		all, err := resolve(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+
+		addresses = slices.DeleteFunc(all, func(ip net.IP) bool { return !isPublic(ip) })
+		if len(addresses) == 0 {
+			return nil, errNotPublic
+		}
+	}
+
+	var (
+		dialer net.Dialer
+		err    error
+	)
+
+	for _, address := range addresses {
+		var conn net.Conn
+
+		conn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(address.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+	}
+
+	return nil, err
+}
+
+func lookup(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
+
+// isPublic says whether an address lies outside the machine's own networks:
+// not loopback, private, link-local, multicast, unspecified or in notPublic.
+func isPublic(ip net.IP) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() {
+		return false
+	}
+
+	return !slices.ContainsFunc(notPublic, func(p netip.Prefix) bool { return p.Contains(addr) })
 }
 
 // RefusalLog returns an OnRefused function that writes each refused host to

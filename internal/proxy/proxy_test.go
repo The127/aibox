@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -235,6 +236,84 @@ func TestRefusalLogWritesEachHostOnce(t *testing.T) {
 	require.Len(t, lines, 2)
 	assert.Regexp(t, `^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ refused "evil.example"$`, lines[0])
 	assert.Contains(t, lines[1], `refused "other.example"`)
+}
+
+// resolveTo is a resolver that answers every name with the addresses.
+func resolveTo(addresses ...string) func(context.Context, string) ([]net.IP, error) {
+	return func(context.Context, string) ([]net.IP, error) {
+		var ips []net.IP
+		for _, address := range addresses {
+			ip := net.ParseIP(address)
+			if ip == nil {
+				panic("not an address: " + address)
+			}
+
+			ips = append(ips, ip)
+		}
+
+		return ips, nil
+	}
+}
+
+func TestServeRefusesANameThatResolvesToTheHostItself(t *testing.T) {
+	// arrange
+	refused := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		Resolve:   resolveTo("127.0.0.1"),
+		OnRefused: func(host string) { refused <- host },
+	})
+
+	// act
+	status, _ := connect(t, address, "evil.example:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
+
+	select {
+	case host := <-refused:
+		assert.Equal(t, "evil.example", host)
+	case <-time.After(timeout):
+		t.Fatal("OnRefused was not called")
+	}
+}
+
+func TestServeRefusesANameThatResolvesToThePrivateNetwork(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{Resolve: resolveTo("10.0.0.5", "192.168.1.1")})
+
+	// act
+	status, _ := connect(t, address, "printer.example:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
+}
+
+func TestServeDialsAListedAddressEvenOnTheHostItself(t *testing.T) {
+	// arrange
+	target := echoAfterEOF(t)
+	host, _, err := net.SplitHostPort(target)
+	require.NoError(t, err)
+
+	address := serve(t, proxy.Options{Allow: func(h string) bool { return h == host }})
+
+	// act
+	status, _ := connect(t, address, target)
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", status)
+}
+
+func TestServeReportsANameItCannotResolve(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{Resolve: func(context.Context, string) ([]net.IP, error) {
+		return nil, errors.New("no such host")
+	}})
+
+	// act
+	status, _ := connect(t, address, "nowhere.example:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 502 Bad Gateway", status)
 }
 
 func TestServeRefusesOtherMethods(t *testing.T) {

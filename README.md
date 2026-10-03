@@ -29,3 +29,7 @@ The allowlist and secrets come later.
 
 Commits use [conventional commits](https://www.conventionalcommits.org/) and
 need a sign-off (`git commit -s`).
+
+## License
+
+aibox is licensed under the [Apache License 2.0](LICENSE).

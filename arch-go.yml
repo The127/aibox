@@ -45,6 +45,14 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # the launch starts virtiofsd and QEMU for a vm.Machine
+  - package: '**.internal.launch$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.vm$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
   # the cli defines the commands. It is the only package that knows
   # urfave/cli
   - package: '**.internal.cli$'

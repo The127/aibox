@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdlayher/vsock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/launch"
@@ -60,22 +61,24 @@ func (b *syncBuffer) String() string {
 // fakeProcesses are links to the test binary named after the programs Run
 // starts. The fakes write what they were started with into records.
 type fakeProcesses struct {
-	qemu      string
-	virtiofsd string
-	records   string
+	qemu          string
+	virtiofsd     string
+	records       string
+	proxyListener chan net.Listener
 }
 
-func fakes(t *testing.T) fakeProcesses {
+func fakes(t *testing.T) *fakeProcesses {
 	t.Helper()
 
 	dir := t.TempDir()
 	self, err := os.Executable()
 	require.NoError(t, err)
 
-	f := fakeProcesses{
-		qemu:      filepath.Join(dir, "qemu"),
-		virtiofsd: filepath.Join(dir, "virtiofsd"),
-		records:   filepath.Join(dir, "records"),
+	f := &fakeProcesses{
+		qemu:          filepath.Join(dir, "qemu"),
+		virtiofsd:     filepath.Join(dir, "virtiofsd"),
+		records:       filepath.Join(dir, "records"),
+		proxyListener: make(chan net.Listener, 1),
 	}
 
 	require.NoError(t, os.Symlink(self, f.qemu))
@@ -86,11 +89,65 @@ func fakes(t *testing.T) fakeProcesses {
 	return f
 }
 
-func (f fakeProcesses) options() launch.Options {
-	return launch.Options{QEMU: f.qemu, Virtiofsd: f.virtiofsd, Stdout: io.Discard, SocketTimeout: 5 * time.Second}
+// options use a TCP listener in place of vsock, so that the tests run on a
+// machine without vsock.
+func (f *fakeProcesses) options() launch.Options {
+	return launch.Options{
+		QEMU:          f.qemu,
+		Virtiofsd:     f.virtiofsd,
+		Stdout:        io.Discard,
+		SocketTimeout: 5 * time.Second,
+		ListenVsock:   f.listenTCP,
+	}
 }
 
-func (f fakeProcesses) record(t *testing.T, name string) []string {
+func (f *fakeProcesses) listenTCP() (net.Listener, uint32, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, 0, err
+	}
+
+	f.proxyListener <- listener
+
+	return &fromGuest{Listener: listener}, uint32(listener.Addr().(*net.TCPAddr).Port), nil //nolint:gosec // a TCP port fits
+}
+
+// fromGuest gives every connection the vsock address of the test machine, as
+// a vsock listener would.
+type fromGuest struct {
+	net.Listener
+}
+
+func (l *fromGuest) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+
+	return guestConn{Conn: conn}, nil
+}
+
+type guestConn struct {
+	net.Conn
+}
+
+func (guestConn) RemoteAddr() net.Addr { return &vsock.Addr{ContextID: guestCID, Port: 1} }
+
+// listener is the proxy listener Run opened, or the test fails.
+func (f *fakeProcesses) listener(t *testing.T) net.Listener {
+	t.Helper()
+
+	select {
+	case listener := <-f.proxyListener:
+		return listener
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListenVsock was not called")
+
+		return nil
+	}
+}
+
+func (f *fakeProcesses) record(t *testing.T, name string) []string {
 	t.Helper()
 
 	content, err := os.ReadFile(filepath.Join(f.records, name)) //nolint:gosec // records is a temp folder of the test
@@ -171,12 +228,19 @@ func fakeQEMU(args []string) int {
 	record("qemu-sockets", sockets)
 	record("qemu-missing-sockets", missing)
 
+	for i, arg := range args {
+		if arg == "-append" && i+1 < len(args) {
+			record("qemu-cmdline", strings.Fields(args[i+1]))
+		}
+	}
+
 	fmt.Println("fake qemu ran")
 
 	if os.Getenv("AIBOX_FAKE_QEMU") == "wait" {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, syscall.SIGTERM)
 		<-stop
+		record("qemu-exited", nil)
 	}
 
 	code, _ := strconv.Atoi(os.Getenv("AIBOX_FAKE_QEMU_EXIT"))

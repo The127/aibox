@@ -1,12 +1,16 @@
 package launch_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +23,17 @@ import (
 )
 
 const virtiofsdPath = "/usr/libexec/virtiofsd"
+
+// throughTheProxy is a bash script that connects to the given host:port
+// through the proxy of the VM and sends a line, which the host echoes.
+const throughTheProxy = `exec 3<>/dev/tcp/127.0.0.1/3128
+printf 'CONNECT %[1]s HTTP/1.1\r\nHost: %[1]s\r\n\r\n' >&3
+read -r status <&3
+echo "status=$status"
+while IFS= read -r line <&3; do line=${line%%$'\r'}; [ -z "$line" ] && break; done
+echo ping >&3
+read -r reply <&3
+echo "reply=$reply"`
 
 // console collects what QEMU writes and types a command once the shell
 // prompt shows up.
@@ -74,6 +89,29 @@ func TestRunBootsTheImage(t *testing.T) {
 	project := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(project, "hello"), []byte("hello from the host"), 0o600))
 
+	// a line echo on the host, which the guest reaches through the proxy
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = echo.Close() })
+
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+
+			go func() {
+				defer func() { _ = conn.Close() }()
+
+				line, _ := bufio.NewReader(conn).ReadString('\n')
+				_, _ = io.WriteString(conn, line)
+			}()
+		}
+	}()
+
+	through := strings.ReplaceAll(fmt.Sprintf(throughTheProxy, echo.Addr()), "\n", "; ")
+
 	machine := vm.Machine{
 		Kernel:    filepath.Join(image, "vmlinuz"),
 		Rootfs:    filepath.Join(image, "os.ext4"),
@@ -92,7 +130,7 @@ func TestRunBootsTheImage(t *testing.T) {
 
 	defer func() { _ = input.Close() }()
 
-	out := &console{input: input, command: "cat /project/hello; exit"}
+	out := &console{input: input, command: "cat /project/hello; echo proxy=$HTTPS_PROXY; " + through + "; exit"}
 	options := launch.Options{QEMU: qemu, Virtiofsd: virtiofsdPath, Stdin: stdin, Stdout: out, Stderr: out}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -104,4 +142,7 @@ func TestRunBootsTheImage(t *testing.T) {
 	// assert
 	require.NoError(t, err, out.String())
 	assert.Contains(t, out.String(), "hello from the host")
+	assert.Contains(t, out.String(), "proxy=http://127.0.0.1:3128")
+	assert.Contains(t, out.String(), "status=HTTP/1.1 200 Connection Established")
+	assert.Contains(t, out.String(), "reply=ping")
 }

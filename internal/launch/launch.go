@@ -1,4 +1,5 @@
-// Package launch runs the aibox VM: virtiofsd for each share, then QEMU.
+// Package launch runs the aibox VM: virtiofsd for each share, the proxy for
+// the VM, then QEMU.
 package launch
 
 import (
@@ -6,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mdlayher/vsock"
+
+	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -25,21 +30,27 @@ const (
 	stopDelay            = time.Second
 )
 
-// Options are the programs Run starts and where QEMU reads and writes.
-// Stdin is a file, so that QEMU gets the terminal itself. A zero
-// SocketTimeout means ten seconds.
+// Options are the programs Run starts, where QEMU reads and writes, and how
+// the VM reaches the proxy.
 type Options struct {
-	QEMU          string
-	Virtiofsd     string
-	Stdin         *os.File
-	Stdout        io.Writer
-	Stderr        io.Writer
+	QEMU      string
+	Virtiofsd string
+	Stdin     *os.File
+	Stdout    io.Writer
+	Stderr    io.Writer
+	// SocketTimeout is how long virtiofsd may take to create its socket.
+	// Zero means ten seconds.
 	SocketTimeout time.Duration
+	// ListenVsock opens the listener the VM reaches the proxy on and
+	// returns its port. Nil listens on vsock.
+	ListenVsock func() (net.Listener, uint32, error)
+	Proxy       proxy.Options
 }
 
-// Run boots the machine and returns when QEMU exits, or with the error of
-// the context when it ends first. On return the virtiofsd processes are
-// stopped and their sockets are removed.
+// Run boots the machine with the proxy listening for it and returns when
+// QEMU exits, or with the error of the context when it ends first. On return
+// the proxy and the virtiofsd processes are stopped and their sockets are
+// removed.
 func Run(ctx context.Context, machine vm.Machine, options Options) error {
 	if options.SocketTimeout == 0 {
 		options.SocketTimeout = defaultSocketTimeout
@@ -54,25 +65,54 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	machine.Shares = withSockets(machine.Shares, sockets)
 
-	daemonCtx, stopDaemons := context.WithCancel(ctx)
+	died, stopDaemons, err := startDaemons(machine.Shares, options)
+	defer stopDaemons()
+
+	if err != nil {
+		return err
+	}
+
+	if err := waitForSockets(ctx, machine.Shares, options.SocketTimeout, died); err != nil {
+		return err
+	}
+
+	port, stopProxy, err := serveProxy(ctx, machine.GuestCID, options)
+	if err != nil {
+		return err
+	}
+
+	defer stopProxy()
+
+	machine.ProxyPort = port
+
+	return runQEMU(ctx, machine, options)
+}
+
+// startDaemons starts virtiofsd for each share. The channel gets the exit
+// of each daemon, and the returned function stops the daemons and waits
+// for them.
+func startDaemons(shares []vm.Share, options Options) (<-chan error, func(), error) {
+	// the daemons stop after QEMU, not with it, so a cancelled context ends
+	// QEMU first
+	ctx, cancel := context.WithCancel(context.Background())
 
 	var running sync.WaitGroup
 
-	defer func() {
-		stopDaemons()
+	stop := func() {
+		cancel()
 		running.Wait()
-	}()
+	}
 
-	died := make(chan error, len(machine.Shares))
+	died := make(chan error, len(shares))
 
-	for _, share := range machine.Shares {
-		daemon := command(daemonCtx, options.Virtiofsd, share.VirtiofsdArgs())
+	for _, share := range shares {
+		daemon := command(ctx, options.Virtiofsd, share.VirtiofsdArgs())
 		daemon.Stderr = options.Stderr
 		// a Ctrl-C from the terminal reaches QEMU alone
 		daemon.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		if err := daemon.Start(); err != nil {
-			return fmt.Errorf("start virtiofsd for %s: %w", share.Dir, err)
+			return died, stop, fmt.Errorf("start virtiofsd for %s: %w", share.Dir, err)
 		}
 
 		running.Add(1)
@@ -84,10 +124,39 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		}()
 	}
 
-	if err := waitForSockets(ctx, machine.Shares, options.SocketTimeout, died); err != nil {
-		return err
+	return died, stop, nil
+}
+
+// serveProxy listens for the VM and serves the proxy to it until the
+// returned function is called, which also waits for the proxy to stop.
+func serveProxy(ctx context.Context, cid uint32, options Options) (uint32, func(), error) {
+	listen := options.ListenVsock
+	if listen == nil {
+		listen = listenVsock
 	}
 
+	listener, port, err := listen()
+	if err != nil {
+		return 0, nil, fmt.Errorf("listen for the VM: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+
+	go func() { done <- proxy.Serve(ctx, forGuest(listener, cid), options.Proxy) }()
+
+	stop := func() {
+		cancel()
+
+		if err := <-done; err != nil {
+			_, _ = fmt.Fprintf(options.Stderr, "aibox: the proxy stopped: %v\n", err)
+		}
+	}
+
+	return port, stop, nil
+}
+
+func runQEMU(ctx context.Context, machine vm.Machine, options Options) error {
 	qemu := command(ctx, options.QEMU, machine.QEMUArgs())
 	qemu.Stdin = options.Stdin
 	qemu.Stdout = options.Stdout
@@ -152,4 +221,40 @@ func isSocket(path string) bool {
 	info, err := os.Stat(path)
 
 	return err == nil && info.Mode()&os.ModeSocket != 0
+}
+
+func listenVsock() (net.Listener, uint32, error) {
+	listener, err := vsock.Listen(0, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return listener, listener.Addr().(*vsock.Addr).Port, nil
+}
+
+// forGuest returns a listener that accepts the connections of the VM with
+// the context ID and closes all others. A vsock listener on the host gets
+// the connections of every VM.
+func forGuest(listener net.Listener, cid uint32) net.Listener {
+	return &guestListener{Listener: listener, cid: cid}
+}
+
+type guestListener struct {
+	net.Listener
+	cid uint32
+}
+
+func (l *guestListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+
+		if addr, ok := conn.RemoteAddr().(*vsock.Addr); ok && addr.ContextID == l.cid {
+			return conn, nil
+		}
+
+		_ = conn.Close()
+	}
 }

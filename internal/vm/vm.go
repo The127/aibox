@@ -8,7 +8,9 @@ import (
 
 const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1"
 
-// Machine is a VM that boots a kernel with a root disk.
+// Machine is a VM that boots a kernel with a root disk. Shell boots it into
+// a shell instead of Claude Code. ProxyPort is the vsock port of the proxy
+// on the host, and 0 means there is none.
 type Machine struct {
 	Kernel    string
 	Rootfs    string
@@ -17,6 +19,7 @@ type Machine struct {
 	Shares    []Share
 	GuestCID  uint32
 	Shell     bool
+	ProxyPort uint32
 }
 
 // Share is a host folder that virtiofsd serves to the VM. The guest mounts it
@@ -59,11 +62,16 @@ func (m Machine) QEMUArgs() []string {
 }
 
 func (m Machine) cmdline() string {
+	words := []string{baseCmdline}
 	if m.Shell {
-		return baseCmdline + " aibox.shell"
+		words = append(words, "aibox.shell")
 	}
 
-	return baseCmdline
+	if m.ProxyPort != 0 {
+		words = append(words, "aibox.proxy="+strconv.FormatUint(uint64(m.ProxyPort), 10))
+	}
+
+	return strings.Join(words, " ")
 }
 
 // VirtiofsdArgs returns the arguments for virtiofsd.

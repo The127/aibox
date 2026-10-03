@@ -10,7 +10,7 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   `~/.aibox/projects/<escaped path>/config.yaml`, so the VM can't change them.
 - The VM's home directory is `~/.aibox/projects/<escaped path>/home/`, shared
   into the VM over virtio-fs, so `~/.claude` and the login survive restarts.
-- The VM image (kernel, initrd and root disk) is built with
+- The VM image (kernel and root disk) is built with
   [miso](https://github.com/The127/miso).
 
 ## Status

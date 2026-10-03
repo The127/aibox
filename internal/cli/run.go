@@ -87,8 +87,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	machine := vm.Machine{
 		Kernel:    kernel,
 		Rootfs:    rootfs,
-		MemoryMiB: cmd.Int("memory"),
-		CPUs:      cmd.Int("cpus"),
+		MemoryMiB: flagOrConfig(cmd, "memory", cfg.Memory),
+		CPUs:      flagOrConfig(cmd, "cpus", cfg.CPUs),
 		Shares: []vm.Share{
 			{Tag: "project", Dir: cwd},
 			{Tag: "home", Dir: p.Home},
@@ -113,6 +113,17 @@ func launchOptions(cfg config.Config, log io.Writer) launch.Options {
 			OnRefused: proxy.RefusalLog(log),
 		},
 	}
+}
+
+// flagOrConfig returns the flag if it was given on the command line, else
+// the config value if the file has one, else the default of the flag.
+func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
+	// a flag on the command line is the most deliberate of the three
+	if !cmd.IsSet(flag) && configured != nil {
+		return *configured
+	}
+
+	return cmd.Int(flag)
 }
 
 func imageFiles(dir string) (kernel, rootfs string, err error) {

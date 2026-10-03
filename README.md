@@ -29,7 +29,9 @@ aibox run
 The proxy only lets through the hosts listed under `allow` in
 `~/.aibox/projects/<escaped path>/config.yaml`. The first run writes that
 file with the hosts Claude Code needs. Refused hosts are written to
-`proxy.log` next to it.
+`proxy.log` next to it. The file can also set `memory` (in MiB) and `cpus`
+for the VM. The flags `--memory` and `--cpus` of `aibox run` take precedence
+over the file. Without either, the VM gets 2048 MiB and 2 CPUs.
 
 Not there yet:
 
@@ -37,7 +39,6 @@ Not there yet:
   the host's own loopback or LAN is reached.
 - There is no way to pass secrets into the VM. You log in with
   `claude /login` inside it.
-- Memory and CPUs are flags of `aibox run`, not settings in `config.yaml`.
 
 ## Contributing
 

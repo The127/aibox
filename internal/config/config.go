@@ -17,10 +17,18 @@ import (
 // ErrBadHost is an allow entry that no host name can match.
 var ErrBadHost = errors.New("not a host name")
 
-// Config holds the settings of one project.
+// ErrNotPositive is a memory or cpus setting below one.
+var ErrNotPositive = errors.New("must be at least 1")
+
+// Config holds the settings of one project. Memory and CPUs are nil when
+// the file does not set them.
 type Config struct {
 	// Allow lists the hosts the VM may reach.
 	Allow Hosts `yaml:"allow"`
+	// Memory is the memory of the VM in MiB.
+	Memory *int `yaml:"memory"`
+	// CPUs is the number of CPUs of the VM.
+	CPUs *int `yaml:"cpus"`
 }
 
 // Hosts are host names. An entry of the form *.example.com matches every
@@ -40,6 +48,10 @@ allow:
   - mcp-proxy.anthropic.com   # MCP connectors of a claude.ai account
   - downloads.claude.ai       # update checks
   - code.claude.com           # documentation lookups
+
+# The size of the VM, for example:
+# memory: 4096   # MiB
+# cpus: 4
 `
 
 // Default is the config of a project that has no config file yet.
@@ -117,7 +129,23 @@ func parse(content []byte) (Config, error) {
 		}
 	}
 
+	if err := atLeastOne("memory", cfg.Memory); err != nil {
+		return Config{}, err
+	}
+
+	if err := atLeastOne("cpus", cfg.CPUs); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+func atLeastOne(name string, value *int) error {
+	if value != nil && *value < 1 {
+		return fmt.Errorf("%s %d: %w", name, *value, ErrNotPositive)
+	}
+
+	return nil
 }
 
 // isHost says whether a normalized entry can match a host name. The proxy

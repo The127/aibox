@@ -165,6 +165,35 @@ func TestRunDefaults(t *testing.T) {
 	assert.Equal(t, 2, f.launch.machine.CPUs)
 }
 
+func TestRunTakesTheSizeFromTheConfigUnlessAFlagIsGiven(t *testing.T) {
+	tests := map[string]struct {
+		flags        []string
+		memory, cpus int
+	}{
+		"no flags":                   {nil, 4096, 4},
+		"memory flag":                {[]string{"--memory", "1024"}, 1024, 4},
+		"cpus flag":                  {[]string{"--cpus", "1"}, 4096, 1},
+		"memory flag at its default": {[]string{"--memory", "2048"}, 2048, 4},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.writeConfig(t, "memory: 4096\ncpus: 4\n")
+
+			// act
+			err := f.run(append([]string{"--image", image}, test.flags...)...)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, test.memory, f.launch.machine.MemoryMiB)
+			assert.Equal(t, test.cpus, f.launch.machine.CPUs)
+		})
+	}
+}
+
 func TestRunPicksADifferentCIDEachTime(t *testing.T) {
 	// arrange
 	f := newFixture(t)

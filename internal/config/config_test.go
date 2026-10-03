@@ -63,6 +63,64 @@ func TestLoadReadsTheDefaultFileBackAsTheDefault(t *testing.T) {
 	assert.Equal(t, config.Default(), cfg)
 }
 
+func TestLoadReadsMemoryAndCPUs(t *testing.T) {
+	// arrange
+	path := write(t, "allow: []\nmemory: 4096\ncpus: 4\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Memory)
+	require.NotNil(t, cfg.CPUs)
+	assert.Equal(t, 4096, *cfg.Memory)
+	assert.Equal(t, 4, *cfg.CPUs)
+}
+
+func TestLoadLeavesMemoryAndCPUsNilWhenNotGiven(t *testing.T) {
+	// arrange
+	path := write(t, "allow: []\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Nil(t, cfg.Memory)
+	assert.Nil(t, cfg.CPUs)
+}
+
+func TestLoadRejectsMemoryOrCPUsBelowOne(t *testing.T) {
+	for _, content := range []string{"memory: 0\n", "memory: -1\n", "cpus: 0\n", "cpus: -2\n"} {
+		t.Run(content, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrNotPositive)
+		})
+	}
+}
+
+func TestLoadWritesTheSizeKeysAsExamples(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# memory:")
+}
+
 func TestLoadKeepsAnExistingFile(t *testing.T) {
 	// arrange
 	path := write(t, "allow: []\n")

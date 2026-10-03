@@ -1,0 +1,7 @@
+version = 1
+SPDX-PackageName = "aibox"
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "Copyright aibox contributors"
+SPDX-License-Identifier = "Apache-2.0"

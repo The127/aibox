@@ -38,5 +38,9 @@ arch-describe:
 vuln:
     go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+# check that every file has license and copyright information
+reuse:
+    uvx reuse lint
+
 # everything that must pass before a push
-ci: lint arch build cover vuln
+ci: lint arch reuse build cover vuln

@@ -53,11 +53,21 @@ dependenciesRules:
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
-  # the proxy only knows net. Where its listener comes from is not its business
-  - package: '**.internal.proxy$'
+  # the tunnel accepts and joins connections and knows nothing else
+  - package: '**.internal.tunnel$'
     shouldNotDependsOn:
       internal:
         - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the proxy only knows net. Where its listener comes from is not its business
+  - package: '**.internal.proxy$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.tunnel$'
+    shouldNotDependsOn:
+      internal:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
@@ -72,9 +82,11 @@ dependenciesRules:
         - '**.internal.vm$'
   # the guest is the init of the VM. It knows nothing of the host side
   - package: '**.internal.guest$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.tunnel$'
     shouldNotDependsOn:
       internal:
-        - '**.internal.**'
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'

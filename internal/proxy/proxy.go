@@ -5,11 +5,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
-	"sync"
 	"time"
+
+	"github.com/the127/aibox/internal/tunnel"
 )
 
 const (
@@ -26,45 +26,14 @@ type Options struct {
 
 // Serve accepts connections until the context ends.
 func Serve(ctx context.Context, listener net.Listener, options Options) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
-	defer stop()
-
-	var tunnels sync.WaitGroup
-	defer tunnels.Wait()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-
-			cancel()
-
-			return fmt.Errorf("accept a connection: %w", err)
-		}
-
-		tunnels.Add(1)
-
-		go func() {
-			defer tunnels.Done()
-
-			tunnel(ctx, conn, options)
-		}()
-	}
+	return tunnel.Serve(ctx, listener, func(ctx context.Context, conn net.Conn) {
+		handle(ctx, conn, options)
+	})
 }
 
-// tunnel answers one CONNECT request and then copies bytes both ways.
-func tunnel(ctx context.Context, conn net.Conn, options Options) {
-	defer func() { _ = conn.Close() }()
-
-	// ending the context ends the handshake and the tunnel alike
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-
+// handle answers one CONNECT request and then joins the client with the
+// target.
+func handle(ctx context.Context, conn net.Conn, options Options) {
 	reader := bufio.NewReader(conn)
 
 	target, ok := handshake(conn, reader, options)
@@ -83,20 +52,20 @@ func tunnel(ctx context.Context, conn net.Conn, options Options) {
 
 	defer func() { _ = upstream.Close() }()
 
-	stopUpstream := context.AfterFunc(ctx, func() { _ = upstream.Close() })
-	defer stopUpstream()
+	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
+	defer stop()
 
 	writeStatus(conn, http.StatusOK)
 
-	var directions sync.WaitGroup
+	// the reader may hold bytes the client sent right after its request
+	if n := reader.Buffered(); n > 0 {
+		head, _ := reader.Peek(n)
+		if _, err := upstream.Write(head); err != nil {
+			return
+		}
+	}
 
-	directions.Add(2)
-
-	// the reader holds what the client sent right after its request
-	go pipe(&directions, upstream, reader)
-	go pipe(&directions, conn, upstream)
-
-	directions.Wait()
+	tunnel.Join(conn, upstream)
 }
 
 // handshake reads the CONNECT request and returns the target to dial. It
@@ -131,22 +100,6 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (string, bo
 	}
 
 	return request.Host, true
-}
-
-// pipe copies until the source ends, then tells the destination that no
-// more bytes come. A connection without a half close is closed instead.
-func pipe(directions *sync.WaitGroup, dst net.Conn, src io.Reader) {
-	defer directions.Done()
-
-	_, _ = io.Copy(dst, src)
-
-	if closer, ok := dst.(interface{ CloseWrite() error }); ok {
-		_ = closer.CloseWrite()
-
-		return
-	}
-
-	_ = dst.Close()
 }
 
 func writeStatus(conn net.Conn, status int) {

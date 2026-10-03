@@ -225,12 +225,14 @@ func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, sys.calls, "loopback up")
-	assert.Contains(t, sys.calls, "start /usr/local/bin/claude")
 
-	listen := slices.Index(sys.calls, "listen 127.0.0.1:3128")
+	calls := sys.callsCopy()
+	assert.Contains(t, calls, "loopback up")
+	assert.Contains(t, calls, "start /usr/local/bin/claude")
+
+	listen := slices.Index(calls, "listen 127.0.0.1:3128")
 	require.NotEqual(t, -1, listen)
-	assert.Less(t, listen, slices.Index(sys.calls, "start /usr/local/bin/claude"))
+	assert.Less(t, listen, slices.Index(calls, "start /usr/local/bin/claude"))
 
 	// the forwarder is running on the listener and dials the host port
 	client := dialWithDeadline(t, sys.listener.Addr().String())
@@ -504,7 +506,7 @@ type fakeSystem struct {
 }
 
 func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data string) error {
-	s.calls = append(s.calls, "mount "+source+" "+target)
+	s.record("mount " + source + " " + target)
 
 	if s.mounts == nil {
 		s.mounts = map[string]mounted{}
@@ -520,13 +522,13 @@ func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data st
 }
 
 func (s *fakeSystem) Symlink(target, path string) error {
-	s.calls = append(s.calls, "link "+path+" -> "+target)
+	s.record("link " + path + " -> " + target)
 
 	return nil
 }
 
 func (s *fakeSystem) ReadCmdline() (string, error) {
-	s.calls = append(s.calls, "read cmdline")
+	s.record("read cmdline")
 
 	if s.cmdline == "" {
 		return "console=ttyS0", nil
@@ -536,7 +538,7 @@ func (s *fakeSystem) ReadCmdline() (string, error) {
 }
 
 func (s *fakeSystem) OpenConsole(path string) (*os.File, error) {
-	s.calls = append(s.calls, "open "+path)
+	s.record("open " + path)
 
 	if s.failOpen != nil {
 		return nil, s.failOpen
@@ -593,13 +595,13 @@ func (s *fakeSystem) callsCopy() []string {
 }
 
 func (s *fakeSystem) Sethostname(name string) error {
-	s.calls = append(s.calls, "hostname "+name)
+	s.record("hostname " + name)
 
 	return s.failHostname
 }
 
 func (s *fakeSystem) Start(cmd *exec.Cmd) (int, error) {
-	s.calls = append(s.calls, "start "+cmd.Path)
+	s.record("start " + cmd.Path)
 
 	if s.failStart != nil {
 		return 0, s.failStart
@@ -611,7 +613,7 @@ func (s *fakeSystem) Start(cmd *exec.Cmd) (int, error) {
 }
 
 func (s *fakeSystem) Wait() (int, int, error) {
-	s.calls = append(s.calls, "wait")
+	s.record("wait")
 	s.waits++
 
 	if s.failWait != nil {
@@ -626,7 +628,7 @@ func (s *fakeSystem) Wait() (int, int, error) {
 }
 
 func (s *fakeSystem) Poweroff() error {
-	s.calls = append(s.calls, "poweroff")
+	s.record("poweroff")
 
 	return s.failPoweroff
 }

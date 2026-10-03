@@ -20,12 +20,18 @@ type fakeLaunch struct {
 	machine vm.Machine
 	options launch.Options
 	err     error
+	// refuse is a host the fake reports as refused while it runs
+	refuse string
 }
 
 func (f *fakeLaunch) run(_ context.Context, machine vm.Machine, options launch.Options) error {
 	f.called = true
 	f.machine = machine
 	f.options = options
+
+	if f.refuse != "" {
+		options.Proxy.OnRefused(f.refuse)
+	}
 
 	return f.err
 }
@@ -65,6 +71,21 @@ func (f *fixture) run(args ...string) error {
 	return newRootCommand(f.deps).Run(context.Background(), append([]string{"aibox", "run"}, args...))
 }
 
+// project is the folder aibox keeps for the fixture's project.
+func (f *fixture) project(t *testing.T) project.Project {
+	t.Helper()
+
+	p, err := project.Open(filepath.Join(f.aiboxDir, "projects"), f.cwd)
+	require.NoError(t, err)
+
+	return p
+}
+
+func (f *fixture) writeConfig(t *testing.T, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(f.project(t).Config, []byte(content), 0o600))
+}
+
 func TestRunPassesTheFlagsToTheMachine(t *testing.T) {
 	// arrange
 	f := newFixture(t)
@@ -99,7 +120,7 @@ func TestRunSharesTheProjectAndItsHome(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
-	home := filepath.Join(f.aiboxDir, "projects", project.Escape(f.cwd), "home")
+	home := f.project(t).Home
 
 	// act
 	err := f.run("--image", image)
@@ -219,6 +240,66 @@ func TestRunWhenTheCurrentFolderIsUnknown(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, failure)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunPassesTheAllowListToTheProxy(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow:\n  - example.com\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	require.NotNil(t, f.launch.options.Proxy.Allow)
+	assert.True(t, f.launch.options.Proxy.Allow("example.com"))
+	assert.False(t, f.launch.options.Proxy.Allow("api.anthropic.com"))
+}
+
+func TestRunWritesTheDefaultConfigForANewProject(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, f.project(t).Config)
+}
+
+func TestRunLogsRefusedHosts(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.launch.refuse = "evil.example"
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+
+	log, err := os.ReadFile(f.project(t).Log)
+	require.NoError(t, err)
+	assert.Contains(t, string(log), `refused "evil.example"`)
+}
+
+func TestRunWhenTheConfigIsBroken(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow: [\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	assert.ErrorContains(t, err, "config.yaml")
 	assert.False(t, f.launch.called)
 }
 

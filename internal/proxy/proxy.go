@@ -5,8 +5,10 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/the127/aibox/internal/tunnel"
@@ -22,6 +24,8 @@ type Options struct {
 	// Allow is called with the host name of each CONNECT request and
 	// returns whether it may be reached. Nil allows every host.
 	Allow func(host string) bool
+	// OnRefused is called with the host name of each refused request.
+	OnRefused func(host string)
 }
 
 // Serve accepts connections until the context ends.
@@ -96,10 +100,35 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (string, bo
 	if options.Allow != nil && !options.Allow(host) {
 		writeStatus(conn, http.StatusForbidden)
 
+		if options.OnRefused != nil {
+			options.OnRefused(host)
+		}
+
 		return "", false
 	}
 
 	return request.Host, true
+}
+
+// RefusalLog returns an OnRefused function that writes each refused host to
+// the writer once, so that a guest that keeps trying cannot fill the log.
+func RefusalLog(w io.Writer) func(host string) {
+	var mu sync.Mutex
+
+	seen := map[string]bool{}
+
+	return func(host string) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if seen[host] {
+			return
+		}
+
+		seen[host] = true
+
+		_, _ = fmt.Fprintf(w, "%s refused %q\n", time.Now().UTC().Format(time.RFC3339), host)
+	}
 }
 
 func writeStatus(conn net.Conn, status int) {

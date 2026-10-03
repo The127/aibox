@@ -72,6 +72,14 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the config reads the settings of a project and knows nothing else
+  - package: '**.internal.config$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the cli defines the commands and wires the other packages together.
   # It is the only package that knows urfave/cli
   - package: '**.internal.cli$'
@@ -81,6 +89,8 @@ dependenciesRules:
         - '**.internal.project$'
         - '**.internal.launch$'
         - '**.internal.vm$'
+        - '**.internal.config$'
+        - '**.internal.proxy$'
   # the guest is the init of the VM. It knows nothing of the host side
   - package: '**.internal.guest$'
     shouldOnlyDependsOn:

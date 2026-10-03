@@ -25,15 +25,20 @@ just install-image   # build the image and copy it to ~/.aibox/image
 aibox run
 ```
 
+The proxy only lets through the hosts listed under `allow` in
+`~/.aibox/projects/<escaped path>/config.yaml`. The first run writes that
+file with the hosts Claude Code needs. Refused hosts are written to
+`proxy.log` next to it.
+
 Not there yet:
 
-- The proxy lets every host through, including services on the host's own
-  loopback. The allowlist comes next.
+- The allowlist checks names, not addresses. A listed name that resolves to
+  the host's own loopback or LAN is reached.
 - There is no way to pass secrets into the VM. You log in with
   `claude /login` inside it.
 - The VM user has uid 1000. On a host where your uid differs, the guest
   cannot write the project folder.
-- The per-project `config.yaml` does not exist yet.
+- Memory and CPUs are flags of `aibox run`, not settings in `config.yaml`.
 
 ## Contributing
 

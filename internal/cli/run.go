@@ -3,14 +3,17 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/project"
+	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -67,6 +70,18 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return fmt.Errorf("open the project folder: %w", err)
 	}
 
+	cfg, err := config.Load(p.Config)
+	if err != nil {
+		return err
+	}
+
+	log, err := os.OpenFile(p.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open the log of refused hosts: %w", err)
+	}
+
+	defer func() { _ = log.Close() }()
+
 	machine := vm.Machine{
 		Kernel:    kernel,
 		Rootfs:    rootfs,
@@ -80,13 +95,21 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		Shell:    cmd.Bool("shell"),
 	}
 
-	return deps.run(ctx, machine, launch.Options{
+	return deps.run(ctx, machine, launchOptions(cfg, log))
+}
+
+func launchOptions(cfg config.Config, log io.Writer) launch.Options {
+	return launch.Options{
 		QEMU:      qemuProgram,
 		Virtiofsd: virtiofsdProgram,
 		Stdin:     os.Stdin,
 		Stdout:    os.Stdout,
 		Stderr:    os.Stderr,
-	})
+		Proxy: proxy.Options{
+			Allow:     cfg.Allow.Allows,
+			OnRefused: proxy.RefusalLog(log),
+		},
+	}
 }
 
 func imageFiles(dir string) (kernel, rootfs string, err error) {

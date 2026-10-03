@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
@@ -195,6 +196,45 @@ func TestServeRefusesAHostThatIsNotAllowed(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, "example.com", asked)
+}
+
+func TestServeReportsARefusedHost(t *testing.T) {
+	// arrange
+	refused := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		Allow:     func(string) bool { return false },
+		OnRefused: func(host string) { refused <- host },
+	})
+
+	// act
+	status, _ := connect(t, address, "example.com:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
+
+	select {
+	case host := <-refused:
+		assert.Equal(t, "example.com", host)
+	case <-time.After(timeout):
+		t.Fatal("OnRefused was not called")
+	}
+}
+
+func TestRefusalLogWritesEachHostOnce(t *testing.T) {
+	// arrange
+	var log bytes.Buffer
+	refused := proxy.RefusalLog(&log)
+
+	// act
+	refused("evil.example")
+	refused("evil.example")
+	refused("other.example")
+
+	// assert
+	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
+	require.Len(t, lines, 2)
+	assert.Regexp(t, `^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ refused "evil.example"$`, lines[0])
+	assert.Contains(t, lines[1], `refused "other.example"`)
 }
 
 func TestServeRefusesOtherMethods(t *testing.T) {

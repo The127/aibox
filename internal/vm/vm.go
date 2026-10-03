@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const cmdline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1"
+const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1"
 
 // Machine is a VM that boots a kernel with a root disk.
 type Machine struct {
@@ -16,6 +16,7 @@ type Machine struct {
 	CPUs      int
 	Shares    []Share
 	GuestCID  uint32
+	Shell     bool
 }
 
 // Share is a host folder that virtiofsd serves to the VM. The guest mounts it
@@ -41,7 +42,7 @@ func (m Machine) QEMUArgs() []string {
 		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot",
 		"-serial", "mon:stdio",
 		"-kernel", m.Kernel,
-		"-append", cmdline,
+		"-append", m.cmdline(),
 		"-drive", "id=root,file=" + escape(m.Rootfs) + ",format=raw,if=none,snapshot=on",
 		"-device", "virtio-blk-device,drive=root",
 	}
@@ -55,6 +56,14 @@ func (m Machine) QEMUArgs() []string {
 	}
 
 	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(m.GuestCID), 10))
+}
+
+func (m Machine) cmdline() string {
+	if m.Shell {
+		return baseCmdline + " aibox.shell"
+	}
+
+	return baseCmdline
 }
 
 // VirtiofsdArgs returns the arguments for virtiofsd.

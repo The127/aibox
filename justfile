@@ -6,8 +6,12 @@ default:
 build:
     CGO_ENABLED=0 go build -o bin/aibox ./cmd/aibox
 
+# build the init of the VM, which the image copies in
+init:
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
+
 # build the VM image into out/
-image:
+image: init
     miso build -o out image
 
 # copy the VM image to where aibox run looks for it

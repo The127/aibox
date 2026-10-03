@@ -27,6 +27,7 @@ func runCommand(deps dependencies) *cli.Command {
 			&cli.StringFlag{Name: "image", Usage: "folder with vmlinuz and os.ext4", DefaultText: "~/.aibox/image"},
 			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
+			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -76,6 +77,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 			{Tag: "home", Dir: p.Home},
 		},
 		GuestCID: randomCID(),
+		Shell:    cmd.Bool("shell"),
 	}
 
 	return deps.run(ctx, machine, launch.Options{

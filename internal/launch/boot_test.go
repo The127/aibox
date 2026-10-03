@@ -36,7 +36,7 @@ func (c *console) Write(p []byte) (int, error) {
 
 	c.output.Write(p)
 
-	if !c.typed && bytes.HasSuffix(c.output.Bytes(), []byte("# ")) {
+	if !c.typed && bytes.HasSuffix(c.output.Bytes(), []byte("$ ")) {
 		c.typed = true
 		_, _ = io.WriteString(c.input, c.command+"\n")
 	}
@@ -84,6 +84,7 @@ func TestRunBootsTheImage(t *testing.T) {
 			{Tag: "home", Dir: t.TempDir()},
 		},
 		GuestCID: 42,
+		Shell:    true,
 	}
 
 	stdin, input, err := os.Pipe()

@@ -1,9 +1,10 @@
 # The VM aibox runs Claude Code in, booted on QEMU's microvm machine without
 # an initrd and without systemd.
 #
-#   miso build -o out image
+#   just image
 #
-# leaves out/vmlinuz and out/os.ext4.
+# builds the init of the VM into image/aibox-init, so that the image needs no
+# Go toolchain, and leaves out/vmlinuz and out/os.ext4.
 
 FROM debian:sid AS kernel
 
@@ -38,11 +39,12 @@ RUN lddtree --copy-to-tree /out/claude /usr/local/bin/claude
 
 FROM scratch
 
-# busybox gives the stage a shell, so the RUN steps below work.
+# busybox gives the stage a shell, so the RUN steps below work, and the VM
+# its basic tools.
 COPY --from=tools /bin/busybox /bin/busybox
 COPY sh /bin/sh
 RUN /bin/busybox --install -s /bin
-RUN mkdir -p /run /tmp /root /project
+RUN mkdir -p /run /tmp /root /project /home/user
 
 COPY --from=tools /out/bash/ /
 COPY --from=tools /out/git/ /
@@ -51,6 +53,6 @@ COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group /etc/
-COPY init /sbin/init
+COPY aibox-init /sbin/init
 
 OUTPUT rootfs os.ext4

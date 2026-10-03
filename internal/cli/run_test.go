@@ -79,6 +79,20 @@ func TestRunPassesTheFlagsToTheMachine(t *testing.T) {
 	assert.Equal(t, filepath.Join(image, "os.ext4"), f.launch.machine.Rootfs)
 	assert.Equal(t, 1024, f.launch.machine.MemoryMiB)
 	assert.Equal(t, 3, f.launch.machine.CPUs)
+	assert.False(t, f.launch.machine.Shell)
+}
+
+func TestRunWithShell(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--shell")
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, f.launch.machine.Shell)
 }
 
 func TestRunSharesTheProjectAndItsHome(t *testing.T) {

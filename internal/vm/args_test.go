@@ -83,6 +83,24 @@ func TestQEMUArgsEscapesCommas(t *testing.T) {
 	assert.Contains(t, args, "socket,id=share-project,path=/run/a,,b/project.sock")
 }
 
+func TestQEMUArgsWithShell(t *testing.T) {
+	// arrange
+	machine := vm.Machine{
+		Kernel:    "/images/vmlinuz",
+		Rootfs:    "/images/os.ext4",
+		MemoryMiB: 512,
+		CPUs:      1,
+		GuestCID:  3,
+		Shell:     true,
+	}
+
+	// act
+	args := machine.QEMUArgs()
+
+	// assert
+	assert.Contains(t, args, "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1 aibox.shell")
+}
+
 func TestVirtiofsdArgs(t *testing.T) {
 	// arrange
 	share := vm.Share{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"}

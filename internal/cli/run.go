@@ -132,10 +132,9 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 			{Tag: "project", Dir: cwd},
 			{Tag: "home", Dir: p.Home},
 		}, mounts...),
-		Owner:      &owner,
-		GuestCID:   randomCID(),
-		Shell:      cmd.Bool("shell"),
-		ConsoleLog: p.ConsoleLog,
+		Owner:    &owner,
+		GuestCID: randomCID(),
+		Shell:    cmd.Bool("shell"),
 	}
 
 	options := launchOptions(cfg, p, log)
@@ -275,11 +274,12 @@ func isFolder(path string) bool {
 
 func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.Options {
 	return launch.Options{
-		QEMU:      qemuProgram,
-		Virtiofsd: virtiofsdProgram,
-		Stdin:     os.Stdin,
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
+		QEMU:       qemuProgram,
+		Virtiofsd:  virtiofsdProgram,
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+		ConsoleLog: p.ConsoleLog,
 		Proxy: proxy.Options{
 			Allow:     cfg.Allow.Allows,
 			OnRefused: proxy.RefusalLog(log),

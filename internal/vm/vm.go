@@ -20,9 +20,8 @@ const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-
 // Machine is a VM that boots a kernel with a root disk. Shell boots it into
 // a shell instead of Claude Code. ProxyPort and TerminalPort are the vsock
 // ports of the proxy and the terminal session on the host, and 0 leaves
-// the port off the kernel command line. ConsoleLog is the file the console
-// of the VM is written to, and "" throws it away. Owner is the host user
-// the VM user stands for in the shares, and nil leaves the ids as they are.
+// the port off the kernel command line. Owner is the host user the VM user
+// stands for in the shares, and nil leaves the ids as they are.
 type Machine struct {
 	Kernel       string
 	Rootfs       string
@@ -33,8 +32,20 @@ type Machine struct {
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
-	ConsoleLog   string
 	Owner        *Owner
+}
+
+// Files are the numbers of the files QEMU was started with: the KVM and
+// vhost-vsock devices, the kernel, the root disk, the socket QEMU writes
+// the console to, and one connection to virtiofsd per entry of
+// Machine.Shares, in the same order.
+type Files struct {
+	KVM     int
+	Vhost   int
+	Kernel  int
+	Rootfs  int
+	Console int
+	Shares  []int
 }
 
 // Owner is a user on the host. In the shares, the VM user sees this user's
@@ -54,47 +65,59 @@ type Share struct {
 	Guest  string
 }
 
-// QEMUArgs returns the arguments for qemu-system-x86_64.
-func (m Machine) QEMUArgs() []string {
+// the fdsets of the files that QEMU opens by path again
+const (
+	kvmSet    = 1
+	rootfsSet = 2
+)
+
+// QEMUArgs returns the arguments for qemu-system-x86_64. QEMU gets every
+// file through the numbers in files, so that it opens no path of the host.
+func (m Machine) QEMUArgs(files Files) []string {
 	memory := strconv.Itoa(m.MemoryMiB) + "M"
 
 	args := []string{
 		// the kernel has no ACPI, see image/microvm.config. Without an RTC the
-		// kernel spends seconds at boot waiting for the time.
-		"-machine", "microvm,acpi=off,rtc=on,memory-backend=mem",
-		"-enable-kvm", "-cpu", "host",
+		// kernel spends seconds at boot waiting for the time. Option ROMs would
+		// be files QEMU reads from the host.
+		"-machine", "microvm,acpi=off,rtc=on,memory-backend=mem,x-option-roms=off",
+		"-add-fd", fdset(files.KVM, kvmSet),
+		"-accel", "kvm,device=" + fdsetPath(kvmSet),
+		"-cpu", "host",
 		"-smp", strconv.Itoa(m.CPUs),
 		"-m", memory,
 		// virtiofsd reads and writes the guest memory directly
 		"-object", "memory-backend-memfd,id=mem,size=" + memory + ",share=on",
 		// the VM ends itself with a reset, which -no-reboot turns into an exit
 		"-nodefaults", "-no-user-config", "-display", "none", "-no-reboot",
-		"-chardev", m.consoleChardev(),
+		"-chardev", "socket,id=console,fd=" + strconv.Itoa(files.Console),
 		"-device", "virtio-serial-device",
 		"-device", "virtconsole,chardev=console",
-		"-kernel", m.Kernel,
+		// the kernel loader takes no fdset
+		"-kernel", "/dev/fd/" + strconv.Itoa(files.Kernel),
 		"-append", m.cmdline(),
-		"-drive", "id=root,file=" + escape(m.Rootfs) + ",format=raw,if=none,snapshot=on",
+		"-add-fd", fdset(files.Rootfs, rootfsSet),
+		"-drive", "id=root,file=" + fdsetPath(rootfsSet) + ",format=raw,if=none,snapshot=on",
 		"-device", "virtio-blk-device,drive=root",
 	}
 
-	for _, share := range m.Shares {
-		id := "share-" + escape(share.Tag)
+	for i, share := range m.Shares {
+		id := "share-" + share.Tag
 		args = append(args,
-			"-chardev", "socket,id="+id+",path="+escape(share.Socket),
-			"-device", "vhost-user-fs-device,chardev="+id+",tag="+escape(share.Tag),
+			"-chardev", "socket,id="+id+",fd="+strconv.Itoa(files.Shares[i]),
+			"-device", "vhost-user-fs-device,chardev="+id+",tag="+share.Tag,
 		)
 	}
 
-	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(m.GuestCID), 10))
+	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(m.GuestCID), 10)+",vhostfd="+strconv.Itoa(files.Vhost))
 }
 
-func (m Machine) consoleChardev() string {
-	if m.ConsoleLog == "" {
-		return "null,id=console"
-	}
+func fdset(fd, set int) string {
+	return "fd=" + strconv.Itoa(fd) + ",set=" + strconv.Itoa(set)
+}
 
-	return "file,id=console,path=" + escape(m.ConsoleLog)
+func fdsetPath(set int) string {
+	return "/dev/fdset/" + strconv.Itoa(set)
 }
 
 func (m Machine) cmdline() string {
@@ -145,10 +168,4 @@ func (s Share) VirtiofsdArgs(owner *Owner) []string {
 		fmt.Sprintf("--translate-gid=guest:%d:%d:1", GuestGID, owner.GID),
 		fmt.Sprintf("--translate-gid=host:%d:%d:1", owner.GID, GuestGID),
 	)
-}
-
-// escape doubles commas, because QEMU separates the parts of an option value
-// with commas.
-func escape(value string) string {
-	return strings.ReplaceAll(value, ",", ",,")
 }

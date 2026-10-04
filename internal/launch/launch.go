@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mdlayher/vsock"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/session"
@@ -28,6 +29,8 @@ var ErrSocketTimeout = errors.New("virtiofsd did not create its socket in time")
 
 const (
 	defaultSocketTimeout = 10 * time.Second
+	defaultKVMDevice     = "/dev/kvm"
+	defaultVhostDevice   = "/dev/vhost-vsock"
 	stopDelay            = time.Second
 	// sessionEndDelay is how long the session may go on after QEMU has
 	// exited, to show the last output of the VM.
@@ -52,6 +55,13 @@ type Options struct {
 	Proxy       proxy.Options
 	// Env are variables for the command in the VM, as NAME=value.
 	Env []string
+	// KVMDevice and VhostDevice are the device files QEMU gets. Empty means
+	// /dev/kvm and /dev/vhost-vsock.
+	KVMDevice   string
+	VhostDevice string
+	// ConsoleLog is the file the console of the VM is written to. Empty
+	// throws it away.
+	ConsoleLog string
 }
 
 // Run boots the machine with the proxy and the terminal listening for it
@@ -69,6 +79,14 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	if options.ListenVsock == nil {
 		options.ListenVsock = listenVsock
+	}
+
+	if options.KVMDevice == "" {
+		options.KVMDevice = defaultKVMDevice
+	}
+
+	if options.VhostDevice == "" {
+		options.VhostDevice = defaultVhostDevice
 	}
 
 	sockets, err := os.MkdirTemp("", "aibox-")
@@ -91,6 +109,15 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		return err
 	}
 
+	files, err := openFiles(machine, options)
+	if err != nil {
+		return err
+	}
+
+	defer files.close()
+
+	logged := logConsole(files.console, options.ConsoleLog, options.Stderr)
+
 	port, stopProxy, err := serveProxy(ctx, machine.GuestCID, options)
 	if err != nil {
 		return err
@@ -107,13 +134,151 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	machine.TerminalPort = terminalPort
 
-	err = runQEMU(ctx, machine, options)
+	err = runQEMU(ctx, machine, files, options)
 
-	if attached := stopTerminal(); !attached && err == nil && machine.ConsoleLog != "" {
-		_, _ = fmt.Fprintf(options.Stderr, "aibox: the VM ended before its terminal came up, see %s\n", machine.ConsoleLog)
+	<-logged
+
+	if attached := stopTerminal(); !attached && err == nil && options.ConsoleLog != "" {
+		_, _ = fmt.Fprintf(options.Stderr, "aibox: the VM ended before its terminal came up, see %s\n", options.ConsoleLog)
 	}
 
 	return err
+}
+
+// qemuFiles are the files QEMU inherits beyond its standard three, in the
+// order of their numbers in QEMU, and aibox's end of the console pair.
+type qemuFiles struct {
+	extra   []*os.File
+	numbers vm.Files
+	console *os.File
+}
+
+// openFiles opens everything QEMU needs, so that QEMU opens no path itself
+// and a missing file is reported before it starts. The caller closes the
+// extra files once QEMU has them, and the console when the log is done.
+func openFiles(machine vm.Machine, options Options) (_ *qemuFiles, err error) {
+	files := &qemuFiles{}
+
+	defer func() {
+		if err != nil {
+			files.close()
+
+			if files.console != nil {
+				_ = files.console.Close()
+			}
+		}
+	}()
+
+	if files.numbers.KVM, err = files.open("KVM device", options.KVMDevice, os.O_RDWR); err != nil {
+		return nil, err
+	}
+
+	if files.numbers.Vhost, err = files.open("vhost-vsock device", options.VhostDevice, os.O_RDWR); err != nil {
+		return nil, err
+	}
+
+	if files.numbers.Kernel, err = files.open("kernel", machine.Kernel, os.O_RDONLY); err != nil {
+		return nil, err
+	}
+
+	if files.numbers.Rootfs, err = files.open("root disk", machine.Rootfs, os.O_RDONLY); err != nil {
+		return nil, err
+	}
+
+	for _, share := range machine.Shares {
+		socket, err := connect(share)
+		if err != nil {
+			return nil, err
+		}
+
+		files.numbers.Shares = append(files.numbers.Shares, files.add(socket))
+	}
+
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("create the console socket: %w", err)
+	}
+
+	files.numbers.Console = files.add(os.NewFile(uintptr(pair[0]), "console"))
+	files.console = os.NewFile(uintptr(pair[1]), "console")
+
+	return files, nil
+}
+
+// open opens the path and returns the number the file has in QEMU.
+func (f *qemuFiles) open(what, path string, flag int) (int, error) {
+	file, err := os.OpenFile(path, flag, 0) //nolint:gosec // the paths come from the config and the image
+	if err != nil {
+		return 0, fmt.Errorf("open the %s: %w", what, err)
+	}
+
+	return f.add(file), nil
+}
+
+// add takes the file and returns the number it will have in QEMU, which
+// inherits the extra files after its own three.
+func (f *qemuFiles) add(file *os.File) int {
+	f.extra = append(f.extra, file)
+
+	return 2 + len(f.extra)
+}
+
+// close closes aibox's copies of the extra files. It may be called again.
+func (f *qemuFiles) close() {
+	for _, file := range f.extra {
+		_ = file.Close()
+	}
+
+	f.extra = nil
+}
+
+// connect connects to the virtiofsd of the share and returns the connection
+// as a file for QEMU.
+func connect(share vm.Share) (*os.File, error) {
+	conn, err := net.Dial("unix", share.Socket)
+	if err != nil {
+		return nil, fmt.Errorf("connect to virtiofsd for %s: %w", share.Dir, err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	file, err := conn.(*net.UnixConn).File()
+	if err != nil {
+		return nil, fmt.Errorf("connect to virtiofsd for %s: %w", share.Dir, err)
+	}
+
+	return file, nil
+}
+
+// logConsole copies the console of the VM into the log file until the VM
+// is gone, and closes the returned channel then. Without a path, or when
+// the file cannot be opened, the console is thrown away.
+func logConsole(console *os.File, path string, stderr io.Writer) <-chan struct{} {
+	log := io.Discard
+
+	if path != "" {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // the path is the project's console log
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "aibox: open the console log: %v\n", err)
+		} else {
+			log = file
+		}
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_, _ = io.Copy(log, console)
+		_ = console.Close()
+
+		if file, ok := log.(*os.File); ok {
+			_ = file.Close()
+		}
+	}()
+
+	return done
 }
 
 // startDaemons starts virtiofsd for each share. The channel gets the exit
@@ -249,12 +414,23 @@ func attach(ctx context.Context, listener net.Listener, options Options) bool {
 
 // runQEMU runs QEMU with its output on Stderr, because Stdout belongs to
 // the session.
-func runQEMU(ctx context.Context, machine vm.Machine, options Options) error {
-	qemu := command(ctx, options.QEMU, machine.QEMUArgs())
+func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options Options) error {
+	qemu := command(ctx, options.QEMU, machine.QEMUArgs(files.numbers))
 	qemu.Stdout = options.Stderr
 	qemu.Stderr = options.Stderr
+	qemu.ExtraFiles = files.extra
 
-	if err := qemu.Run(); err != nil {
+	err := qemu.Start()
+
+	// QEMU has its own copies now, or never will, and the console log ends
+	// only when every copy of its end is closed
+	files.close()
+
+	if err != nil {
+		return fmt.Errorf("run qemu: %w", err)
+	}
+
+	if err := qemu.Wait(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

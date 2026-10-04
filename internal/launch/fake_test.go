@@ -71,6 +71,7 @@ type fakeProcesses struct {
 	stdout           io.Writer
 	stderr           io.Writer
 	env              []string
+	consoleLog       string
 }
 
 func fakes(t *testing.T) *fakeProcesses {
@@ -84,6 +85,7 @@ func fakes(t *testing.T) *fakeProcesses {
 		qemu:             filepath.Join(dir, "qemu"),
 		virtiofsd:        filepath.Join(dir, "virtiofsd"),
 		records:          filepath.Join(dir, "records"),
+		consoleLog:       filepath.Join(dir, "console.log"),
 		proxyListener:    make(chan net.Listener, 1),
 		terminalListener: make(chan net.Listener, 1),
 	}
@@ -96,9 +98,9 @@ func fakes(t *testing.T) *fakeProcesses {
 	return f
 }
 
-// options use TCP listeners in place of vsock, so that the tests run on a
-// machine without vsock. Run listens for the proxy first and for the
-// terminal second.
+// options use TCP listeners in place of vsock and /dev/null in place of the
+// KVM and vhost devices, so that the tests run on a machine without them.
+// Run listens for the proxy first and for the terminal second.
 func (f *fakeProcesses) options() launch.Options {
 	options := launch.Options{
 		QEMU:          f.qemu,
@@ -109,6 +111,9 @@ func (f *fakeProcesses) options() launch.Options {
 		SocketTimeout: 5 * time.Second,
 		ListenVsock:   f.listenTCP,
 		Env:           f.env,
+		KVMDevice:     os.DevNull,
+		VhostDevice:   os.DevNull,
+		ConsoleLog:    f.consoleLog,
 	}
 
 	if f.stdout != nil {
@@ -240,28 +245,25 @@ func fakeVirtiofsd(args []string) int {
 	return 0
 }
 
+// fakeQEMU records the descriptors it was given, what kind of file each is,
+// and prints a line on the console.
 func fakeQEMU(args []string) int {
-	var sockets, missing []string
+	var fds, kinds []string
 
-	for i, arg := range args {
-		if arg != "-chardev" || i+1 == len(args) {
-			continue
-		}
+	for _, number := range descriptors(args) {
+		fds = append(fds, strconv.Itoa(number))
+		kinds = append(kinds, kindOf(number))
+	}
 
-		for _, part := range strings.Split(args[i+1], ",") {
-			if path, ok := strings.CutPrefix(part, "path="); ok {
-				sockets = append(sockets, path)
-
-				if _, err := os.Stat(path); err != nil { //nolint:gosec // the path comes from the test
-					missing = append(missing, path)
-				}
-			}
-		}
+	if console := consoleDescriptor(args); console != 0 {
+		file := os.NewFile(uintptr(console), "console")
+		_, _ = file.WriteString("hello from the console\n")
+		_ = file.Close()
 	}
 
 	record("qemu", args)
-	record("qemu-sockets", sockets)
-	record("qemu-missing-sockets", missing)
+	record("qemu-fds", fds)
+	record("qemu-fd-kinds", kinds)
 
 	for i, arg := range args {
 		if arg == "-append" && i+1 < len(args) {
@@ -281,4 +283,64 @@ func fakeQEMU(args []string) int {
 	code, _ := strconv.Atoi(os.Getenv("AIBOX_FAKE_QEMU_EXIT"))
 
 	return code
+}
+
+// descriptors are the numbers of the files the arguments name, in the order
+// of the arguments: fd= and vhostfd= parts of options, and the kernel.
+func descriptors(args []string) []int {
+	var numbers []int
+
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "-kernel":
+			if number, err := strconv.Atoi(strings.TrimPrefix(args[i+1], "/dev/fd/")); err == nil {
+				numbers = append(numbers, number)
+			}
+		case "-chardev", "-add-fd", "-device":
+			for _, part := range strings.Split(args[i+1], ",") {
+				value, ok := strings.CutPrefix(part, "fd=")
+				if !ok {
+					value, ok = strings.CutPrefix(part, "vhostfd=")
+				}
+
+				if number, err := strconv.Atoi(value); ok && err == nil {
+					numbers = append(numbers, number)
+				}
+			}
+		}
+	}
+
+	return numbers
+}
+
+// consoleDescriptor is the number of the console socket, or 0.
+func consoleDescriptor(args []string) int {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-chardev" && strings.HasPrefix(args[i+1], "socket,id=console,fd=") {
+			number, _ := strconv.Atoi(strings.TrimPrefix(args[i+1], "socket,id=console,fd="))
+
+			return number
+		}
+	}
+
+	return 0
+}
+
+// kindOf tells what kind of file the descriptor is, or "missing".
+func kindOf(number int) string {
+	info, err := os.NewFile(uintptr(number), "").Stat()
+	if err != nil {
+		return "missing"
+	}
+
+	switch {
+	case info.Mode().IsRegular():
+		return "file"
+	case info.Mode()&os.ModeSocket != 0:
+		return "socket"
+	case info.Mode()&os.ModeCharDevice != 0:
+		return "device"
+	default:
+		return "other"
+	}
 }

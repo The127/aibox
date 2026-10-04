@@ -23,10 +23,18 @@ import (
 
 const guestCID = 42
 
-func machine() vm.Machine {
+// machine is a VM whose kernel and root disk are empty files of the test.
+func machine(t *testing.T) vm.Machine {
+	t.Helper()
+
+	image := t.TempDir()
+	for _, name := range []string{"vmlinuz", "os.ext4"} {
+		require.NoError(t, os.WriteFile(filepath.Join(image, name), nil, 0o600))
+	}
+
 	return vm.Machine{
-		Kernel:    "/images/vmlinuz",
-		Rootfs:    "/images/os.ext4",
+		Kernel:    filepath.Join(image, "vmlinuz"),
+		Rootfs:    filepath.Join(image, "os.ext4"),
 		MemoryMiB: 512,
 		CPUs:      1,
 		Shares: []vm.Share{
@@ -45,12 +53,26 @@ func TestRunStartsVirtiofsdForEachShareBeforeQEMU(t *testing.T) {
 	options.Stderr = stderr
 
 	// act
-	err := launch.Run(context.Background(), machine(), options)
+	err := launch.Run(context.Background(), machine(t), options)
 
 	// assert
 	require.NoError(t, err)
 	assert.Contains(t, stderr.String(), "fake qemu ran")
-	assert.Empty(t, f.record(t, "qemu-missing-sockets"))
+}
+
+func TestRunGivesQEMUTheRightFileInEachSlot(t *testing.T) {
+	// arrange
+	f := fakes(t)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.NoError(t, err)
+
+	// the KVM device, the console, the kernel, the root disk, two shares and
+	// the vhost device, in the order QEMU's arguments name them
+	assert.Equal(t, []string{"device", "socket", "file", "file", "socket", "socket", "device"}, f.record(t, "qemu-fd-kinds"))
 	assert.Contains(t, f.record(t, "virtiofsd-project.sock"), "--shared-dir=/home/someone/project")
 	assert.Contains(t, f.record(t, "virtiofsd-home.sock"), "--shared-dir=/home/someone/.aibox/home")
 }
@@ -60,16 +82,63 @@ func TestRunStopsVirtiofsdAndRemovesTheSockets(t *testing.T) {
 	f := fakes(t)
 
 	// act
-	err := launch.Run(context.Background(), machine(), f.options())
+	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
 	require.NoError(t, err)
 	assert.FileExists(t, filepath.Join(f.records, "virtiofsd-project.sock-stopped"))
 	assert.FileExists(t, filepath.Join(f.records, "virtiofsd-home.sock-stopped"))
+	assert.NoDirExists(t, socketDir(t, f.record(t, "virtiofsd-project.sock")))
+}
 
-	sockets := f.record(t, "qemu-sockets")
-	require.NotEmpty(t, sockets)
-	assert.NoDirExists(t, filepath.Dir(sockets[0]))
+func TestRunWritesTheConsoleOfTheVMIntoTheLog(t *testing.T) {
+	// arrange
+	f := fakes(t)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(f.consoleLog)
+	require.NoError(t, err)
+	assert.Equal(t, "hello from the console\n", string(content))
+}
+
+func TestRunReturnsWhenQEMUCannotStart(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.QEMU = filepath.Join(t.TempDir(), "no-qemu")
+	done := make(chan error, 1)
+
+	// act
+	m := machine(t)
+
+	go func() { done <- launch.Run(context.Background(), m, options) }()
+
+	// assert
+	select {
+	case err := <-done:
+		assert.ErrorContains(t, err, "no-qemu")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+}
+
+func TestRunFailsBeforeQEMUWhenTheKernelCannotBeOpened(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+	m.Kernel = filepath.Join(t.TempDir(), "gone")
+
+	// act
+	err := launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorContains(t, err, m.Kernel)
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 
 func TestRunWhenQEMUFails(t *testing.T) {
@@ -78,7 +147,7 @@ func TestRunWhenQEMUFails(t *testing.T) {
 	t.Setenv("AIBOX_FAKE_QEMU_EXIT", "3")
 
 	// act
-	err := launch.Run(context.Background(), machine(), f.options())
+	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
 	var exitErr *exec.ExitError
@@ -94,7 +163,7 @@ func TestRunWhenVirtiofsdCreatesNoSocket(t *testing.T) {
 	options.SocketTimeout = 100 * time.Millisecond
 
 	// act
-	err := launch.Run(context.Background(), machine(), options)
+	err := launch.Run(context.Background(), machine(t), options)
 
 	// assert
 	require.ErrorIs(t, err, launch.ErrSocketTimeout)
@@ -128,7 +197,7 @@ func TestRunWhenVirtiofsdExits(t *testing.T) {
 	start := time.Now()
 
 	// act
-	err := launch.Run(context.Background(), machine(), options)
+	err := launch.Run(context.Background(), machine(t), options)
 
 	// assert
 	require.Error(t, err)
@@ -146,7 +215,7 @@ func TestRunWhenCancelledDuringStartup(t *testing.T) {
 	cancel()
 
 	// act
-	err := launch.Run(ctx, machine(), f.options())
+	err := launch.Run(ctx, machine(t), f.options())
 
 	// assert
 	assert.ErrorIs(t, err, context.Canceled)
@@ -160,7 +229,9 @@ func TestRunWhenCancelledWhileQEMURuns(t *testing.T) {
 	done := make(chan error, 1)
 
 	// act
-	go func() { done <- launch.Run(ctx, machine(), f.options()) }()
+	m := machine(t)
+
+	go func() { done <- launch.Run(ctx, m, f.options()) }()
 
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(filepath.Join(f.records, "qemu"))
@@ -199,7 +270,7 @@ func TestRunTellsTheVMTheTerminalPort(t *testing.T) {
 	f := fakes(t)
 
 	// act
-	err := launch.Run(context.Background(), machine(), f.options())
+	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
 	require.NoError(t, err)
@@ -386,15 +457,13 @@ func TestRunPointsAtTheConsoleLogWhenTheVMEndsWithoutATerminal(t *testing.T) {
 	f := fakes(t)
 	stderr := &syncBuffer{}
 	f.stderr = stderr
-	m := machine()
-	m.ConsoleLog = "/home/someone/.aibox/projects/p/console.log"
 
 	// act
-	err := launch.Run(context.Background(), m, f.options())
+	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, stderr.String(), "/home/someone/.aibox/projects/p/console.log")
+	assert.Contains(t, stderr.String(), f.consoleLog)
 }
 
 func TestRunTellsTheVMTheProxyPort(t *testing.T) {
@@ -402,7 +471,7 @@ func TestRunTellsTheVMTheProxyPort(t *testing.T) {
 	f := fakes(t)
 
 	// act
-	err := launch.Run(context.Background(), machine(), f.options())
+	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
 	require.NoError(t, err)
@@ -418,7 +487,9 @@ func running(t *testing.T, f *fakeProcesses) (net.Listener, func() error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- launch.Run(ctx, machine(), f.options()) }()
+	m := machine(t)
+
+	go func() { done <- launch.Run(ctx, m, f.options()) }()
 
 	listener := f.listener(t)
 
@@ -501,9 +572,10 @@ func TestRunReturnsWhileStdinStaysOpen(t *testing.T) {
 	options := f.options()
 	options.Stdin = stdin
 	done := make(chan error, 1)
+	m := machine(t)
 
 	// act
-	go func() { done <- launch.Run(context.Background(), machine(), options) }()
+	go func() { done <- launch.Run(context.Background(), m, options) }()
 
 	// assert
 	select {

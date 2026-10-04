@@ -153,7 +153,7 @@ func TestRunWritesTheConsoleIntoTheProjectFolder(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, f.project(t).ConsoleLog, f.launch.machine.ConsoleLog)
+	assert.Equal(t, f.project(t).ConsoleLog, f.launch.options.ConsoleLog)
 }
 
 func TestRunAttachesTheTerminal(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -98,6 +99,13 @@ type System interface {
 	Mount(source, target, fstype string, flags uintptr, data string) error
 	// Mkdir makes the folder and its parents, if missing.
 	Mkdir(path string) error
+	// Pin makes the file or folder a mount point, so that it can neither
+	// be renamed nor removed. The error wraps fs.ErrNotExist when the path
+	// does not exist, and syscall.ENOTDIR when a folder on the way is a file.
+	Pin(path string) error
+	// Protect pins the file or folder and makes it read-only, with the
+	// same errors.
+	Protect(path string) error
 	// PivotRoot makes newRoot the root and lets the old root go. putOld is
 	// where the old root goes meanwhile, as a path inside the new root.
 	PivotRoot(newRoot, putOld string) error
@@ -137,6 +145,14 @@ const (
 // ErrDamaged is returned for a state disk that has data but no ext4 file
 // system, which the init will not format over.
 var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
+
+// gitDir is pinned by protectGit, and gitConfig and gitDirs made read-only.
+const (
+	gitDir    = project + "/.git"
+	gitConfig = gitDir + "/config"
+)
+
+var gitDirs = []string{gitDir + "/hooks", gitDir + "/info"}
 
 // stateDirs are the folders of the state disk and where they are bound.
 var stateDirs = []struct{ dir, target string }{
@@ -441,6 +457,10 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	if err := protectGit(sys); err != nil {
+		return console, options, err
+	}
+
 	if err := mountState(sys); err != nil {
 		return console, options, err
 	}
@@ -472,6 +492,64 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	return console, options, nil
+}
+
+// protectGit makes the config, hooks and info of the project's .git
+// read-only, because a config key or a hook written there in the VM would
+// run on the host the next time the person uses git, and neither git
+// status nor git diff would show it. The .git folder itself is pinned, or
+// it could be renamed away and made again without the mounts. A .git that
+// is a file, as in a worktree or a submodule, names the real folder and is
+// made read-only as a whole. A missing hooks or info folder is made first,
+// since a folder made later in the VM would not be read-only.
+func protectGit(sys System) error {
+	err := sys.Pin(gitDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("pin %s: %w", gitDir, err)
+	}
+
+	err = sys.Protect(gitConfig)
+	if errors.Is(err, syscall.ENOTDIR) {
+		if err := sys.Protect(gitDir); err != nil {
+			return fmt.Errorf("protect %s: %w", gitDir, err)
+		}
+
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("protect %s: %w", gitConfig, err)
+	}
+
+	for _, dir := range gitDirs {
+		if err := protectOrMake(sys, dir); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// protectOrMake makes the folder read-only, making it first if missing.
+func protectOrMake(sys System, dir string) error {
+	err := sys.Protect(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := sys.Mkdir(dir); err != nil {
+			return fmt.Errorf("make %s: %w", dir, err)
+		}
+
+		err = sys.Protect(dir)
+	}
+
+	if err != nil {
+		return fmt.Errorf("protect %s: %w", dir, err)
+	}
+
+	return nil
 }
 
 // enterOverlay puts an overlay in RAM over the read-only root disk and

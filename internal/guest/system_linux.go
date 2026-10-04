@@ -44,6 +44,31 @@ func (Linux) Mkdir(path string) error {
 	return os.MkdirAll(path, 0o755) //nolint:gosec // a folder everyone may enter
 }
 
+// Pin binds the file or folder on itself, which no one without
+// CAP_SYS_ADMIN can undo. A symlink is refused, because the mount would
+// sit on its target while the link itself stays replaceable.
+func (Linux) Pin(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink", path)
+	}
+
+	return syscall.Mount(path, path, "", syscall.MS_BIND, "")
+}
+
+// Protect pins the file or folder and makes the mount read-only.
+func (l Linux) Protect(path string) error {
+	if err := l.Pin(path); err != nil {
+		return err
+	}
+
+	return syscall.Mount("", path, "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, "")
+}
+
 // PivotRoot makes newRoot the root, moves the old root to putOld inside
 // it, and detaches it from there.
 func (Linux) PivotRoot(newRoot, putOld string) error {

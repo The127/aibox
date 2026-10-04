@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -438,6 +439,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount tmpfs /run",
 		"mount project /project",
 		"mount home /home/user",
+		"pin /project/.git",
 		"blank /dev/vdb",
 		"format /dev/vdb",
 		"mount /dev/vdb /var/lib/aibox/state",
@@ -477,6 +479,86 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "make /run/root the root: invalid argument")
 	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
+}
+
+func TestRunProtectsTheGitConfigHooksAndInfoOfTheProject(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/hooks", "/project/.git/info"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"pin /project/.git",
+		"protect /project/.git/config",
+		"protect /project/.git/hooks",
+		"protect /project/.git/info",
+	}, sys.gitCalls())
+}
+
+func TestRunProtectsTheGitFileOfAWorktree(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git"}, gitIsFile: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"pin /project/.git",
+		"protect /project/.git/config",
+		"protect /project/.git",
+	}, sys.gitCalls())
+}
+
+func TestRunMakesTheGitHooksAndInfoFoldersWhenTheyAreMissing(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"pin /project/.git",
+		"protect /project/.git/config",
+		"protect /project/.git/hooks",
+		"mkdir /project/.git/hooks",
+		"protect /project/.git/hooks",
+		"protect /project/.git/info",
+		"mkdir /project/.git/info",
+		"protect /project/.git/info",
+	}, sys.gitCalls())
+}
+
+func TestRunLeavesAProjectWithoutGitAlone(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pin /project/.git"}, sys.gitCalls())
+}
+
+func TestRunPowersOffWhenTheGitConfigCannotBeProtected(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}, failProtect: errors.New("device busy")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "device busy")
+	assert.Contains(t, sys.consoleOutput(), "/project/.git/config")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
+	assert.Equal(t, "halt", sys.calls[len(sys.calls)-1])
 }
 
 func TestRunDoesNotFormatAStateDiskThatHasAFileSystem(t *testing.T) {
@@ -765,11 +847,16 @@ type fakeSystem struct {
 	// clientEnv is what the session client on the host sends
 	clientEnv []string
 	// started is the last command Start was given
-	started      *exec.Cmd
-	formatted    bool
-	failFormat   error
-	failMount    string
-	failPivot    bool
+	started     *exec.Cmd
+	formatted   bool
+	failFormat  error
+	failMount   string
+	failPivot   bool
+	failProtect error
+	// files are the paths of the project that exist, and gitIsFile makes
+	// .git a file instead of a folder
+	files        []string
+	gitIsFile    bool
 	failLoopback error
 	failListen   error
 	failOpen     error
@@ -855,8 +942,51 @@ func (s *fakeSystem) Own(path string) error {
 	return nil
 }
 
+// gitCalls are the calls about the project's .git, in order.
+func (s *fakeSystem) gitCalls() []string {
+	var calls []string
+
+	for _, call := range s.calls {
+		if strings.Contains(call, "/project/.git") {
+			calls = append(calls, call)
+		}
+	}
+
+	return calls
+}
+
+func (s *fakeSystem) Pin(path string) error {
+	s.record("pin " + path)
+
+	return s.exists(path)
+}
+
+func (s *fakeSystem) Protect(path string) error {
+	s.record("protect " + path)
+
+	if s.failProtect != nil {
+		return s.failProtect
+	}
+
+	return s.exists(path)
+}
+
+// exists is the error a mount on the path would give.
+func (s *fakeSystem) exists(path string) error {
+	if s.gitIsFile && strings.HasPrefix(path, "/project/.git/") {
+		return syscall.ENOTDIR
+	}
+
+	if !slices.Contains(s.files, path) {
+		return fs.ErrNotExist
+	}
+
+	return nil
+}
+
 func (s *fakeSystem) Mkdir(path string) error {
 	s.record("mkdir " + path)
+	s.files = append(s.files, path)
 
 	return nil
 }

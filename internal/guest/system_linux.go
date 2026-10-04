@@ -110,9 +110,11 @@ func (Linux) Wait() (int, int, error) {
 	return pid, status.ExitStatus(), nil
 }
 
-// Poweroff writes the file systems out and turns the VM off.
-func (Linux) Poweroff() error {
+// Halt writes the file systems out and resets the machine, which ends the
+// VM because QEMU runs with -no-reboot.
+func (Linux) Halt() error {
 	syscall.Sync()
 
-	return syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
+	// the kernel has no ACPI, so it cannot power off
+	return syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 }

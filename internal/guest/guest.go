@@ -64,7 +64,7 @@ type System interface {
 	Sethostname(name string) error
 	Start(cmd *exec.Cmd) (pid int, err error)
 	Wait() (pid, exitCode int, err error)
-	Poweroff() error
+	Halt() error
 }
 
 type mount struct {
@@ -211,8 +211,8 @@ func Forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, 
 	})
 }
 
-// Run sets the VM up, runs the command until it exits and powers off. The
-// error says what went wrong before the VM powered off.
+// Run sets the VM up, runs the command until it exits and halts the VM. The
+// error says what went wrong before the halt.
 func Run(sys System) error {
 	console, options, err := setup(sys)
 	if err == nil {
@@ -223,8 +223,8 @@ func Run(sys System) error {
 		say(console, "aibox: %v\n", err)
 	}
 
-	if offErr := sys.Poweroff(); offErr != nil {
-		return errors.Join(err, fmt.Errorf("power off: %w", offErr))
+	if haltErr := sys.Halt(); haltErr != nil {
+		return errors.Join(err, fmt.Errorf("halt: %w", haltErr))
 	}
 
 	return err

@@ -252,7 +252,7 @@ func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "loopback")
 	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunReportsABadProxyPortAndGoesOnWithoutAProxy(t *testing.T) {
@@ -292,7 +292,7 @@ func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "address in use")
 	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestCommandTurnsTheUpdaterOff(t *testing.T) {
@@ -346,7 +346,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"hostname aibox",
 		"start /usr/local/bin/claude",
 		"wait",
-		"poweroff",
+		"halt",
 	}, sys.calls)
 	assert.Equal(t, mounted{"proc", "/proc", "proc", syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/proc"])
 	assert.Equal(t, mounted{"devpts", "/dev/pts", "devpts", syscall.MS_NOSUID | syscall.MS_NOEXEC, "mode=620,ptmxmode=666,gid=5"}, sys.mounts["/dev/pts"])
@@ -364,7 +364,7 @@ func TestRunReapsOtherChildrenUntilClaudeCodeExits(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, 3, sys.waits)
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunPowersOffWhenAShareIsMissing(t *testing.T) {
@@ -378,7 +378,7 @@ func TestRunPowersOffWhenAShareIsMissing(t *testing.T) {
 	assert.ErrorContains(t, err, "home")
 	assert.Contains(t, sys.consoleOutput(), "home")
 	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunPowersOffWhenAnEarlyMountFails(t *testing.T) {
@@ -390,7 +390,7 @@ func TestRunPowersOffWhenAnEarlyMountFails(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "devtmpfs")
-	assert.Equal(t, []string{"mount devtmpfs /dev", "poweroff"}, sys.calls)
+	assert.Equal(t, []string{"mount devtmpfs /dev", "halt"}, sys.calls)
 }
 
 func TestRunPowersOffWithoutAConsole(t *testing.T) {
@@ -403,7 +403,7 @@ func TestRunPowersOffWithoutAConsole(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "no such device")
 	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunKeepsGoingWhenTheHostnameFails(t *testing.T) {
@@ -429,7 +429,7 @@ func TestRunPowersOffWhenClaudeCodeFails(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Contains(t, sys.consoleOutput(), "exit code 7")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunPowersOffWhenClaudeCodeCannotStart(t *testing.T) {
@@ -443,7 +443,7 @@ func TestRunPowersOffWhenClaudeCodeCannotStart(t *testing.T) {
 	assert.ErrorContains(t, err, "no such file")
 	assert.Contains(t, sys.consoleOutput(), "no such file")
 	assert.NotContains(t, sys.calls, "wait")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunPowersOffWhenWaitFails(t *testing.T) {
@@ -455,18 +455,18 @@ func TestRunPowersOffWhenWaitFails(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "no child processes")
-	assert.Equal(t, "poweroff", lastCall(t, sys))
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
-func TestRunReportsAFailedPoweroff(t *testing.T) {
+func TestRunReportsAFailedHalt(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, failPoweroff: errors.New("not permitted")}
+	sys := &fakeSystem{t: t, failHalt: errors.New("not permitted")}
 
 	// act
 	err := guest.Run(sys)
 
 	// assert
-	assert.ErrorContains(t, err, "power off")
+	assert.ErrorContains(t, err, "halt")
 }
 
 func lastCall(t *testing.T, sys *fakeSystem) string {
@@ -513,7 +513,7 @@ type fakeSystem struct {
 	failHostname error
 	failStart    error
 	failWait     error
-	failPoweroff error
+	failHalt     error
 }
 
 func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data string) error {
@@ -638,10 +638,10 @@ func (s *fakeSystem) Wait() (int, int, error) {
 	return s.child, s.exitCode, nil
 }
 
-func (s *fakeSystem) Poweroff() error {
-	s.record("poweroff")
+func (s *fakeSystem) Halt() error {
+	s.record("halt")
 
-	return s.failPoweroff
+	return s.failHalt
 }
 
 func (s *fakeSystem) consoleOutput() string {

@@ -8,6 +8,9 @@ import (
 	"github.com/the127/aibox/internal/vm"
 )
 
+// baseline is the kernel command line of every machine.
+const baseline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1 reboot=t"
+
 func TestQEMUArgs(t *testing.T) {
 	// arrange
 	machine := vm.Machine{
@@ -27,7 +30,7 @@ func TestQEMUArgs(t *testing.T) {
 
 	// assert
 	assert.Equal(t, []string{
-		"-machine", "microvm,acpi=on,rtc=on,memory-backend=mem",
+		"-machine", "microvm,acpi=off,rtc=on,memory-backend=mem",
 		"-enable-kvm", "-cpu", "host",
 		"-smp", "2",
 		"-m", "2048M",
@@ -35,7 +38,7 @@ func TestQEMUArgs(t *testing.T) {
 		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot",
 		"-serial", "mon:stdio",
 		"-kernel", "/images/vmlinuz",
-		"-append", "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1",
+		"-append", baseline,
 		"-drive", "id=root,file=/images/os.ext4,format=raw,if=none,snapshot=on",
 		"-device", "virtio-blk-device,drive=root",
 		"-chardev", "socket,id=share-project,path=/run/aibox/project.sock",
@@ -83,6 +86,19 @@ func TestQEMUArgsEscapesCommas(t *testing.T) {
 	assert.Contains(t, args, "socket,id=share-project,path=/run/a,,b/project.sock")
 }
 
+func TestQEMUArgsEndQEMUWhenTheVMResets(t *testing.T) {
+	// arrange
+	machine := vm.Machine{Kernel: "/images/vmlinuz", Rootfs: "/images/os.ext4", MemoryMiB: 512, CPUs: 1, GuestCID: 3}
+
+	// act
+	args := machine.QEMUArgs()
+
+	// assert
+	assert.Contains(t, args, "-no-reboot")
+	assert.Contains(t, args, baseline)
+	assert.Contains(t, baseline, "reboot=t")
+}
+
 func TestQEMUArgsWithShell(t *testing.T) {
 	// arrange
 	machine := vm.Machine{
@@ -98,7 +114,7 @@ func TestQEMUArgsWithShell(t *testing.T) {
 	args := machine.QEMUArgs()
 
 	// assert
-	assert.Contains(t, args, "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1 aibox.shell")
+	assert.Contains(t, args, baseline+" aibox.shell")
 }
 
 func TestQEMUArgsWithProxyPort(t *testing.T) {
@@ -117,7 +133,7 @@ func TestQEMUArgsWithProxyPort(t *testing.T) {
 	args := machine.QEMUArgs()
 
 	// assert
-	assert.Contains(t, args, "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1 aibox.shell aibox.proxy=4321")
+	assert.Contains(t, args, baseline+" aibox.shell aibox.proxy=4321")
 }
 
 func TestVirtiofsdArgs(t *testing.T) {

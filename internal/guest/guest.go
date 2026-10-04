@@ -50,25 +50,20 @@ var (
 	// ErrBadMountWord is an aibox.mount word that is not a share tag and an
 	// absolute path joined by a colon.
 	ErrBadMountWord = errors.New("not tag:path with an absolute path")
-	// ErrBadPathWord is an aibox.path word that is not absolute paths joined
-	// by colons.
-	ErrBadPathWord = errors.New("not absolute paths joined by colons")
 )
 
-// imagePath is where the programs of the image are. The folders of the
-// options go in front of it.
+// imagePath is where the programs of the image are. The PATH the host
+// sends goes in front of it.
 const imagePath = "/usr/local/bin:/usr/bin:/bin"
 
 // Options come from the kernel command line. Mounts are the shares of the
-// host that are mounted read-only where the host says, and Path are the
-// folders that go in front of the PATH of the image.
+// host that are mounted read-only where the host says.
 type Options struct {
 	Console      string
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
-	Path         []string
 }
 
 // Mount is a share of the host and the path the VM mounts it on.
@@ -184,30 +179,10 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.TerminalPort = port(key, value)
 		case "aibox.mount":
 			mount(value)
-		case "aibox.path":
-			path, err := parsePath(value)
-			if err != nil {
-				errs = append(errs, err)
-			} else {
-				options.Path = path
-			}
 		}
 	}
 
 	return options, errors.Join(errs...)
-}
-
-// parsePath drops a bad word whole, because half a PATH could put the wrong
-// folder in front of git and claude.
-func parsePath(value string) ([]string, error) {
-	entries := strings.Split(value, ":")
-	for _, entry := range entries {
-		if !filepath.IsAbs(entry) || filepath.Clean(entry) == "/" {
-			return nil, fmt.Errorf("aibox.path=%q: %w", value, ErrBadPathWord)
-		}
-	}
-
-	return entries, nil
 }
 
 // parseMount reads a tag:path word. The host checked the path already, but
@@ -234,15 +209,20 @@ func parsePort(key, value string) (uint32, error) {
 
 // Command is Claude Code, or a shell when the options ask for one, set up to
 // run as the user on the terminal with the TERM and the variables of the
-// request.
+// request. The folders of a PATH in the request go in front of the PATH of
+// the image. The other variables aibox sets itself keep their values.
 func Command(options Options, terminal *os.File, request session.Request) *exec.Cmd {
 	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
 	if options.Shell {
 		cmd = exec.Command(bash, "-l")
 	}
 
+	hostPath, requested := takeVariable(request.Env, "PATH")
+	own := ownVariables(options, request.Term, hostPath)
+	accepted, _ := splitVariables(own, requested)
+
 	cmd.Dir = project
-	cmd.Env = slices.Concat(ownVariables(options, request.Term), request.Env)
+	cmd.Env = slices.Concat(own, accepted)
 	cmd.Stdin = terminal
 	cmd.Stdout = terminal
 	cmd.Stderr = terminal
@@ -256,15 +236,51 @@ func Command(options Options, terminal *os.File, request session.Request) *exec.
 	return cmd
 }
 
-// ownVariables are the variables aibox sets for the command.
-func ownVariables(options Options, term string) []string {
+// refused are the names of the variables of the request that aibox sets
+// itself and keeps.
+func refused(options Options, request session.Request) []string {
+	_, requested := takeVariable(request.Env, "PATH")
+	_, rejected := splitVariables(ownVariables(options, request.Term, ""), requested)
+
+	return rejected
+}
+
+// takeVariable returns the value of the variable in the list and the list
+// without it.
+func takeVariable(env []string, name string) (string, []string) {
+	var (
+		value string
+		rest  []string
+	)
+
+	for _, variable := range env {
+		if v, ok := strings.CutPrefix(variable, name+"="); ok {
+			value = v
+		} else {
+			rest = append(rest, variable)
+		}
+	}
+
+	return value, rest
+}
+
+// ownVariables are the variables aibox sets for the command, with the
+// folders of the host in front of the PATH. A folder that is not absolute
+// is left out, like the host does, in case another client sends one.
+func ownVariables(options Options, term, hostPath string) []string {
+	path := imagePath
+
+	if folders := slices.DeleteFunc(strings.Split(hostPath, ":"), notAFolder); len(folders) > 0 {
+		path = strings.Join(folders, ":") + ":" + imagePath
+	}
+
 	env := []string{
 		"AIBOX=1",
 		"HOME=" + home,
 		"USER=" + userName,
 		"LOGNAME=" + userName,
 		"SHELL=" + bash,
-		"PATH=" + strings.Join(append(slices.Clone(options.Path), imagePath), ":"),
+		"PATH=" + path,
 		"TERM=" + term,
 		"LANG=C.UTF-8",
 		// an update would land in the home share and never run, because the
@@ -285,6 +301,10 @@ func ownVariables(options Options, term string) []string {
 	}
 
 	return env
+}
+
+func notAFolder(folder string) bool {
+	return !filepath.IsAbs(folder) || filepath.Clean(folder) == "/"
 }
 
 // splitVariables sorts the variables of the host into the ones to take and
@@ -460,12 +480,9 @@ func start(sys System, options Options, request session.Request, console io.Writ
 		say(console, "aibox: own the terminal: %v\n", err)
 	}
 
-	accepted, rejected := splitVariables(ownVariables(options, request.Term), request.Env)
-	if len(rejected) > 0 {
+	if rejected := refused(options, request); len(rejected) > 0 {
 		say(console, "aibox: %s stay as the VM sets them\n", strings.Join(rejected, ", "))
 	}
-
-	request.Env = accepted
 
 	cmd := Command(options, pty.Slave, request)
 

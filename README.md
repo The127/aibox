@@ -54,9 +54,14 @@ other mounts. Each mount is shared over virtio-fs like the project folder,
 with names and attributes cached for the whole run, so a change to the
 folder on the host may not show in a running VM.
 
-`path` lists absolute folders in the VM that go in front of its `PATH`, for
-Claude Code and the shell alike, for example `/opt/go/bin` from the mount
-above. The entries are not checked against the mounts.
+`path` lists folders in the VM that go in front of its `PATH`, for Claude
+Code and the shell alike, for example `/opt/go/bin` from the mount above. An
+entry that is a variable name, such as `PATH` or `DIRENV_PATH`, stands for
+the folders in that variable of the host, less the relative and empty ones.
+So the tools of a `nix develop` or `direnv` shell on the host are found in
+the VM, if `/nix/store` is mounted at the same path. The folders are not
+checked against the mounts. They are sent with the other variables when the
+terminal session starts.
 
 `env` lists variables for the command in the VM. `NAME=value` sets a value,
 `NAME` alone passes the value the host has when the VM starts, which is how

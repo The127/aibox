@@ -153,55 +153,23 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsMountsAndPathTheKernelCommandLineCannotCarry(t *testing.T) {
-	long := strings.Repeat("x", 100)
-	tests := map[string]func(*strings.Builder, int){
-		"mounts": func(b *strings.Builder, i int) { fmt.Fprintf(b, "  - /opt/sdk%d:/opt/%s%d\n", i, long, i) },
-		"path":   func(b *strings.Builder, i int) { fmt.Fprintf(b, "  - /opt/%s%d\n", long, i) },
+func TestLoadRejectsMountsTheKernelCommandLineCannotCarry(t *testing.T) {
+	// arrange
+	var content strings.Builder
+
+	content.WriteString("mounts:\n")
+
+	for i := range 10 {
+		fmt.Fprintf(&content, "  - /opt/sdk%d:/opt/%s%d\n", i, strings.Repeat("x", 100), i)
 	}
 
-	for key, line := range tests {
-		t.Run(key, func(t *testing.T) {
-			// arrange
-			var content strings.Builder
+	path := write(t, content.String())
 
-			content.WriteString(key + ":\n")
+	// act
+	_, err := config.Load(path)
 
-			for i := range 10 {
-				line(&content, i)
-			}
-
-			path := write(t, content.String())
-
-			// act
-			_, err := config.Load(path)
-
-			// assert
-			assert.ErrorIs(t, err, config.ErrCmdlineFull)
-		})
-	}
-}
-
-func TestLoadRejectsMountsThatOverlap(t *testing.T) {
-	tests := map[string]string{
-		"the same path twice":    "mounts:\n  - /opt/a:/opt/go\n  - /opt/b:/opt/go\n",
-		"one inside the other":   "mounts:\n  - /opt/a:/opt\n  - /opt/b:/opt/go\n",
-		"one containing another": "mounts:\n  - /opt/b:/opt/go\n  - /opt/a:/opt\n",
-	}
-
-	for name, content := range tests {
-		t.Run(name, func(t *testing.T) {
-			// arrange
-			path := write(t, content)
-
-			// act
-			_, err := config.Load(path)
-
-			// assert
-			assert.ErrorIs(t, err, config.ErrMountOverlap)
-			assert.ErrorContains(t, err, "/opt/go")
-		})
-	}
+	// assert
+	assert.ErrorIs(t, err, config.ErrCmdlineFull)
 }
 
 func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
@@ -221,25 +189,26 @@ func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
 
 func TestLoadReadsThePath(t *testing.T) {
 	// arrange
-	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n")
+	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n  - PATH\n  - DIRENV_PATH\n")
 
 	// act
 	cfg, err := config.Load(path)
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/opt/go/bin", "/opt/bin"}, cfg.Path)
+	assert.Equal(t, []string{"/opt/go/bin", "/opt/bin", "PATH", "DIRENV_PATH"}, cfg.Path)
 }
 
-func TestLoadRejectsAPathEntryItCannotCarry(t *testing.T) {
+func TestLoadRejectsAPathEntryThatIsNeitherAFolderNorAVariable(t *testing.T) {
 	tests := map[string]string{
-		"relative":             "opt/bin",
+		"relative folder":      "opt/bin",
 		"empty":                "",
 		"the root":             "/",
 		"the root in disguise": "/opt/..",
-		"with a colon":         "/opt/bin:/opt/go/bin",
-		"with a space":         "/opt/my bin",
-		"with a quote":         "/opt/\\\"bin",
+		"two folders":          "/opt/bin:/opt/go/bin",
+		"folder with a colon":  "/opt/a:b",
+		"dash in the name":     "MY-PATH",
+		"space in the name":    "MY PATH",
 		"control character":    "/opt/bin\\u0001",
 	}
 

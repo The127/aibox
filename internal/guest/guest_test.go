@@ -35,15 +35,14 @@ var withTerminal = fmt.Sprintf("console=hvc0 aibox.terminal=%d", terminalPort)
 func TestParseCmdline(t *testing.T) {
 	// arrange
 	tests := map[string]guest.Options{
-		"root=/dev/vda rw console=ttyS0 quiet":         {Console: "/dev/ttyS0"},
-		"console=hvc0 aibox.shell":                     {Console: "/dev/hvc0", Shell: true},
-		"root=/dev/vda":                                {Console: "/dev/console"},
-		"console=ttyS0 aibox.shell=1 panic=-1":         {Console: "/dev/ttyS0", Shell: true},
-		"console=tty0 console=ttyS0,115200n8":          {Console: "/dev/ttyS0"},
-		"console= quiet":                               {Console: "/dev/console"},
-		"console=ttyS0 aibox.proxy=4321":               {Console: "/dev/ttyS0", ProxyPort: 4321},
-		"console=hvc0 aibox.terminal=5432":             {Console: "/dev/hvc0", TerminalPort: 5432},
-		"console=hvc0 aibox.path=/opt/go/bin:/opt/bin": {Console: "/dev/hvc0", Path: []string{"/opt/go/bin", "/opt/bin"}},
+		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
+		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
+		"root=/dev/vda":                        {Console: "/dev/console"},
+		"console=ttyS0 aibox.shell=1 panic=-1": {Console: "/dev/ttyS0", Shell: true},
+		"console=tty0 console=ttyS0,115200n8":  {Console: "/dev/ttyS0"},
+		"console= quiet":                       {Console: "/dev/console"},
+		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
+		"console=hvc0 aibox.terminal=5432":     {Console: "/dev/hvc0", TerminalPort: 5432},
 		"console=hvc0 aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin": {
 			Console: "/dev/hvc0",
 			Mounts:  []guest.Mount{{Tag: "mount0", Path: "/opt/go"}, {Tag: "mount1", Path: "/opt/bin"}},
@@ -58,19 +57,6 @@ func TestParseCmdline(t *testing.T) {
 			// assert
 			require.NoError(t, err)
 			assert.Equal(t, want, options)
-		})
-	}
-}
-
-func TestParseCmdlineRejectsAPathItCannotRead(t *testing.T) {
-	for _, value := range []string{"", "opt/bin", "/opt/bin:", "/opt/bin::/opt/go/bin", "/", "/opt/bin:/.."} {
-		t.Run(value, func(t *testing.T) {
-			// act
-			options, err := guest.ParseCmdline("console=hvc0 aibox.path=" + value)
-
-			// assert
-			assert.ErrorIs(t, err, guest.ErrBadPathWord)
-			assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
 		})
 	}
 }
@@ -143,15 +129,28 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	assert.Contains(t, cmd.Env, "no_proxy=localhost,127.0.0.1")
 }
 
-func TestCommandPutsThePathOfTheOptionsBeforeTheImage(t *testing.T) {
+func TestCommandPutsThePathOfTheHostBeforeTheImage(t *testing.T) {
 	// arrange
 	tty := newConsoleFile(t)
+	request := session.Request{Term: "xterm", Env: []string{"PATH=/opt/go/bin:/opt/bin", "GOFLAGS=-mod=mod"}}
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), Path: []string{"/opt/go/bin", "/opt/bin"}}, tty, session.Request{Term: "xterm"})
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, request)
 
 	// assert
 	assert.Contains(t, cmd.Env, "PATH=/opt/go/bin:/opt/bin:/usr/local/bin:/usr/bin:/bin")
+}
+
+func TestCommandLeavesOutFoldersOfTheHostThatAreNotAbsolute(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+	request := session.Request{Term: "xterm", Env: []string{"PATH=rel/bin::/:/opt/bin"}}
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, request)
+
+	// assert
+	assert.Contains(t, cmd.Env, "PATH=/opt/bin:/usr/local/bin:/usr/bin:/bin")
 }
 
 func TestCommandTakesTheVariablesOfTheHost(t *testing.T) {
@@ -169,31 +168,33 @@ func TestCommandTakesTheVariablesOfTheHost(t *testing.T) {
 
 func TestRunKeepsItsOwnVariablesOverThoseOfTheHost(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, clientEnv: []string{"PATH=/evil", "HOME=/elsewhere", "GOFLAGS=-mod=mod"}}
+	sys := &fakeSystem{t: t, clientEnv: []string{"HOME=/elsewhere", "TERM=vt100", "PATH=/opt/bin", "GOFLAGS=-mod=mod"}}
 
 	// act
 	err := guest.Run(sys)
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, sys.started.Env, "PATH=/usr/local/bin:/usr/bin:/bin")
 	assert.Contains(t, sys.started.Env, "HOME=/home/user")
-	assert.NotContains(t, sys.started.Env, "PATH=/evil")
+	assert.Contains(t, sys.started.Env, "TERM=xterm-kitty")
+	assert.Contains(t, sys.started.Env, "PATH=/opt/bin:/usr/local/bin:/usr/bin:/bin")
 	assert.NotContains(t, sys.started.Env, "HOME=/elsewhere")
+	assert.NotContains(t, sys.started.Env, "TERM=vt100")
 	assert.Contains(t, sys.started.Env, "GOFLAGS=-mod=mod")
 }
 
 func TestRunTellsTheConsoleAboutVariablesItDropped(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, clientEnv: []string{"PATH=/evil", "HOME=/elsewhere", "GOFLAGS=-mod=mod"}}
+	sys := &fakeSystem{t: t, clientEnv: []string{"HOME=/elsewhere", "TERM=vt100", "PATH=/opt/bin", "GOFLAGS=-mod=mod"}}
 
 	// act
 	err := guest.Run(sys)
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, sys.consoleOutput(), "aibox: PATH, HOME stay as the VM sets them")
+	assert.Contains(t, sys.consoleOutput(), "aibox: HOME, TERM stay as the VM sets them")
 	assert.NotContains(t, sys.consoleOutput(), "GOFLAGS")
+	assert.NotContains(t, sys.consoleOutput(), "PATH")
 }
 
 func TestCommandWithoutAProxy(t *testing.T) {

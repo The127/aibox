@@ -7,6 +7,8 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -84,7 +86,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	env, err := environment(cfg.Env, deps.lookupEnv)
+	env, err := hostVariables(cfg, deps.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -118,13 +120,78 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		GuestCID:   randomCID(),
 		Shell:      cmd.Bool("shell"),
 		ConsoleLog: p.ConsoleLog,
-		Path:       cfg.Path,
 	}
 
 	options := launchOptions(cfg, p, log)
 	options.Env = env
 
 	return deps.run(ctx, machine, options)
+}
+
+// maxPathBytes is what the PATH for the VM may be long. The session carries
+// it in one packet.
+const maxPathBytes = 16 * 1024
+
+// hostVariables returns the variables for the VM as NAME=value: the env
+// entries, with the values of the pass-through ones from the host, and the
+// PATH from the path entries.
+func hostVariables(cfg config.Config, lookup func(string) (string, bool)) ([]string, error) {
+	env, err := environment(cfg.Env, lookup)
+	if err != nil {
+		return nil, err
+	}
+
+	folders, err := pathFolders(cfg.Path, lookup)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(folders) == 0 {
+		return env, nil
+	}
+
+	path := strings.Join(folders, ":")
+	if len(path) > maxPathBytes {
+		return nil, fmt.Errorf("path: %d bytes of folders are too many for the VM", len(path))
+	}
+
+	return append(env, "PATH="+path), nil
+}
+
+// pathFolders returns the folders of the path entries once each. An entry
+// that names a variable of the host stands for the folders in it, less the
+// ones that cannot be on the PATH of the VM.
+func pathFolders(entries []string, lookup func(string) (string, bool)) ([]string, error) {
+	var folders []string
+
+	for _, entry := range entries {
+		if filepath.IsAbs(entry) {
+			folders = appendFolder(folders, entry)
+
+			continue
+		}
+
+		value, ok := lookup(entry)
+		if !ok {
+			return nil, fmt.Errorf("path %s is not set on the host", entry)
+		}
+
+		for _, folder := range strings.Split(value, ":") {
+			if filepath.IsAbs(folder) && filepath.Clean(folder) != "/" {
+				folders = appendFolder(folders, filepath.Clean(folder))
+			}
+		}
+	}
+
+	return folders, nil
+}
+
+func appendFolder(folders []string, folder string) []string {
+	if slices.Contains(folders, folder) {
+		return folders
+	}
+
+	return append(folders, folder)
 }
 
 // environment returns the variables of the config as NAME=value, taking

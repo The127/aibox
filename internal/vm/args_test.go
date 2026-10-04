@@ -197,24 +197,6 @@ func TestQEMUArgsTellTheVMWhereToMountAShare(t *testing.T) {
 	assert.Contains(t, args, baseline+" aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin")
 }
 
-func TestQEMUArgsTellTheVMThePath(t *testing.T) {
-	// arrange
-	machine := vm.Machine{
-		Kernel:    "/images/vmlinuz",
-		Rootfs:    "/images/os.ext4",
-		MemoryMiB: 512,
-		CPUs:      1,
-		GuestCID:  3,
-		Path:      []string{"/opt/go/bin", "/opt/bin"},
-	}
-
-	// act
-	args := machine.QEMUArgs()
-
-	// assert
-	assert.Contains(t, args, baseline+" aibox.path=/opt/go/bin:/opt/bin")
-}
-
 func TestVirtiofsdArgsServeAShareWithAGuestPathReadOnly(t *testing.T) {
 	// arrange
 	share := vm.Share{Tag: "mount0", Dir: "/opt/sdk/go", Socket: "/run/aibox/mount0.sock", Guest: "/opt/go"}

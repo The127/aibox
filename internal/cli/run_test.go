@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -311,18 +313,102 @@ func TestRunSharesTheMountsOfTheConfigReadOnly(t *testing.T) {
 	}, f.launch.machine.Shares)
 }
 
-func TestRunPassesThePathOfTheConfigToTheMachine(t *testing.T) {
+func TestRunSendsThePathOfTheConfigAsAVariable(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
-	f.writeConfig(t, "path:\n  - /opt/go/bin\n  - /opt/bin\n")
+	f.writeConfig(t, "path:\n  - /opt/go/bin\n  - /opt/bin\nenv:\n  - GOFLAGS=-mod=mod\n")
 
 	// act
 	err := f.run("--image", image)
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/opt/go/bin", "/opt/bin"}, f.launch.machine.Path)
+	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "PATH=/opt/go/bin:/opt/bin"}, f.launch.options.Env)
+}
+
+func TestRunTakesTheFoldersOfAVariableInThePath(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.lookupEnv = func(name string) (string, bool) {
+		if name == "PATH" {
+			return "/nix/store/abc-go/bin:/usr/bin:rel/bin::/home/me/bin/", true
+		}
+
+		return "", false
+	}
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "path:\n  - /opt/bin\n  - PATH\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"PATH=/opt/bin:/nix/store/abc-go/bin:/usr/bin:/home/me/bin"}, f.launch.options.Env)
+}
+
+func TestRunWithoutAPathSendsNoPathVariable(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - GOFLAGS=-mod=mod\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GOFLAGS=-mod=mod"}, f.launch.options.Env)
+}
+
+func TestRunSendsEachFolderOfThePathOnce(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.lookupEnv = func(string) (string, bool) { return "/usr/bin:/opt/bin:/usr/bin", true }
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "path:\n  - /opt/bin\n  - PATH\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"PATH=/opt/bin:/usr/bin"}, f.launch.options.Env)
+}
+
+func TestRunFailsWhenThePathIsTooLongForTheVM(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	folders := make([]string, 200)
+	for i := range folders {
+		folders[i] = fmt.Sprintf("/%0100d", i)
+	}
+
+	f.deps.lookupEnv = func(string) (string, bool) { return strings.Join(folders, ":"), true }
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "path:\n  - PATH\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorContains(t, err, "path")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunFailsWhenAVariableInThePathIsNotSetOnTheHost(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "path:\n  - DIRENV_PATH\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorContains(t, err, "DIRENV_PATH")
+	assert.False(t, f.launch.called)
 }
 
 func TestRunPassesTheEnvOfTheConfigToTheSession(t *testing.T) {

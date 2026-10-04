@@ -21,9 +21,8 @@ const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-
 // a shell instead of Claude Code. ProxyPort and TerminalPort are the vsock
 // ports of the proxy and the terminal session on the host, and 0 leaves
 // the port off the kernel command line. ConsoleLog is the file the console
-// of the VM is written to, and "" throws it away. Path are folders in the
-// VM that go in front of its PATH. Owner is the host user the VM user stands
-// for in the shares, and nil leaves the ids as they are.
+// of the VM is written to, and "" throws it away. Owner is the host user
+// the VM user stands for in the shares, and nil leaves the ids as they are.
 type Machine struct {
 	Kernel       string
 	Rootfs       string
@@ -35,7 +34,6 @@ type Machine struct {
 	ProxyPort    uint32
 	TerminalPort uint32
 	ConsoleLog   string
-	Path         []string
 	Owner        *Owner
 }
 
@@ -117,10 +115,6 @@ func (m Machine) cmdline() string {
 		if share.Guest != "" {
 			words = append(words, "aibox.mount="+share.Tag+":"+share.Guest)
 		}
-	}
-
-	if len(m.Path) > 0 {
-		words = append(words, "aibox.path="+strings.Join(m.Path, ":"))
 	}
 
 	return strings.Join(words, " ")

@@ -41,9 +41,9 @@ var ErrReservedMount = errors.New("the VM needs this path")
 // contains, that of another entry.
 var ErrMountOverlap = errors.New("mounts overlap")
 
-// ErrBadPath is a path entry that is not an absolute path the kernel command
-// line can carry, or that has a colon.
-var ErrBadPath = errors.New("must be an absolute path without a colon")
+// ErrBadPath is a path entry that is neither an absolute folder without a
+// colon nor the name of a variable.
+var ErrBadPath = errors.New("must be an absolute folder without a colon, or the name of a variable")
 
 // ErrBadVariable is an env entry that is not NAME or NAME=value with a
 // name of letters, digits and underscores.
@@ -53,9 +53,10 @@ var ErrBadVariable = errors.New("must be NAME or NAME=value")
 var ErrReservedVariable = errors.New("aibox sets this variable itself")
 
 // reservedVariables are the names the guest sets for the command, so that
-// an entry with one of them fails at load time. The guest keeps its own
-// values anyway. The list has to match ownVariables in internal/guest,
-// which this package cannot import.
+// an env entry with one of them fails at load time. The guest keeps its own
+// values for them anyway, except for PATH, which the path setting fills.
+// The list has to match ownVariables in internal/guest, which this package
+// cannot import.
 var reservedVariables = []string{
 	"AIBOX", "HOME", "USER", "LOGNAME", "SHELL", "PATH", "TERM", "LANG",
 	"HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy",
@@ -64,9 +65,9 @@ var reservedVariables = []string{
 
 var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// ErrCmdlineFull are mounts and path entries that together do not fit on
-// the kernel command line.
-var ErrCmdlineFull = errors.New("the mounts and the path together do not fit on the kernel command line")
+// ErrCmdlineFull are mounts that together do not fit on the kernel command
+// line.
+var ErrCmdlineFull = errors.New("the mounts do not fit on the kernel command line together")
 
 // reservedPaths are what the VM mounts itself, the two shares and the
 // kernel file systems, and the folders its programs live in. A mount on,
@@ -76,9 +77,9 @@ var reservedPaths = []string{
 	"/etc", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/root",
 }
 
-// maxCmdlineBytes is what the mounts and the path may take up together on
-// the kernel command line, which holds 2048 bytes and needs room for the
-// rest. wordBytes is what aibox adds around each entry.
+// maxCmdlineBytes is what the mounts may take up together on the kernel
+// command line, which holds 2048 bytes and needs room for the rest.
+// wordBytes is what aibox adds around each entry.
 const (
 	maxCmdlineBytes = 1024
 	wordBytes       = 24
@@ -109,7 +110,8 @@ type Config struct {
 	CPUs *int `yaml:"cpus"`
 	// Mounts are folders of the host the VM sees read-only.
 	Mounts []Mount `yaml:"mounts"`
-	// Path are folders in the VM that go in front of its PATH.
+	// Path are folders in the VM that go in front of its PATH, or names of
+	// variables of the host whose folders do.
 	Path []string `yaml:"path"`
 	// Env are variables for the command in the VM.
 	Env []Variable `yaml:"env"`
@@ -275,9 +277,12 @@ allow:
 # mounts:
 #   - ~/sdk/go:/opt/go
 
-# Folders in the VM that go in front of its PATH, for example:
+# Folders in the VM that go in front of its PATH. A name such as PATH stands
+# for the folders in that variable of the host, which then need a mount at
+# the same path in the VM. For example:
 # path:
 #   - /opt/go/bin
+#   - PATH
 
 # Variables for the command in the VM, as NAME=value, or as NAME for the
 # value the host has when the VM starts, for example:
@@ -389,24 +394,24 @@ func parse(content []byte) (Config, error) {
 }
 
 func parsePathEntry(text string) (string, error) {
-	if !filepath.IsAbs(text) || strings.Contains(text, ":") || !cmdlineSafe(text) || filepath.Clean(text) == "/" {
+	if variableName.MatchString(text) {
+		return text, nil
+	}
+
+	if !filepath.IsAbs(text) || filepath.Clean(text) == "/" || strings.Contains(text, ":") || strings.ContainsFunc(text, unicode.IsControl) {
 		return "", fmt.Errorf("path entry %q: %w", text, ErrBadPath)
 	}
 
 	return filepath.Clean(text), nil
 }
 
-// fitsCmdline fails when the mounts and the path together are too much
-// for the kernel command line.
+// fitsCmdline fails when the mounts together are too much for the kernel
+// command line.
 func fitsCmdline(cfg Config) error {
 	total := 0
 
 	for _, m := range cfg.Mounts {
 		total += wordBytes + len(m.Guest)
-	}
-
-	for _, entry := range cfg.Path {
-		total += wordBytes + len(entry)
 	}
 
 	if total > maxCmdlineBytes {

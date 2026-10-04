@@ -217,26 +217,6 @@ func TestRunTakesTheSizeFromTheConfigUnlessAFlagIsGiven(t *testing.T) {
 	}
 }
 
-func TestRunPicksADifferentCIDEachTime(t *testing.T) {
-	// arrange
-	f := newFixture(t)
-	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
-	cids := map[uint32]bool{}
-
-	// act
-	for range 5 {
-		require.NoError(t, f.run("--image", image))
-		cids[f.launch.machine.GuestCID] = true
-	}
-
-	// assert
-	assert.Greater(t, len(cids), 1)
-
-	for cid := range cids {
-		assert.GreaterOrEqual(t, cid, uint32(3))
-	}
-}
-
 func TestRunWithoutImage(t *testing.T) {
 	// arrange
 	f := newFixture(t)

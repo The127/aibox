@@ -21,6 +21,7 @@ import (
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/vm"
+	"github.com/the127/aibox/internal/vsockns"
 )
 
 // ErrSocketTimeout is returned when virtiofsd does not create its socket in
@@ -30,7 +31,6 @@ var ErrSocketTimeout = errors.New("virtiofsd did not create its socket in time")
 const (
 	defaultSocketTimeout = 10 * time.Second
 	defaultKVMDevice     = "/dev/kvm"
-	defaultVhostDevice   = "/dev/vhost-vsock"
 	stopDelay            = time.Second
 	// sessionEndDelay is how long the session may go on after QEMU has
 	// exited, to show the last output of the VM.
@@ -49,16 +49,14 @@ type Options struct {
 	// SocketTimeout is how long virtiofsd may take to create its socket.
 	// Zero means ten seconds.
 	SocketTimeout time.Duration
-	// ListenVsock opens a listener the VM reaches the host on and returns
-	// its port. Nil listens on vsock.
-	ListenVsock func() (net.Listener, uint32, error)
-	Proxy       proxy.Options
+	// OpenVsock opens the vsock the VM and aibox talk over. Nil runs the
+	// namespace helper of aibox.
+	OpenVsock func() (*vsockns.Vsock, error)
+	Proxy     proxy.Options
 	// Env are variables for the command in the VM, as NAME=value.
 	Env []string
-	// KVMDevice and VhostDevice are the device files QEMU gets. Empty means
-	// /dev/kvm and /dev/vhost-vsock.
-	KVMDevice   string
-	VhostDevice string
+	// KVMDevice is the KVM device file QEMU gets. Empty means /dev/kvm.
+	KVMDevice string
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string
@@ -77,16 +75,12 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		options.Stderr = io.Discard
 	}
 
-	if options.ListenVsock == nil {
-		options.ListenVsock = listenVsock
+	if options.OpenVsock == nil {
+		options.OpenVsock = func() (*vsockns.Vsock, error) { return vsockns.Open(vsockns.Command) }
 	}
 
 	if options.KVMDevice == "" {
 		options.KVMDevice = defaultKVMDevice
-	}
-
-	if options.VhostDevice == "" {
-		options.VhostDevice = defaultVhostDevice
 	}
 
 	sockets, err := os.MkdirTemp("", "aibox-")
@@ -109,8 +103,16 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		return err
 	}
 
-	files, err := openFiles(machine, options)
+	vsock, err := options.OpenVsock()
 	if err != nil {
+		return err
+	}
+
+	files, err := openFiles(machine, options, vsock.Vhost)
+	if err != nil {
+		_ = vsock.Proxy.Close()
+		_ = vsock.Terminal.Close()
+
 		return err
 	}
 
@@ -118,21 +120,13 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	logged := logConsole(files.console, options.ConsoleLog, options.Stderr)
 
-	port, stopProxy, err := serveProxy(ctx, machine.GuestCID, options)
-	if err != nil {
-		return err
-	}
-
+	stopProxy := serveProxy(ctx, vsock.Proxy, options)
 	defer stopProxy()
 
-	machine.ProxyPort = port
+	machine.ProxyPort = vsock.ProxyPort
 
-	terminalPort, stopTerminal, err := serveTerminal(ctx, machine.GuestCID, options)
-	if err != nil {
-		return err
-	}
-
-	machine.TerminalPort = terminalPort
+	stopTerminal := serveTerminal(ctx, vsock.Terminal, options)
+	machine.TerminalPort = vsock.TerminalPort
 
 	err = runQEMU(ctx, machine, files, options)
 
@@ -156,8 +150,9 @@ type qemuFiles struct {
 // openFiles opens everything QEMU needs, so that QEMU opens no path itself
 // and a missing file is reported before it starts. The caller closes the
 // extra files once QEMU has them, and the console when the log is done.
-func openFiles(machine vm.Machine, options Options) (_ *qemuFiles, err error) {
+func openFiles(machine vm.Machine, options Options, vhost *os.File) (_ *qemuFiles, err error) {
 	files := &qemuFiles{}
+	files.numbers.Vhost = files.add(vhost)
 
 	defer func() {
 		if err != nil {
@@ -170,10 +165,6 @@ func openFiles(machine vm.Machine, options Options) (_ *qemuFiles, err error) {
 	}()
 
 	if files.numbers.KVM, err = files.open("KVM device", options.KVMDevice, os.O_RDWR); err != nil {
-		return nil, err
-	}
-
-	if files.numbers.Vhost, err = files.open("vhost-vsock device", options.VhostDevice, os.O_RDWR); err != nil {
 		return nil, err
 	}
 
@@ -320,46 +311,34 @@ func startDaemons(shares []vm.Share, owner *vm.Owner, options Options) (<-chan e
 	return died, stop, nil
 }
 
-// serveProxy listens for the VM and serves the proxy to it until the
-// returned function is called, which also waits for the proxy to stop.
-func serveProxy(ctx context.Context, cid uint32, options Options) (uint32, func(), error) {
-	listener, port, err := options.ListenVsock()
-	if err != nil {
-		return 0, nil, fmt.Errorf("listen for the VM: %w", err)
-	}
-
+// serveProxy serves the proxy to the VM on the listener until the returned
+// function is called, which also waits for the proxy to stop.
+func serveProxy(ctx context.Context, listener net.Listener, options Options) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 
-	go func() { done <- proxy.Serve(ctx, forGuest(listener, cid), options.Proxy) }()
+	go func() { done <- proxy.Serve(ctx, forGuest(listener), options.Proxy) }()
 
-	stop := func() {
+	return func() {
 		cancel()
 
 		if err := <-done; err != nil {
 			_, _ = fmt.Fprintf(options.Stderr, "aibox: the proxy stopped: %v\n", err)
 		}
 	}
-
-	return port, stop, nil
 }
 
-// serveTerminal listens for the VM and runs its session on the terminal of
-// the person until the returned function is called. That function lets the
-// session end, waits for the terminal to be restored and reports whether
-// the VM ever connected.
-func serveTerminal(ctx context.Context, cid uint32, options Options) (uint32, func() bool, error) {
-	listener, port, err := options.ListenVsock()
-	if err != nil {
-		return 0, nil, fmt.Errorf("listen for the terminal of the VM: %w", err)
-	}
-
+// serveTerminal runs the session of the VM on the terminal of the person
+// until the returned function is called. That function lets the session
+// end, waits for the terminal to be restored and reports whether the VM
+// ever connected.
+func serveTerminal(ctx context.Context, listener net.Listener, options Options) func() bool {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan bool, 1)
 
-	go func() { done <- attach(ctx, forGuest(listener, cid), options) }()
+	go func() { done <- attach(ctx, forGuest(listener), options) }()
 
-	stop := func() bool {
+	return func() bool {
 		_ = listener.Close()
 
 		select {
@@ -371,8 +350,6 @@ func serveTerminal(ctx context.Context, cid uint32, options Options) (uint32, fu
 			return <-done
 		}
 	}
-
-	return port, stop, nil
 }
 
 // attach waits for the VM to connect and runs the session on the terminal
@@ -491,20 +468,11 @@ func isSocket(path string) bool {
 	return err == nil && info.Mode()&os.ModeSocket != 0
 }
 
-func listenVsock() (net.Listener, uint32, error) {
-	listener, err := vsock.Listen(0, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return listener, listener.Addr().(*vsock.Addr).Port, nil
-}
-
-// forGuest returns a listener that accepts the connections of the VM with
-// the context ID and closes all others. A vsock listener on the host gets
-// the connections of every VM.
-func forGuest(listener net.Listener, cid uint32) net.Listener {
-	return &guestListener{Listener: listener, cid: cid}
+// forGuest returns a listener that accepts the connections of the VM and
+// closes all others. Only the VM is in its vsock namespace, so this is a
+// check, not a filter.
+func forGuest(listener net.Listener) net.Listener {
+	return &guestListener{Listener: listener, cid: vm.GuestCID}
 }
 
 type guestListener struct {

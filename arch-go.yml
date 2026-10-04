@@ -52,6 +52,7 @@ dependenciesRules:
         - '**.internal.vm$'
         - '**.internal.proxy$'
         - '**.internal.session$'
+        - '**.internal.vsockns$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
@@ -75,6 +76,14 @@ dependenciesRules:
         - 'github.com/urfave/cli/v3'
   # the session speaks SSH over a connection and knows nothing else
   - package: '**.internal.session$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the vsock namespace helper knows the kernel and nothing of aibox
+  - package: '**.internal.vsockns$'
     shouldNotDependsOn:
       internal:
         - '**.internal.**'
@@ -109,6 +118,7 @@ dependenciesRules:
         - '**.internal.config$'
         - '**.internal.proxy$'
         - '**.internal.gitconfig$'
+        - '**.internal.vsockns$'
   # the guest is the init of the VM. It knows nothing of the host side
   - package: '**.internal.guest$'
     shouldOnlyDependsOn:

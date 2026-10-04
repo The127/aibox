@@ -21,8 +21,6 @@ import (
 	"github.com/the127/aibox/internal/vm"
 )
 
-const guestCID = 42
-
 // machine is a VM whose kernel and root disk are empty files of the test.
 func machine(t *testing.T) vm.Machine {
 	t.Helper()
@@ -41,7 +39,6 @@ func machine(t *testing.T) vm.Machine {
 			{Tag: "project", Dir: "/home/someone/project"},
 			{Tag: "home", Dir: "/home/someone/.aibox/home"},
 		},
-		GuestCID: guestCID,
 	}
 }
 

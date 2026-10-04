@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/launch"
+	"github.com/the127/aibox/internal/vm"
+	"github.com/the127/aibox/internal/vsockns"
 )
 
 // The test binary also stands in for virtiofsd and QEMU. Run starts it
@@ -66,7 +68,6 @@ type fakeProcesses struct {
 	records          string
 	proxyListener    chan net.Listener
 	terminalListener chan net.Listener
-	listens          int
 	stdin            *os.File
 	stdout           io.Writer
 	stderr           io.Writer
@@ -100,7 +101,6 @@ func fakes(t *testing.T) *fakeProcesses {
 
 // options use TCP listeners in place of vsock and /dev/null in place of the
 // KVM and vhost devices, so that the tests run on a machine without them.
-// Run listens for the proxy first and for the terminal second.
 func (f *fakeProcesses) options() launch.Options {
 	options := launch.Options{
 		QEMU:          f.qemu,
@@ -109,10 +109,9 @@ func (f *fakeProcesses) options() launch.Options {
 		Stdout:        io.Discard,
 		Stderr:        f.stderr,
 		SocketTimeout: 5 * time.Second,
-		ListenVsock:   f.listenTCP,
+		OpenVsock:     f.openTCP,
 		Env:           f.env,
 		KVMDevice:     os.DevNull,
-		VhostDevice:   os.DevNull,
 		ConsoleLog:    f.consoleLog,
 	}
 
@@ -123,20 +122,34 @@ func (f *fakeProcesses) options() launch.Options {
 	return options
 }
 
-func (f *fakeProcesses) listenTCP() (net.Listener, uint32, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// openTCP stands in for the vsock namespace: two TCP listeners that the
+// tests reach as the VM would, and /dev/null as the vhost device.
+func (f *fakeProcesses) openTCP() (*vsockns.Vsock, error) {
+	proxy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
-	f.listens++
-	if f.listens == 1 {
-		f.proxyListener <- listener
-	} else {
-		f.terminalListener <- listener
+	terminal, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
 	}
 
-	return &fromGuest{Listener: listener}, uint32(listener.Addr().(*net.TCPAddr).Port), nil //nolint:gosec // a TCP port fits
+	vhost, err := os.Open(os.DevNull)
+	if err != nil {
+		return nil, err
+	}
+
+	f.proxyListener <- proxy
+	f.terminalListener <- terminal
+
+	return &vsockns.Vsock{
+		Vhost:        vhost,
+		Proxy:        &fromGuest{Listener: proxy},
+		Terminal:     &fromGuest{Listener: terminal},
+		ProxyPort:    uint32(proxy.Addr().(*net.TCPAddr).Port),    //nolint:gosec // a TCP port fits
+		TerminalPort: uint32(terminal.Addr().(*net.TCPAddr).Port), //nolint:gosec // a TCP port fits
+	}, nil
 }
 
 // fromGuest gives every connection the vsock address of the test machine, as
@@ -158,7 +171,7 @@ type guestConn struct {
 	net.Conn
 }
 
-func (guestConn) RemoteAddr() net.Addr { return &vsock.Addr{ContextID: guestCID, Port: 1} }
+func (guestConn) RemoteAddr() net.Addr { return &vsock.Addr{ContextID: vm.GuestCID, Port: 1} }
 
 // listener is the proxy listener Run opened, or the test fails.
 func (f *fakeProcesses) listener(t *testing.T) net.Listener {
@@ -181,7 +194,7 @@ func await(t *testing.T, listeners <-chan net.Listener, what string) net.Listene
 	case listener := <-listeners:
 		return listener
 	case <-time.After(5 * time.Second):
-		t.Fatalf("ListenVsock was not called for %s", what)
+		t.Fatalf("OpenVsock was not called for %s", what)
 
 		return nil
 	}

@@ -6,7 +6,10 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
 - The project folder is shared into the VM with virtio-fs. Your user on the
   host is the user inside the VM.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
-  host, which only lets through hosts on an allowlist.
+  host, which only lets through hosts on an allowlist. Each VM gets a vsock
+  namespace of its own, which aibox creates inside an unprivileged user
+  namespace, so no root is needed. Every VM can then use the same address,
+  CID 3, and other processes on the host cannot connect to it.
 - The terminal is an SSH session over vsock. The init of the VM runs Claude
   Code on a pseudo terminal and serves it to aibox on the host, which puts
   your terminal into raw mode and attaches it. The size of your terminal and

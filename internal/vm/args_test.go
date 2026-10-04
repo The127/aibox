@@ -24,7 +24,6 @@ func machine() vm.Machine {
 			{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"},
 			{Tag: "home", Dir: "/home/someone/.aibox/home", Socket: "/run/aibox/home.sock"},
 		},
-		GuestCID: 42,
 	}
 }
 
@@ -54,7 +53,7 @@ func TestQEMUArgs(t *testing.T) {
 		"-device", "vhost-user-fs-device,chardev=share-project,tag=project",
 		"-chardev", "socket,id=share-home,fd=9",
 		"-device", "vhost-user-fs-device,chardev=share-home,tag=home",
-		"-device", "vhost-vsock-device,guest-cid=42,vhostfd=4",
+		"-device", "vhost-vsock-device,guest-cid=3,vhostfd=4",
 	}, args)
 }
 

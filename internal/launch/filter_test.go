@@ -9,6 +9,8 @@ import (
 	"github.com/mdlayher/vsock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/the127/aibox/internal/vm"
 )
 
 // addressed is a connection with a remote address of the test's choosing.
@@ -47,18 +49,18 @@ func TestForGuestDropsTheConnectionsOfOthers(t *testing.T) {
 	q := &queue{conns: make(chan net.Conn, 3)}
 	q.conns <- addressed{Conn: otherVM, remote: &vsock.Addr{ContextID: 7, Port: 1}}
 	q.conns <- local
-	q.conns <- addressed{Conn: ours, remote: &vsock.Addr{ContextID: 42, Port: 1}}
+	q.conns <- addressed{Conn: ours, remote: &vsock.Addr{ContextID: vm.GuestCID, Port: 1}}
 
 	for _, peer := range []net.Conn{otherVMPeer, localPeer} {
 		require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
 	}
 
 	// act
-	conn, err := forGuest(q, 42).Accept()
+	conn, err := forGuest(q).Accept()
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, uint32(42), conn.RemoteAddr().(*vsock.Addr).ContextID)
+	assert.Equal(t, vm.GuestCID, conn.RemoteAddr().(*vsock.Addr).ContextID)
 
 	for _, peer := range []net.Conn{otherVMPeer, localPeer} {
 		_, err = peer.Read(make([]byte, 1))

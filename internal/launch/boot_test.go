@@ -121,8 +121,7 @@ func TestRunBootsTheImage(t *testing.T) {
 			{Tag: "project", Dir: project},
 			{Tag: "home", Dir: t.TempDir()},
 		},
-		GuestCID: 42,
-		Shell:    true,
+		Shell: true,
 	}
 
 	stdin, input, err := os.Pipe()

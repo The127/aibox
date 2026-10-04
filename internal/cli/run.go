@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -132,9 +131,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 			{Tag: "project", Dir: cwd},
 			{Tag: "home", Dir: p.Home},
 		}, mounts...),
-		Owner:    &owner,
-		GuestCID: randomCID(),
-		Shell:    cmd.Bool("shell"),
+		Owner: &owner,
+		Shell: cmd.Bool("shell"),
 	}
 
 	options := launchOptions(cfg, p, log)
@@ -310,10 +308,4 @@ func imageFiles(dir string) (kernel, rootfs string, err error) {
 	}
 
 	return kernel, rootfs, nil
-}
-
-// randomCID picks a vsock context ID, so that two VMs on the host do not
-// claim the same one. vsock reserves the IDs below 3.
-func randomCID() uint32 {
-	return 3 + rand.Uint32N(1<<31) //nolint:gosec // the ID only has to differ between VMs
 }

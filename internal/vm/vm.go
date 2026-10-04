@@ -13,6 +13,10 @@ const (
 	GuestGID uint32 = 1000
 )
 
+// GuestCID is the vsock address of the VM. Every VM has the same one,
+// because each has a vsock namespace of its own.
+const GuestCID uint32 = 3
+
 // reboot=t makes the kernel reset the machine with a triple fault, which
 // -no-reboot below turns into a QEMU exit.
 const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
@@ -28,7 +32,6 @@ type Machine struct {
 	MemoryMiB    int
 	CPUs         int
 	Shares       []Share
-	GuestCID     uint32
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
@@ -109,7 +112,7 @@ func (m Machine) QEMUArgs(files Files) []string {
 		)
 	}
 
-	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(m.GuestCID), 10)+",vhostfd="+strconv.Itoa(files.Vhost))
+	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(GuestCID), 10)+",vhostfd="+strconv.Itoa(files.Vhost))
 }
 
 func fdset(fd, set int) string {

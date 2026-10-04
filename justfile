@@ -53,7 +53,7 @@ arch-describe:
 
 # check for known vulnerabilities in reachable code
 vuln:
-    go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+    go tool -modfile=hack/tools/go.mod govulncheck ./...
 
 # check that every file has license and copyright information
 reuse:

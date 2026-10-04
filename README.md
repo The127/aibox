@@ -25,6 +25,10 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   and a small tmpfs. Devices, the disk and the sockets reach it as open
   files from aibox, and it filters its own syscalls. `aibox run
   --no-sandbox` runs it without bubblewrap, for debugging.
+- Once QEMU runs, aibox restricts itself too: no new privileges, Landlock
+  rules that let it read `/etc` for DNS and connect only to the ports of the
+  allow list, and a seccomp filter that refuses ptrace, mount, namespace
+  and similar syscalls. This needs Linux 6.7 or newer.
 - The VM image (kernel and root disk) is built with
   [miso](https://github.com/The127/miso). The kernel has no PCI, no ACPI,
   no modules and no network drivers: `image/microvm.config` is a complete

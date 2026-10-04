@@ -19,6 +19,7 @@ import (
 	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
 
+	"github.com/the127/aibox/internal/confine"
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/session"
@@ -68,6 +69,11 @@ type Options struct {
 	Bubblewrap string
 	// NoSandbox runs QEMU without the sandbox.
 	NoSandbox bool
+	// Confine is called once QEMU has started, with the TCP ports the proxy
+	// may still connect to. Nil means confine.Apply.
+	Confine func(ports []uint16) error
+	// Ports are the TCP ports of the allow list.
+	Ports []uint16
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string
@@ -98,6 +104,10 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		options.Bubblewrap = defaultBubblewrap
 	}
 
+	if options.Confine == nil {
+		options.Confine = confine.Apply
+	}
+
 	if err := findPrograms(&options); err != nil {
 		return err
 	}
@@ -107,27 +117,36 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		return fmt.Errorf("create the socket folder: %w", err)
 	}
 
-	defer func() { _ = os.RemoveAll(sockets) }()
-
 	machine.Shares = withSockets(machine.Shares, sockets)
 
 	died, stopDaemons, err := startDaemons(machine.Shares, machine.Owner, options)
 	defer stopDaemons()
 
 	if err != nil {
+		_ = os.RemoveAll(sockets)
+
 		return err
 	}
 
 	if err := waitForSockets(ctx, machine.Shares, options.SocketTimeout, died); err != nil {
+		_ = os.RemoveAll(sockets)
+
 		return err
 	}
 
 	vsock, err := options.OpenVsock()
 	if err != nil {
+		_ = os.RemoveAll(sockets)
+
 		return err
 	}
 
 	files, err := openFiles(machine, options, vsock.Vhost)
+
+	// the connections are made, and once confined aibox could not remove
+	// the folder any more
+	_ = os.RemoveAll(sockets)
+
 	if err != nil {
 		_ = vsock.Proxy.Close()
 		_ = vsock.Terminal.Close()
@@ -409,8 +428,9 @@ func attach(ctx context.Context, listener net.Listener, options Options) bool {
 	return true
 }
 
-// runQEMU runs QEMU with its output on Stderr, because Stdout belongs to
-// the session.
+// runQEMU starts QEMU, confines aibox itself, since QEMU was the last
+// child it had to start, and waits for QEMU. The output of QEMU goes to
+// Stderr, because Stdout belongs to the session.
 func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options Options) error {
 	program, args := qemuCommand(machine, files, options)
 
@@ -428,6 +448,12 @@ func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options 
 
 	if err != nil {
 		return fmt.Errorf("run qemu: %w", err)
+	}
+
+	if err := options.Confine(options.Ports); err != nil {
+		_ = qemu.Cancel()
+
+		return errors.Join(fmt.Errorf("confine aibox: %w", err), qemu.Wait())
 	}
 
 	if err := qemu.Wait(); err != nil {

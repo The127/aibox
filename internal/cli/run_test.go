@@ -232,6 +232,20 @@ func TestRunWithoutImage(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
 }
 
+func TestRunPassesThePortsOfTheAllowListForTheConfinement(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow:\n  - example.com\n  - git.example:22\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{22, 443}, f.launch.options.Ports)
+}
+
 func TestRunSandboxesQEMUByDefault(t *testing.T) {
 	// arrange
 	f := newFixture(t)

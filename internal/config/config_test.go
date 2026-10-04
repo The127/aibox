@@ -569,6 +569,17 @@ func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
 	}
 }
 
+func TestPortsAreTheDistinctPortsOfTheAllowList(t *testing.T) {
+	// arrange
+	hosts := config.Hosts{"example.com", "git.example:22", "[::1]:8443", "other.example:22", "api.example"}
+
+	// act
+	ports := hosts.Ports()
+
+	// assert
+	assert.Equal(t, []uint16{22, 443, 8443}, ports)
+}
+
 func TestAllows(t *testing.T) {
 	// arrange
 	hosts := config.Hosts{"example.com", "*.github.com", "10.0.0.5", "git.example:22", "[::1]:8443"}

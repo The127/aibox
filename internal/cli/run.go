@@ -280,6 +280,7 @@ func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.O
 		Stdout:     os.Stdout,
 		Stderr:     os.Stderr,
 		ConsoleLog: p.ConsoleLog,
+		Ports:      cfg.Allow.Ports(),
 		Proxy: proxy.Options{
 			Allow:     cfg.Allow.Allows,
 			OnRefused: proxy.RefusalLog(log),

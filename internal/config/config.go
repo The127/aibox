@@ -539,6 +539,27 @@ func isPort(port string) bool {
 	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == port
 }
 
+// Ports are the distinct ports of the allow list, ascending. Load has
+// checked every entry, so one that does not parse is left out.
+func (h Hosts) Ports() []uint16 {
+	var ports []uint16
+
+	for _, text := range h {
+		e, err := parseEntry(text)
+		if err != nil {
+			continue
+		}
+
+		if port, err := strconv.ParseUint(e.port, 10, 16); err == nil {
+			ports = append(ports, uint16(port))
+		}
+	}
+
+	slices.Sort(ports)
+
+	return slices.Compact(ports)
+}
+
 // Allows reports whether the VM may reach host on port.
 func (h Hosts) Allows(host, port string) bool {
 	host = normalize(host)

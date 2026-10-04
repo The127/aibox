@@ -3,6 +3,7 @@ package launch_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -139,6 +140,35 @@ func TestRunFailsWithoutBubblewrapAndNamesTheWayAround(t *testing.T) {
 	// assert
 	require.ErrorContains(t, err, "--no-sandbox")
 	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
+}
+
+func TestRunConfinesItselfWithThePortsOfTheAllowListOnceQEMURuns(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	f.ports = []uint16{443, 8443}
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(f.records, "qemu"))
+	assert.Equal(t, 1, f.confineCalls)
+	assert.Equal(t, []uint16{443, 8443}, f.confinedWith)
+}
+
+func TestRunStopsWhenItCannotConfineItself(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	f.failConfine = errors.New("no Landlock")
+	t.Setenv("AIBOX_FAKE_QEMU", "wait")
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.ErrorContains(t, err, "no Landlock")
+	assert.FileExists(t, filepath.Join(f.records, "qemu-exited"))
 }
 
 func TestRunGivesQEMUTheRightFileInEachSlot(t *testing.T) {

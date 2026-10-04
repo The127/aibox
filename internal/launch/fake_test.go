@@ -78,6 +78,10 @@ type fakeProcesses struct {
 	stderr           io.Writer
 	env              []string
 	consoleLog       string
+	ports            []uint16
+	confinedWith     []uint16
+	confineCalls     int
+	failConfine      error
 }
 
 func fakes(t *testing.T) *fakeProcesses {
@@ -118,6 +122,8 @@ func (f *fakeProcesses) options() launch.Options {
 		Stderr:        f.stderr,
 		SocketTimeout: 5 * time.Second,
 		OpenVsock:     f.openTCP,
+		Confine:       f.confine,
+		Ports:         f.ports,
 		Env:           f.env,
 		KVMDevice:     os.DevNull,
 		ConsoleLog:    f.consoleLog,
@@ -128,6 +134,26 @@ func (f *fakeProcesses) options() launch.Options {
 	}
 
 	return options
+}
+
+// confine stands in for the confinement of aibox, which the test process
+// could not undo. Run calls it on the test's goroutine. A failure waits
+// for the fake QEMU to be up, so that the test sees it stopped.
+func (f *fakeProcesses) confine(ports []uint16) error {
+	f.confinedWith = ports
+	f.confineCalls++
+
+	if f.failConfine != nil {
+		for range 500 {
+			if _, err := os.Stat(filepath.Join(f.records, "qemu")); err == nil {
+				break
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	return f.failConfine
 }
 
 // openTCP stands in for the vsock namespace: two TCP listeners that the
@@ -305,6 +331,10 @@ func fakeBwrap(args []string) {
 // fakeQEMU records the descriptors it was given, what kind of file each is,
 // and prints a line on the console.
 func fakeQEMU(args []string) int {
+	// the signal may come right after the start
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM)
+
 	var fds, kinds []string
 
 	for _, number := range descriptors(args) {
@@ -333,8 +363,6 @@ func fakeQEMU(args []string) int {
 	fmt.Println("fake qemu ran")
 
 	if os.Getenv("AIBOX_FAKE_QEMU") == "wait" {
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, syscall.SIGTERM)
 		<-stop
 		record("qemu-exited", nil)
 	}

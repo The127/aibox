@@ -72,6 +72,14 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the gitconfig runs git on the host and knows nothing else
+  - package: '**.internal.gitconfig$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the config reads the settings of a project and knows nothing else
   - package: '**.internal.config$'
     shouldNotDependsOn:
@@ -91,6 +99,7 @@ dependenciesRules:
         - '**.internal.vm$'
         - '**.internal.config$'
         - '**.internal.proxy$'
+        - '**.internal.gitconfig$'
   # the guest is the init of the VM. It knows nothing of the host side
   - package: '**.internal.guest$'
     shouldOnlyDependsOn:

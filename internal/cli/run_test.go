@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/vm"
@@ -59,10 +61,11 @@ func newFixture(t *testing.T) *fixture {
 
 	f := &fixture{cwd: t.TempDir(), aiboxDir: t.TempDir(), launch: &fakeLaunch{}}
 	f.deps = dependencies{
-		getwd:    func() (string, error) { return f.cwd, nil },
-		aiboxDir: func() (string, error) { return f.aiboxDir, nil },
-		owner:    func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
-		run:      f.launch.run,
+		getwd:       func() (string, error) { return f.cwd, nil },
+		aiboxDir:    func() (string, error) { return f.aiboxDir, nil },
+		owner:       func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
+		gitIdentity: func(string) gitconfig.Identity { return gitconfig.Identity{} },
+		run:         f.launch.run,
 	}
 
 	return f
@@ -334,6 +337,41 @@ func TestRunWhenTheConfigIsBroken(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "config.yaml")
 	assert.False(t, f.launch.called)
+}
+
+func TestRunWritesTheGitIdentityIntoTheHome(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.deps.gitIdentity = func(dir string) gitconfig.Identity {
+		assert.Equal(t, f.cwd, dir)
+
+		return gitconfig.Identity{Name: "Some One", Email: "someone@example.com"}
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+
+	file := filepath.Join(f.project(t).Home, ".config", "git", "config")
+	name, err := exec.Command("git", "config", "-f", file, "--get", "user.name").Output() //nolint:gosec // the file is the test's own
+	require.NoError(t, err)
+	assert.Equal(t, "Some One\n", string(name))
+}
+
+func TestRunWritesNoGitIdentityWhenTheHostHasNone(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(f.project(t).Home, ".config", "git", "config"))
 }
 
 func TestRunReturnsTheLaunchError(t *testing.T) {

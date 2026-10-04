@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/the127/aibox/internal/config"
+	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
@@ -73,6 +74,13 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	cfg, err := config.Load(p.Config)
 	if err != nil {
 		return err
+	}
+
+	// the VM has a home of its own, so git there knows nothing of the person
+	if identity := deps.gitIdentity(cwd); identity != (gitconfig.Identity{}) {
+		if err := gitconfig.Write(p.Home, identity); err != nil {
+			return err
+		}
 	}
 
 	log, err := os.OpenFile(p.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)

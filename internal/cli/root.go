@@ -8,6 +8,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/version"
 	"github.com/the127/aibox/internal/vm"
@@ -15,19 +16,21 @@ import (
 
 // dependencies are the host functions the commands call.
 type dependencies struct {
-	getwd    func() (string, error)
-	aiboxDir func() (string, error)
-	owner    func() vm.Owner
-	run      func(ctx context.Context, machine vm.Machine, options launch.Options) error
+	getwd       func() (string, error)
+	aiboxDir    func() (string, error)
+	owner       func() vm.Owner
+	gitIdentity func(dir string) gitconfig.Identity
+	run         func(ctx context.Context, machine vm.Machine, options launch.Options) error
 }
 
 // NewRootCommand returns the top-level aibox command.
 func NewRootCommand() *cli.Command {
 	return newRootCommand(dependencies{
-		getwd:    os.Getwd,
-		aiboxDir: aiboxDir,
-		owner:    owner,
-		run:      launch.Run,
+		getwd:       os.Getwd,
+		aiboxDir:    aiboxDir,
+		owner:       owner,
+		gitIdentity: gitconfig.Read,
+		run:         launch.Run,
 	})
 }
 

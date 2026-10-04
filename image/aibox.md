@@ -14,8 +14,9 @@ Files and tools:
   changes to the person's files. Many small files are slow there, so put
   scratch files in /tmp.
 - /home/user is your home, also from the host, kept between runs and separate
-  for each project. The host's ~/.gitconfig is not in it, so git may lack a
-  name and email.
+  for each project. At every start aibox copies the name and email that git
+  uses for the project on the host into ~/.config/git/config here. A
+  ~/.gitconfig you write here wins over that.
 - /tmp, /run and /dev/shm are RAM, shared with everything else in the VM,
   which has 2 GB by default. Writes anywhere else fail.
 - You are the user "user", without root or sudo.

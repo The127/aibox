@@ -65,14 +65,15 @@ func newFixture(t *testing.T) *fixture {
 
 	f := &fixture{cwd: t.TempDir(), aiboxDir: t.TempDir(), homeDir: t.TempDir(), launch: &fakeLaunch{}, editor: &fakeEditor{}}
 	f.deps = dependencies{
-		edit:        f.editor.edit,
-		getwd:       func() (string, error) { return f.cwd, nil },
-		aiboxDir:    func() (string, error) { return f.aiboxDir, nil },
-		homeDir:     func() (string, error) { return f.homeDir, nil },
-		owner:       func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
-		lookupEnv:   func(string) (string, bool) { return "", false },
-		gitIdentity: func(string) gitconfig.Identity { return gitconfig.Identity{} },
-		run:         f.launch.run,
+		edit:            f.editor.edit,
+		getwd:           func() (string, error) { return f.cwd, nil },
+		aiboxDir:        func() (string, error) { return f.aiboxDir, nil },
+		homeDir:         func() (string, error) { return f.homeDir, nil },
+		owner:           func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
+		stdinIsTerminal: func() bool { return true },
+		lookupEnv:       func(string) (string, bool) { return "", false },
+		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
+		run:             f.launch.run,
 	}
 
 	return f
@@ -323,6 +324,20 @@ func TestRunRefusesToRunAsRoot(t *testing.T) {
 	require.ErrorIs(t, err, errRoot)
 	assert.False(t, f.launch.called)
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
+}
+
+func TestRunRefusesToRunWithoutATerminal(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.stdinIsTerminal = func() bool { return false }
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, errNoTerminal)
+	assert.False(t, f.launch.called)
 }
 
 func TestRunRejectsBadFlagValues(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/urfave/cli/v3"
+	"golang.org/x/term"
 
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/launch"
@@ -17,27 +18,29 @@ import (
 
 // dependencies are the host functions the commands call.
 type dependencies struct {
-	getwd       func() (string, error)
-	aiboxDir    func() (string, error)
-	homeDir     func() (string, error)
-	owner       func() vm.Owner
-	lookupEnv   func(name string) (string, bool)
-	gitIdentity func(dir string) gitconfig.Identity
-	run         func(ctx context.Context, machine vm.Machine, options launch.Options) error
-	edit        func(editor, path string) error
+	getwd           func() (string, error)
+	aiboxDir        func() (string, error)
+	homeDir         func() (string, error)
+	owner           func() vm.Owner
+	stdinIsTerminal func() bool
+	lookupEnv       func(name string) (string, bool)
+	gitIdentity     func(dir string) gitconfig.Identity
+	run             func(ctx context.Context, machine vm.Machine, options launch.Options) error
+	edit            func(editor, path string) error
 }
 
 // NewRootCommand returns the top-level aibox command.
 func NewRootCommand() *cli.Command {
 	return newRootCommand(dependencies{
-		getwd:       os.Getwd,
-		aiboxDir:    aiboxDir,
-		homeDir:     os.UserHomeDir,
-		owner:       owner,
-		lookupEnv:   os.LookupEnv,
-		gitIdentity: gitconfig.Read,
-		run:         launch.Run,
-		edit:        runEditor,
+		getwd:           os.Getwd,
+		aiboxDir:        aiboxDir,
+		homeDir:         os.UserHomeDir,
+		owner:           owner,
+		stdinIsTerminal: func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
+		lookupEnv:       os.LookupEnv,
+		gitIdentity:     gitconfig.Read,
+		run:             launch.Run,
+		edit:            runEditor,
 	})
 }
 

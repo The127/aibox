@@ -24,6 +24,10 @@ import (
 // nothing here needs them.
 var errRoot = errors.New("aibox must not run as root, start it as a normal user")
 
+// Claude Code and the shell in the VM wait for keys, so without a terminal
+// on stdin a run would sit there forever.
+var errNoTerminal = errors.New("aibox run needs a terminal on stdin")
+
 const (
 	qemuProgram      = "qemu-system-x86_64"
 	virtiofsdProgram = "/usr/libexec/virtiofsd"
@@ -61,6 +65,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	owner := deps.owner()
 	if owner.UID == 0 {
 		return errRoot
+	}
+
+	if !deps.stdinIsTerminal() {
+		return errNoTerminal
 	}
 
 	for _, flag := range []string{"memory", "cpus"} {

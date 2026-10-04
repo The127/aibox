@@ -27,7 +27,8 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   them. The file is sparse and takes up host disk only as it fills. Its
   size is fixed when the disk is created on the first run, 16 GiB unless
   `disk` in the config says otherwise. The init formats it on the first
-  boot.
+  boot and refuses a disk whose superblock has data but no ext4 magic, so
+  a damaged disk is never formatted over.
 - QEMU runs in a bubblewrap sandbox with no network, no environment and
   no writable file system. It sees only its own program, libraries and
   firmware and a copy of the kernel. Devices, the disks and the sockets

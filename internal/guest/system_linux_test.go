@@ -71,6 +71,21 @@ func TestBlankIsFalseForAnExt4Disk(t *testing.T) {
 	assert.False(t, blank)
 }
 
+func TestBlankFailsForADiskWithDataButNoFileSystem(t *testing.T) {
+	// arrange
+	disk := filepath.Join(t.TempDir(), "disk")
+	content := make([]byte, 4096)
+	content[1024+7] = 1 // in the superblock, away from the magic
+	require.NoError(t, os.WriteFile(disk, content, 0o600))
+
+	// act
+	blank, err := guest.Linux{}.Blank(disk)
+
+	// assert
+	require.ErrorIs(t, err, guest.ErrDamaged)
+	assert.False(t, blank)
+}
+
 func TestBlankFailsForADiskTooSmallForASuperblock(t *testing.T) {
 	// arrange
 	disk := filepath.Join(t.TempDir(), "disk")

@@ -1,6 +1,7 @@
 package guest
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -29,10 +30,13 @@ func (Linux) Mount(source, target, fstype string, flags uintptr, data string) er
 }
 
 const (
-	// the superblock of ext4 starts at 1024 and keeps its magic 56 bytes in
-	ext4MagicOffset = 1024 + 56
-	ext4Magic       = 0xEF53
-	mke2fs          = "/usr/sbin/mke2fs"
+	// the superblock of ext4 is the KiB after the first and keeps its
+	// magic 56 bytes in
+	superblockOffset = 1024
+	superblockSize   = 1024
+	ext4MagicOffset  = 56
+	ext4Magic        = 0xEF53
+	mke2fs           = "/usr/sbin/mke2fs"
 )
 
 // Mkdir makes the folder and its parents, if missing.
@@ -58,7 +62,7 @@ func (Linux) PivotRoot(newRoot, putOld string) error {
 	return syscall.Unmount(putOld, syscall.MNT_DETACH)
 }
 
-// Blank tells whether the disk has no ext4 file system yet.
+// Blank tells whether the disk is empty, judged by its superblock.
 func (Linux) Blank(device string) (bool, error) {
 	disk, err := os.Open(device) //nolint:gosec // the device is fixed
 	if err != nil {
@@ -67,12 +71,20 @@ func (Linux) Blank(device string) (bool, error) {
 
 	defer func() { _ = disk.Close() }()
 
-	magic := make([]byte, 2)
-	if _, err := disk.ReadAt(magic, ext4MagicOffset); err != nil {
+	superblock := make([]byte, superblockSize)
+	if _, err := disk.ReadAt(superblock, superblockOffset); err != nil {
 		return false, err
 	}
 
-	return binary.LittleEndian.Uint16(magic) != ext4Magic, nil
+	if binary.LittleEndian.Uint16(superblock[ext4MagicOffset:]) == ext4Magic {
+		return false, nil
+	}
+
+	if len(bytes.Trim(superblock, "\x00")) != 0 {
+		return false, ErrDamaged
+	}
+
+	return true, nil
 }
 
 // Format puts an ext4 file system on the disk.

@@ -101,7 +101,8 @@ type System interface {
 	// PivotRoot makes newRoot the root and lets the old root go. putOld is
 	// where the old root goes meanwhile, as a path inside the new root.
 	PivotRoot(newRoot, putOld string) error
-	// Blank tells whether the disk has no ext4 file system yet.
+	// Blank tells whether the disk is empty. It returns ErrDamaged when the
+	// disk has data but no ext4 file system.
 	Blank(device string) (bool, error)
 	// Format puts a file system on the disk.
 	Format(device string) error
@@ -132,6 +133,10 @@ const (
 	readOnlyShare = syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NODEV
 	stateFlags    = syscall.MS_NOSUID | syscall.MS_NODEV
 )
+
+// ErrDamaged is returned for a state disk that has data but no ext4 file
+// system, which the init will not format over.
+var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
 
 // stateDirs are the folders of the state disk and where they are bound.
 var stateDirs = []struct{ dir, target string }{

@@ -504,7 +504,8 @@ func TestRunAttachesTheTerminalToTheSessionOfTheVM(t *testing.T) {
 	sessionOver(t, guestServes(t, f.terminal(t), "hello from the VM\r\n", 3))
 
 	// assert
-	assert.Equal(t, "hello from the VM\r\n", stdout.String())
+	// the host may still be copying when the guest side is done
+	assert.Eventually(t, func() bool { return stdout.String() == "hello from the VM\r\n" }, 5*time.Second, 10*time.Millisecond, "stdout was %q", stdout.String())
 	assert.Eventually(t, func() bool { return strings.Contains(stderr.String(), "exit code 3") }, 5*time.Second, 10*time.Millisecond)
 }
 

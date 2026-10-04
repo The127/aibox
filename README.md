@@ -46,8 +46,12 @@ Not there yet:
 
 ## Contributing
 
-Commits use [conventional commits](https://www.conventionalcommits.org/) and
-need a sign-off (`git commit -s`).
+Run `just setup` once after cloning. It installs git hooks with
+[lefthook](https://lefthook.dev/) that run the linter, the architecture and
+license checks and a prose check before each commit, and check the commit
+message. Commits use [conventional commits](https://www.conventionalcommits.org/)
+without a scope and need a sign-off (`git commit -s`). lefthook comes from
+`go install github.com/evilmartians/lefthook@latest`.
 
 ## License
 

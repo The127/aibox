@@ -1,0 +1,29 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: lint
+      run: just lint
+    - name: architecture check
+      glob:
+        - "**/*.go"
+        - "arch-go.yml"
+      run: just arch
+    - name: license information
+      run: just reuse
+    - name: prose check
+      run: just prose
+
+commit-msg:
+  jobs:
+    - name: conventional commit message
+      run: |
+        head -n1 {1} | grep -qE '^(feat|fix|chore|docs|refactor|test|perf|build|ci|revert)!?: .+' || {
+          echo "commit message must be 'type: description', without a scope"
+          exit 1
+        }
+    - name: sign-off
+      run: |
+        grep -qE '^Signed-off-by: .+ <.+@.+>' {1} || {
+          echo "commit must be signed off (git commit -s)"
+          exit 1
+        }

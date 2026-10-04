@@ -55,5 +55,16 @@ vuln:
 reuse:
     uvx reuse lint
 
+# check that no em dash is in the repository
+prose:
+    bash hack/check-prose.sh
+
+# install the git hooks
+hooks:
+    lefthook install
+
+# one-time setup after cloning
+setup: hooks
+
 # everything that must pass before a push
-ci: lint arch reuse build cover vuln
+ci: lint arch reuse prose build cover vuln

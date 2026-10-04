@@ -310,6 +310,20 @@ func TestRunSharesTheMountsOfTheConfigReadOnly(t *testing.T) {
 	}, f.launch.machine.Shares)
 }
 
+func TestRunPassesThePathOfTheConfigToTheMachine(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "path:\n  - /opt/go/bin\n  - /opt/bin\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/opt/go/bin", "/opt/bin"}, f.launch.machine.Path)
+}
+
 func TestRunWhenAMountedFolderIsMissing(t *testing.T) {
 	// arrange
 	f := newFixture(t)

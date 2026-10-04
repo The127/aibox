@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -49,16 +50,25 @@ var (
 	// ErrBadMountWord is an aibox.mount word that is not a share tag and an
 	// absolute path joined by a colon.
 	ErrBadMountWord = errors.New("not tag:path with an absolute path")
+	// ErrBadPathWord is an aibox.path word that is not absolute paths joined
+	// by colons.
+	ErrBadPathWord = errors.New("not absolute paths joined by colons")
 )
 
+// imagePath is where the programs of the image are. The folders of the
+// options go in front of it.
+const imagePath = "/usr/local/bin:/usr/bin:/bin"
+
 // Options come from the kernel command line. Mounts are the shares of the
-// host that are mounted read-only where the host says.
+// host that are mounted read-only where the host says, and Path are the
+// folders that go in front of the PATH of the image.
 type Options struct {
 	Console      string
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
+	Path         []string
 }
 
 // Mount is a share of the host and the path the VM mounts it on.
@@ -174,10 +184,30 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.TerminalPort = port(key, value)
 		case "aibox.mount":
 			mount(value)
+		case "aibox.path":
+			path, err := parsePath(value)
+			if err != nil {
+				errs = append(errs, err)
+			} else {
+				options.Path = path
+			}
 		}
 	}
 
 	return options, errors.Join(errs...)
+}
+
+// parsePath drops a bad word whole, because half a PATH could put the wrong
+// folder in front of git and claude.
+func parsePath(value string) ([]string, error) {
+	entries := strings.Split(value, ":")
+	for _, entry := range entries {
+		if !filepath.IsAbs(entry) || filepath.Clean(entry) == "/" {
+			return nil, fmt.Errorf("aibox.path=%q: %w", value, ErrBadPathWord)
+		}
+	}
+
+	return entries, nil
 }
 
 // parseMount reads a tag:path word. The host checked the path already, but
@@ -217,7 +247,7 @@ func Command(options Options, terminal *os.File, term string) *exec.Cmd {
 		"USER=" + userName,
 		"LOGNAME=" + userName,
 		"SHELL=" + bash,
-		"PATH=/usr/local/bin:/usr/bin:/bin",
+		"PATH=" + strings.Join(append(slices.Clone(options.Path), imagePath), ":"),
 		"TERM=" + term,
 		"LANG=C.UTF-8",
 		// an update would land in the home share and never run, because the

@@ -54,6 +54,10 @@ other mounts. Each mount is shared over virtio-fs like the project folder,
 with names and attributes cached for the whole run, so a change to the
 folder on the host may not show in a running VM.
 
+`path` lists absolute folders in the VM that go in front of its `PATH`, for
+Claude Code and the shell alike, for example `/opt/go/bin` from the mount
+above. The entries are not checked against the mounts.
+
 Not there yet:
 
 - There is no way to pass secrets into the VM. You log in with

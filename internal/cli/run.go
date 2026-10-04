@@ -113,6 +113,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		GuestCID:   randomCID(),
 		Shell:      cmd.Bool("shell"),
 		ConsoleLog: p.ConsoleLog,
+		Path:       cfg.Path,
 	}
 
 	return deps.run(ctx, machine, launchOptions(cfg, p, log))

@@ -35,14 +35,15 @@ var withTerminal = fmt.Sprintf("console=hvc0 aibox.terminal=%d", terminalPort)
 func TestParseCmdline(t *testing.T) {
 	// arrange
 	tests := map[string]guest.Options{
-		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
-		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
-		"root=/dev/vda":                        {Console: "/dev/console"},
-		"console=ttyS0 aibox.shell=1 panic=-1": {Console: "/dev/ttyS0", Shell: true},
-		"console=tty0 console=ttyS0,115200n8":  {Console: "/dev/ttyS0"},
-		"console= quiet":                       {Console: "/dev/console"},
-		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
-		"console=hvc0 aibox.terminal=5432":     {Console: "/dev/hvc0", TerminalPort: 5432},
+		"root=/dev/vda rw console=ttyS0 quiet":         {Console: "/dev/ttyS0"},
+		"console=hvc0 aibox.shell":                     {Console: "/dev/hvc0", Shell: true},
+		"root=/dev/vda":                                {Console: "/dev/console"},
+		"console=ttyS0 aibox.shell=1 panic=-1":         {Console: "/dev/ttyS0", Shell: true},
+		"console=tty0 console=ttyS0,115200n8":          {Console: "/dev/ttyS0"},
+		"console= quiet":                               {Console: "/dev/console"},
+		"console=ttyS0 aibox.proxy=4321":               {Console: "/dev/ttyS0", ProxyPort: 4321},
+		"console=hvc0 aibox.terminal=5432":             {Console: "/dev/hvc0", TerminalPort: 5432},
+		"console=hvc0 aibox.path=/opt/go/bin:/opt/bin": {Console: "/dev/hvc0", Path: []string{"/opt/go/bin", "/opt/bin"}},
 		"console=hvc0 aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin": {
 			Console: "/dev/hvc0",
 			Mounts:  []guest.Mount{{Tag: "mount0", Path: "/opt/go"}, {Tag: "mount1", Path: "/opt/bin"}},
@@ -57,6 +58,19 @@ func TestParseCmdline(t *testing.T) {
 			// assert
 			require.NoError(t, err)
 			assert.Equal(t, want, options)
+		})
+	}
+}
+
+func TestParseCmdlineRejectsAPathItCannotRead(t *testing.T) {
+	for _, value := range []string{"", "opt/bin", "/opt/bin:", "/opt/bin::/opt/go/bin", "/", "/opt/bin:/.."} {
+		t.Run(value, func(t *testing.T) {
+			// act
+			options, err := guest.ParseCmdline("console=hvc0 aibox.path=" + value)
+
+			// assert
+			assert.ErrorIs(t, err, guest.ErrBadPathWord)
+			assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
 		})
 	}
 }
@@ -127,6 +141,17 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	assert.Contains(t, cmd.Env, "https_proxy=http://127.0.0.1:3128")
 	assert.Contains(t, cmd.Env, "NO_PROXY=localhost,127.0.0.1")
 	assert.Contains(t, cmd.Env, "no_proxy=localhost,127.0.0.1")
+}
+
+func TestCommandPutsThePathOfTheOptionsBeforeTheImage(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Path: []string{"/opt/go/bin", "/opt/bin"}}, tty, "xterm")
+
+	// assert
+	assert.Contains(t, cmd.Env, "PATH=/opt/go/bin:/opt/bin:/usr/local/bin:/usr/bin:/bin")
 }
 
 func TestCommandWithoutAProxy(t *testing.T) {

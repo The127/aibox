@@ -40,9 +40,13 @@ var ErrReservedMount = errors.New("the VM needs this path")
 // contains, that of another entry.
 var ErrMountOverlap = errors.New("mounts overlap")
 
-// ErrMountsTooLong are mounts whose guest paths together do not fit on the
-// kernel command line.
-var ErrMountsTooLong = errors.New("the guest paths of the mounts are too long together")
+// ErrBadPath is a path entry that is not an absolute path the kernel command
+// line can carry, or that has a colon.
+var ErrBadPath = errors.New("must be an absolute path without a colon")
+
+// ErrCmdlineFull are mounts and path entries that together do not fit on
+// the kernel command line.
+var ErrCmdlineFull = errors.New("the mounts and the path together do not fit on the kernel command line")
 
 // reservedPaths are what the VM mounts itself, the two shares and the
 // kernel file systems, and the folders its programs live in. A mount on,
@@ -52,9 +56,13 @@ var reservedPaths = []string{
 	"/etc", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/root",
 }
 
-// maxMountBytes is what the guest paths of all mounts may take up together.
-// The kernel command line holds 2048 bytes, and the rest of it needs room.
-const maxMountBytes = 1024
+// maxCmdlineBytes is what the mounts and the path may take up together on
+// the kernel command line, which holds 2048 bytes and needs room for the
+// rest. wordBytes is what aibox adds around each entry.
+const (
+	maxCmdlineBytes = 1024
+	wordBytes       = 24
+)
 
 // presets maps a preset name to the hosts it allows. An allow entry of the
 // form preset:name stands for them.
@@ -81,6 +89,8 @@ type Config struct {
 	CPUs *int `yaml:"cpus"`
 	// Mounts are folders of the host the VM sees read-only.
 	Mounts []Mount `yaml:"mounts"`
+	// Path are folders in the VM that go in front of its PATH.
+	Path []string `yaml:"path"`
 }
 
 // Mount is a folder of the host that the VM sees read-only at Guest. In the
@@ -162,22 +172,14 @@ func isBelow(path, folder string) bool {
 }
 
 // checkMounts fails when two mounts are on the same path or one is inside
-// the other, and when the guest paths do not fit on the kernel command line.
+// the other.
 func checkMounts(mounts []Mount) error {
-	total := 0
-
 	for i, a := range mounts {
-		total += len(a.Guest)
-
 		for _, b := range mounts[:i] {
 			if a.touches(b.Guest) {
 				return fmt.Errorf("mounts %s and %s: %w", b.Guest, a.Guest, ErrMountOverlap)
 			}
 		}
-	}
-
-	if total > maxMountBytes {
-		return fmt.Errorf("%d mounts: %w", len(mounts), ErrMountsTooLong)
 	}
 
 	return nil
@@ -211,6 +213,10 @@ allow:
 # Folders of the host the VM sees read-only, written host:guest, for example:
 # mounts:
 #   - ~/sdk/go:/opt/go
+
+# Folders in the VM that go in front of its PATH, for example:
+# path:
+#   - /opt/go/bin
 `
 
 // Default is the config of a project that has no config file yet.
@@ -299,7 +305,48 @@ func parse(content []byte) (Config, error) {
 		return Config{}, err
 	}
 
+	for i, entry := range cfg.Path {
+		cleaned, err := parsePathEntry(entry)
+		if err != nil {
+			return Config{}, err
+		}
+
+		cfg.Path[i] = cleaned
+	}
+
+	if err := fitsCmdline(cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+func parsePathEntry(text string) (string, error) {
+	if !filepath.IsAbs(text) || strings.Contains(text, ":") || !cmdlineSafe(text) || filepath.Clean(text) == "/" {
+		return "", fmt.Errorf("path entry %q: %w", text, ErrBadPath)
+	}
+
+	return filepath.Clean(text), nil
+}
+
+// fitsCmdline fails when the mounts and the path together are too much
+// for the kernel command line.
+func fitsCmdline(cfg Config) error {
+	total := 0
+
+	for _, m := range cfg.Mounts {
+		total += wordBytes + len(m.Guest)
+	}
+
+	for _, entry := range cfg.Path {
+		total += wordBytes + len(entry)
+	}
+
+	if total > maxCmdlineBytes {
+		return ErrCmdlineFull
+	}
+
+	return nil
 }
 
 func atLeastOne(name string, value *int) error {

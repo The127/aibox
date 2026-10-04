@@ -22,8 +22,9 @@ Files and tools:
 - /tmp, /run and /dev/shm are RAM, shared with everything else in the VM,
   which has 2 GB by default. Writes anywhere else fail.
 - You are the user "user", without root or sudo.
-- Only bash, git, busybox and claude are installed. There is no Go, Node,
-  Python, make or curl, and busybox wget ignores the proxy for https.
+- The image has only bash, git, busybox and claude. There is no Go, Node,
+  Python, make or curl unless the person mounted them and put them on PATH.
+  busybox wget ignores the proxy for https.
 - AIBOX=1 is set in every process.
 
 Network:

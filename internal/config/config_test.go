@@ -153,23 +153,33 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsMountsTheKernelCommandLineCannotCarry(t *testing.T) {
-	// arrange
-	var content strings.Builder
-
-	content.WriteString("mounts:\n")
-
-	for i := range 12 {
-		fmt.Fprintf(&content, "  - /opt/sdk%d:/opt/%s%d\n", i, strings.Repeat("x", 100), i)
+func TestLoadRejectsMountsAndPathTheKernelCommandLineCannotCarry(t *testing.T) {
+	long := strings.Repeat("x", 100)
+	tests := map[string]func(*strings.Builder, int){
+		"mounts": func(b *strings.Builder, i int) { fmt.Fprintf(b, "  - /opt/sdk%d:/opt/%s%d\n", i, long, i) },
+		"path":   func(b *strings.Builder, i int) { fmt.Fprintf(b, "  - /opt/%s%d\n", long, i) },
 	}
 
-	path := write(t, content.String())
+	for key, line := range tests {
+		t.Run(key, func(t *testing.T) {
+			// arrange
+			var content strings.Builder
 
-	// act
-	_, err := config.Load(path)
+			content.WriteString(key + ":\n")
 
-	// assert
-	assert.ErrorIs(t, err, config.ErrMountsTooLong)
+			for i := range 10 {
+				line(&content, i)
+			}
+
+			path := write(t, content.String())
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrCmdlineFull)
+		})
+	}
 }
 
 func TestLoadRejectsMountsThatOverlap(t *testing.T) {
@@ -207,6 +217,70 @@ func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
 	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "# mounts:\n#   - ")
+}
+
+func TestLoadReadsThePath(t *testing.T) {
+	// arrange
+	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/opt/go/bin", "/opt/bin"}, cfg.Path)
+}
+
+func TestLoadRejectsAPathEntryItCannotCarry(t *testing.T) {
+	tests := map[string]string{
+		"relative":             "opt/bin",
+		"empty":                "",
+		"the root":             "/",
+		"the root in disguise": "/opt/..",
+		"with a colon":         "/opt/bin:/opt/go/bin",
+		"with a space":         "/opt/my bin",
+		"with a quote":         "/opt/\\\"bin",
+		"control character":    "/opt/bin\\u0001",
+	}
+
+	for name, entry := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, "path:\n  - \""+entry+"\"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrBadPath)
+		})
+	}
+}
+
+func TestLoadNamesThePathEntryItRejects(t *testing.T) {
+	// arrange
+	path := write(t, "path:\n  - opt/bin\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorContains(t, err, "opt/bin")
+}
+
+func TestLoadWritesAPathExampleIntoTheDefaultFile(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# path:\n#   - ")
 }
 
 func TestDefaultHasNoHostForUpdates(t *testing.T) {

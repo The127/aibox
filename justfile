@@ -19,6 +19,10 @@ install-image: image
     mkdir -p ~/.aibox/image
     cp --reflink=auto out/vmlinuz out/os.ext4 ~/.aibox/image/
 
+# install the aibox binary into Go's bin folder and the image into ~/.aibox
+install: install-image
+    CGO_ENABLED=0 go install ./cmd/aibox
+
 # test
 test:
     go test -race ./...

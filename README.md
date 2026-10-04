@@ -22,7 +22,7 @@ and a home directory that keeps the login between runs. `aibox run --shell`
 opens a shell in the VM instead.
 
 ```
-just install-image   # build the image and copy it to ~/.aibox/image
+just install   # build the image into ~/.aibox/image and aibox into ~/go/bin
 aibox run
 ```
 

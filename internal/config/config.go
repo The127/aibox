@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"os"
 	"slices"
@@ -21,6 +22,23 @@ var ErrBadHost = errors.New("not a host name")
 
 // ErrNotPositive is a memory or cpus setting below one.
 var ErrNotPositive = errors.New("must be at least 1")
+
+// ErrUnknownPreset is a preset entry that names no known preset.
+var ErrUnknownPreset = errors.New("unknown preset")
+
+// presets maps a preset name to the hosts it allows. An allow entry of the
+// form preset:name stands for them.
+var presets = map[string][]string{
+	"go":     {"proxy.golang.org", "sum.golang.org", "vuln.go.dev", "dl.google.com", "go.dev"},
+	"npm":    {"registry.npmjs.org", "registry.yarnpkg.com", "nodejs.org"},
+	"pypi":   {"pypi.org", "files.pythonhosted.org"},
+	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"},
+	"github": {"github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"},
+}
+
+func presetNames() []string {
+	return slices.Sorted(maps.Keys(presets))
+}
 
 // Config holds the settings of one project. Memory and CPUs are nil when
 // the file does not set them.
@@ -44,7 +62,8 @@ const defaultPort = "443"
 // text, so that the person editing it sees why each host is there.
 const defaultFile = `# The hosts the VM may reach. Everything else is refused by the proxy on
 # the host. An entry allows port 443, host:port allows another port, and
-# *.example.com matches every subdomain of example.com.
+# *.example.com matches every subdomain of example.com. preset:NAME stands for
+# the hosts a tool needs, with NAME one of PRESETS.
 allow:
   - api.anthropic.com         # the Claude API
   - claude.ai                 # login with a claude.ai account
@@ -104,7 +123,8 @@ func writeDefault(path string) error {
 		return err
 	}
 
-	if _, err := io.WriteString(file, defaultFile); err != nil {
+	text := strings.Replace(defaultFile, "PRESETS", strings.Join(presetNames(), ", "), 1)
+	if _, err := io.WriteString(file, text); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
 
@@ -126,14 +146,12 @@ func parse(content []byte) (Config, error) {
 		return Config{}, err
 	}
 
-	for i, text := range cfg.Allow {
-		e, err := parseEntry(text)
-		if err != nil {
-			return Config{}, err
-		}
-
-		cfg.Allow[i] = e.String()
+	allow, err := expand(cfg.Allow)
+	if err != nil {
+		return Config{}, err
 	}
+
+	cfg.Allow = allow
 
 	if err := atLeastOne("memory", cfg.Memory); err != nil {
 		return Config{}, err
@@ -152,6 +170,34 @@ func atLeastOne(name string, value *int) error {
 	}
 
 	return nil
+}
+
+// expand replaces each preset entry with its hosts and puts every entry into
+// its stored form.
+func expand(entries Hosts) (Hosts, error) {
+	var allow Hosts
+
+	for _, text := range entries {
+		hosts := []string{text}
+
+		if name, ok := strings.CutPrefix(text, "preset:"); ok {
+			hosts, ok = presets[name]
+			if !ok {
+				return nil, fmt.Errorf("allow entry %q: %w, known: %s", text, ErrUnknownPreset, strings.Join(presetNames(), ", "))
+			}
+		}
+
+		for _, host := range hosts {
+			e, err := parseEntry(host)
+			if err != nil {
+				return nil, err
+			}
+
+			allow = append(allow, e.String())
+		}
+	}
+
+	return allow, nil
 }
 
 // entry is one allow entry taken apart.

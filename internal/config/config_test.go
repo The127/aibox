@@ -187,6 +187,35 @@ func TestLoadStoresEntriesInOneForm(t *testing.T) {
 	assert.Equal(t, config.Hosts{"example.com", "[::1]:8443", "git.example:22", "*.github.com"}, cfg.Allow)
 }
 
+func TestLoadExpandsAPreset(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - preset:go\n  - example.com\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, cfg.Allow, "proxy.golang.org")
+	assert.Contains(t, cfg.Allow, "sum.golang.org")
+	assert.Contains(t, cfg.Allow, "example.com")
+	assert.NotContains(t, cfg.Allow, "preset:go")
+	assert.True(t, cfg.Allow.Allows("proxy.golang.org", "443"))
+}
+
+func TestLoadRejectsAnUnknownPreset(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - preset:rust\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrUnknownPreset)
+	assert.ErrorContains(t, err, "rust")
+	assert.ErrorContains(t, err, "cargo, github, go, npm, pypi")
+}
+
 func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
 	entries := []string{
 		"*", "*.", "https://example.com", "a b", "",

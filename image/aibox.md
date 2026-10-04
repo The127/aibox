@@ -34,8 +34,8 @@ Network:
 - A refused connection returns "403 Forbidden" with a body that names the
   host and port and one of two reasons: the host is not on the allow list,
   and the body names the config file on the host where the person can add
-  it, or the name resolves into the host's own networks, which adding cannot
-  fix. Many tools show only "CONNECT tunnel failed, response 403". Tell the
+  it, for example as preset:go for everything Go modules need, or the name
+  resolves into the host's own networks, which adding cannot fix. Many tools show only "CONNECT tunnel failed, response 403". Tell the
   person the host:port you tried. The person also sees every refusal in
   proxy.log next to the config file. A new entry takes effect when the
   person starts aibox again.

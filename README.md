@@ -31,8 +31,9 @@ aibox run
 
 The proxy only lets through the hosts listed under `allow` in
 `~/.aibox/projects/<escaped path>/config.yaml`, on port 443 unless an entry
-names another port. The first run writes that file with the hosts Claude
-Code needs. Refused hosts are written to
+names another port. `preset:go`, `preset:npm`, `preset:pypi`, `preset:cargo`
+and `preset:github` stand for the hosts those need. The first run writes that
+file with the hosts Claude Code needs. Refused hosts are written to
 `proxy.log` next to it. A listed name that resolves into the host's own
 networks, such as loopback, link-local or private addresses, is refused as
 well, unless the allowlist lists that address. The file can also set `memory` (in MiB) and `cpus`

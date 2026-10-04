@@ -579,6 +579,7 @@ func TestLoadExpandsAPreset(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Contains(t, cfg.Allow, "proxy.golang.org")
+	assert.Contains(t, cfg.Allow, "storage.googleapis.com")
 	assert.Contains(t, cfg.Allow, "sum.golang.org")
 	assert.Contains(t, cfg.Allow, "example.com")
 	assert.NotContains(t, cfg.Allow, "preset:go")

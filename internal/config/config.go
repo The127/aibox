@@ -99,7 +99,8 @@ const (
 // presets maps a preset name to the hosts it allows. An allow entry of the
 // form preset:name stands for them.
 var presets = map[string][]string{
-	"go":     {"proxy.golang.org", "sum.golang.org", "vuln.go.dev", "dl.google.com", "go.dev"},
+	// proxy.golang.org redirects module downloads to storage.googleapis.com
+	"go":     {"proxy.golang.org", "sum.golang.org", "storage.googleapis.com", "vuln.go.dev", "dl.google.com", "go.dev"},
 	"npm":    {"registry.npmjs.org", "registry.yarnpkg.com", "nodejs.org"},
 	"pypi":   {"pypi.org", "files.pythonhosted.org"},
 	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"},

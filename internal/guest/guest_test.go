@@ -295,6 +295,17 @@ func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
 	assert.Equal(t, "poweroff", lastCall(t, sys))
 }
 
+func TestCommandTurnsTheUpdaterOff(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty)
+
+	// assert
+	assert.Contains(t, cmd.Env, "DISABLE_AUTOUPDATER=1")
+}
+
 func TestCommandRunsAShellWhenAsked(t *testing.T) {
 	// arrange
 	tty := newConsoleFile(t)

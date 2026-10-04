@@ -98,10 +98,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		Shell:    cmd.Bool("shell"),
 	}
 
-	return deps.run(ctx, machine, launchOptions(cfg, log))
+	return deps.run(ctx, machine, launchOptions(cfg, p, log))
 }
 
-func launchOptions(cfg config.Config, log io.Writer) launch.Options {
+func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.Options {
 	return launch.Options{
 		QEMU:      qemuProgram,
 		Virtiofsd: virtiofsdProgram,
@@ -111,6 +111,7 @@ func launchOptions(cfg config.Config, log io.Writer) launch.Options {
 		Proxy: proxy.Options{
 			Allow:     cfg.Allow.Allows,
 			OnRefused: proxy.RefusalLog(log),
+			Hint:      "Add it to " + p.Config + " to allow it.",
 		},
 	}
 }

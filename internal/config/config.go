@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -31,15 +33,18 @@ type Config struct {
 	CPUs *int `yaml:"cpus"`
 }
 
-// Hosts are host names. An entry of the form *.example.com matches every
+// Hosts are host names, each with an optional port. An entry without a port
+// allows port 443. An entry of the form *.example.com matches every
 // subdomain of example.com, but not example.com itself.
 type Hosts []string
+
+const defaultPort = "443"
 
 // defaultFile is written for a project that has no config yet. It is kept as
 // text, so that the person editing it sees why each host is there.
 const defaultFile = `# The hosts the VM may reach. Everything else is refused by the proxy on
-# the host. An entry of the form *.example.com matches every subdomain of
-# example.com.
+# the host. An entry allows port 443, host:port allows another port, and
+# *.example.com matches every subdomain of example.com.
 allow:
   - api.anthropic.com         # the Claude API
   - claude.ai                 # login with a claude.ai account
@@ -121,12 +126,13 @@ func parse(content []byte) (Config, error) {
 		return Config{}, err
 	}
 
-	for i, entry := range cfg.Allow {
-		cfg.Allow[i] = normalize(entry)
-
-		if !isHost(cfg.Allow[i]) {
-			return Config{}, fmt.Errorf("allow entry %q: %w", entry, ErrBadHost)
+	for i, text := range cfg.Allow {
+		e, err := parseEntry(text)
+		if err != nil {
+			return Config{}, err
 		}
+
+		cfg.Allow[i] = e.String()
 	}
 
 	if err := atLeastOne("memory", cfg.Memory); err != nil {
@@ -148,31 +154,86 @@ func atLeastOne(name string, value *int) error {
 	return nil
 }
 
-// isHost says whether a normalized entry can match a host name. The proxy
-// asks for a name without a port, so a port or a URL in an entry would
-// match nothing.
-func isHost(entry string) bool {
-	name := strings.TrimPrefix(entry, "*.")
+// entry is one allow entry taken apart.
+type entry struct {
+	host, port string
+}
+
+// parseEntry reads an entry. A colon in the text means host:port, so an
+// IPv6 address needs brackets and a port.
+func parseEntry(text string) (entry, error) {
+	host, port := text, defaultPort
+
+	if strings.Contains(text, ":") {
+		var err error
+
+		host, port, err = net.SplitHostPort(text)
+		if err != nil {
+			return entry{}, fmt.Errorf("allow entry %q: %w", text, ErrBadHost)
+		}
+	}
+
+	e := entry{host: normalize(host), port: port}
+	if !isHost(e.host) || !isPort(e.port) {
+		return entry{}, fmt.Errorf("allow entry %q: %w", text, ErrBadHost)
+	}
+
+	return e, nil
+}
+
+// String is the stored form, with the port only when it is not the default.
+func (e entry) String() string {
+	if e.port == defaultPort {
+		return e.host
+	}
+
+	return net.JoinHostPort(e.host, e.port)
+}
+
+func (e entry) matches(host, port string) bool {
+	if port != e.port {
+		return false
+	}
+
+	if below, ok := strings.CutPrefix(e.host, "*."); ok {
+		return strings.HasSuffix(host, "."+below)
+	}
+
+	return host == e.host
+}
+
+// isHost says whether a normalized name can match the host name of a
+// request. A URL or a stray character would match nothing.
+func isHost(host string) bool {
+	if net.ParseIP(host) != nil {
+		return true
+	}
+
+	name := strings.TrimPrefix(host, "*.")
 
 	return name != "" && !strings.ContainsAny(name, "*/:[] ")
 }
 
-// Allows reports whether the VM may reach host.
-func (h Hosts) Allows(host string) bool {
+// isPort accepts the digits of a port and nothing else, because ports are
+// compared as text.
+func isPort(port string) bool {
+	n, err := strconv.Atoi(port)
+
+	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == port
+}
+
+// Allows reports whether the VM may reach host on port.
+func (h Hosts) Allows(host, port string) bool {
 	host = normalize(host)
 	if host == "" {
 		return false
 	}
 
-	return slices.ContainsFunc(h, func(entry string) bool { return matches(entry, host) })
-}
+	return slices.ContainsFunc(h, func(text string) bool {
+		e, err := parseEntry(text)
 
-func matches(entry, host string) bool {
-	if below, ok := strings.CutPrefix(entry, "*."); ok {
-		return strings.HasSuffix(host, "."+below)
-	}
-
-	return host == entry
+		return err == nil && e.matches(host, port)
+	})
 }
 
 // normalize lowercases a name and removes a trailing dot, because DNS names

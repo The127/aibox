@@ -160,6 +160,9 @@ func Command(options Options, console *os.File) *exec.Cmd {
 		"PATH=/usr/local/bin:/usr/bin:/bin",
 		"TERM=xterm-256color",
 		"LANG=C.UTF-8",
+		// an update would land in the home share and never run, because the
+		// image's binary comes first on PATH
+		"DISABLE_AUTOUPDATER=1",
 	}
 
 	// the proxy speaks CONNECT only, which is how HTTPS goes through a proxy.

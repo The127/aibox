@@ -24,11 +24,13 @@ const (
 
 // Options control what the proxy lets through.
 type Options struct {
-	// Allow is called with the host name of each CONNECT request and
-	// returns whether it may be reached. Nil allows every host.
-	Allow func(host string) bool
-	// OnRefused is called with the host name of each refused request.
-	OnRefused func(host string)
+	// Allow is called with the host name and port of each CONNECT request
+	// and returns whether they may be reached. Nil allows everything.
+	Allow func(host, port string) bool
+	// OnRefused is called with the host:port of each refused request.
+	OnRefused func(target string)
+	// Hint is a line added to each refusal, such as where to allow the host.
+	Hint string
 	// Resolve looks a host name up. Nil uses the system resolver.
 	Resolve func(ctx context.Context, host string) ([]net.IP, error)
 }
@@ -36,6 +38,12 @@ type Options struct {
 // errNotPublic is a name whose addresses all lie in the networks of the
 // machine aibox runs on.
 var errNotPublic = errors.New("no public address")
+
+// The reasons a refusal names.
+const (
+	reasonNotAllowed = "is not on the allow list"
+	reasonNotPublic  = "resolves only to addresses inside the host's own networks"
+)
 
 // notPublic are address ranges that IsGlobalUnicast counts as public but
 // that belong to the machine's own networks or to nobody: 0.0.0.0/8,
@@ -70,13 +78,13 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 
 	upstream, err := connect(ctx, host, port, options)
 	if errors.Is(err, errNotPublic) {
-		refuse(conn, host, options)
+		refuse(conn, net.JoinHostPort(host, port), reasonNotPublic, options)
 
 		return
 	}
 
 	if err != nil {
-		writeStatus(conn, http.StatusBadGateway)
+		writeError(conn, http.StatusBadGateway, "")
 
 		return
 	}
@@ -86,7 +94,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
 	defer stop()
 
-	writeStatus(conn, http.StatusOK)
+	writeTunnelOK(conn)
 
 	// the reader may hold bytes the client sent right after its request
 	if n := reader.Buffered(); n > 0 {
@@ -106,26 +114,28 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port
 
 	request, err := http.ReadRequest(reader)
 	if err != nil {
+		writeError(conn, http.StatusBadRequest, "")
+
 		return "", "", false
 	}
 
 	_ = conn.SetReadDeadline(time.Time{})
 
 	if request.Method != http.MethodConnect {
-		writeStatus(conn, http.StatusMethodNotAllowed)
+		writeError(conn, http.StatusMethodNotAllowed, "")
 
 		return "", "", false
 	}
 
 	host, port, err = net.SplitHostPort(request.Host)
 	if err != nil || host == "" || port == "" {
-		writeStatus(conn, http.StatusBadRequest)
+		writeError(conn, http.StatusBadRequest, "")
 
 		return "", "", false
 	}
 
-	if options.Allow != nil && !options.Allow(host) {
-		refuse(conn, host, options)
+	if options.Allow != nil && !options.Allow(host, port) {
+		refuse(conn, request.Host, reasonNotAllowed, options)
 
 		return "", "", false
 	}
@@ -133,11 +143,18 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port
 	return host, port, true
 }
 
-func refuse(conn net.Conn, host string, options Options) {
-	writeStatus(conn, http.StatusForbidden)
+// refuse answers with a 403 that says why, so that the program inside the
+// VM can report it.
+func refuse(conn net.Conn, target, reason string, options Options) {
+	body := "aibox: " + target + " " + reason + "\n"
+	if options.Hint != "" {
+		body += options.Hint + "\n"
+	}
+
+	writeError(conn, http.StatusForbidden, body)
 
 	if options.OnRefused != nil {
-		options.OnRefused(host)
+		options.OnRefused(target)
 	}
 }
 
@@ -204,42 +221,34 @@ func isPublic(ip net.IP) bool {
 	return !slices.ContainsFunc(notPublic, func(p netip.Prefix) bool { return p.Contains(addr) })
 }
 
-// RefusalLog returns an OnRefused function that writes each refused host to
-// the writer once, so that a guest that keeps trying cannot fill the log.
-func RefusalLog(w io.Writer) func(host string) {
+// RefusalLog returns an OnRefused function that writes each refused target
+// to the writer once, so that a guest that keeps trying cannot fill the log.
+func RefusalLog(w io.Writer) func(target string) {
 	var mu sync.Mutex
 
 	seen := map[string]bool{}
 
-	return func(host string) {
+	return func(target string) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		if seen[host] {
+		if seen[target] {
 			return
 		}
 
-		seen[host] = true
+		seen[target] = true
 
-		_, _ = fmt.Fprintf(w, "%s refused %q\n", time.Now().UTC().Format(time.RFC3339), host)
+		_, _ = fmt.Fprintf(w, "%s refused %q\n", time.Now().UTC().Format(time.RFC3339), target)
 	}
 }
 
-func writeStatus(conn net.Conn, status int) {
-	headers := "Content-Length: 0\r\n"
-	if status != http.StatusOK {
-		headers += "Connection: close\r\n"
-	}
-
-	_, _ = fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\n%s\r\n", status, statusText(status), headers)
+// writeTunnelOK answers a CONNECT. The reply has no headers about a body,
+// because the bytes that follow are the tunnel.
+func writeTunnelOK(conn net.Conn) {
+	_, _ = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
 }
 
-// statusText is the reason phrase. Proxies answer CONNECT with
-// "Connection Established", which Go does not know.
-func statusText(status int) string {
-	if status == http.StatusOK {
-		return "Connection Established"
-	}
-
-	return http.StatusText(status)
+func writeError(conn net.Conn, status int, body string) {
+	_, _ = fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		status, http.StatusText(status), len(body), body)
 }

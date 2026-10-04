@@ -175,8 +175,26 @@ func TestLoadRejectsAnUnknownKey(t *testing.T) {
 	assert.ErrorContains(t, err, "alow")
 }
 
+func TestLoadStoresEntriesInOneForm(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - EXAMPLE.com:443\n  - \"[::1]:8443\"\n  - Git.Example.:22\n  - \"*.GitHub.com\"\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, config.Hosts{"example.com", "[::1]:8443", "git.example:22", "*.github.com"}, cfg.Allow)
+}
+
 func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
-	for _, entry := range []string{"*", "*.", "example.com:443", "https://example.com", "[::1]", "a b", ""} {
+	entries := []string{
+		"*", "*.", "https://example.com", "a b", "",
+		"example.com:", "example.com:x", "example.com:0", "example.com:0443", "example.com:+443", "example.com:70000",
+		"[::1]", "::1", "a:b:c",
+	}
+
+	for _, entry := range entries {
 		t.Run(entry, func(t *testing.T) {
 			// arrange
 			path := write(t, "allow:\n  - \""+entry+"\"\n")
@@ -192,29 +210,36 @@ func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
 
 func TestAllows(t *testing.T) {
 	// arrange
-	hosts := config.Hosts{"example.com", "*.github.com", "10.0.0.5"}
+	hosts := config.Hosts{"example.com", "*.github.com", "10.0.0.5", "git.example:22", "[::1]:8443"}
 
-	tests := map[string]bool{
-		"example.com":     true,
-		"EXAMPLE.com":     true,
-		"example.com.":    true,
-		"www.example.com": false,
-		"api.github.com":  true,
-		"a.b.github.com":  true,
-		"github.com":      false,
-		"notgithub.com":   false,
-		"evil.com":        false,
-		"10.0.0.5":        true,
-		"":                false,
+	tests := []struct {
+		host, port string
+		want       bool
+	}{
+		{"example.com", "443", true},
+		{"EXAMPLE.com", "443", true},
+		{"example.com.", "443", true},
+		{"example.com", "80", false},
+		{"www.example.com", "443", false},
+		{"api.github.com", "443", true},
+		{"a.b.github.com", "443", true},
+		{"github.com", "443", false},
+		{"notgithub.com", "443", false},
+		{"evil.com", "443", false},
+		{"10.0.0.5", "443", true},
+		{"git.example", "22", true},
+		{"git.example", "443", false},
+		{"::1", "8443", true},
+		{"", "443", false},
 	}
 
-	for host, want := range tests {
-		t.Run(host, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.host+":"+test.port, func(t *testing.T) {
 			// act
-			allowed := hosts.Allows(host)
+			allowed := hosts.Allows(test.host, test.port)
 
 			// assert
-			assert.Equal(t, want, allowed)
+			assert.Equal(t, test.want, allowed)
 		})
 	}
 }

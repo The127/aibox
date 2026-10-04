@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -81,10 +82,35 @@ func dial(t *testing.T, address *url.URL) net.Conn {
 func connect(t *testing.T, address *url.URL, target string) (string, net.Conn) {
 	t.Helper()
 
+	r, conn := connectResponse(t, address, target)
+
+	return r.status, conn
+}
+
+func connectResponse(t *testing.T, address *url.URL, target string) (response, net.Conn) {
+	t.Helper()
+
 	return request(t, address, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n")
 }
 
-func request(t *testing.T, address *url.URL, raw string) (string, net.Conn) {
+// response is what the proxy answered, read up to the end of the headers.
+type response struct {
+	status  string
+	headers []string
+	reader  *bufio.Reader
+}
+
+// body reads the rest of the response.
+func (r response) body(t *testing.T) string {
+	t.Helper()
+
+	content, err := io.ReadAll(r.reader)
+	require.NoError(t, err)
+
+	return string(content)
+}
+
+func request(t *testing.T, address *url.URL, raw string) (response, net.Conn) {
 	t.Helper()
 
 	conn := dial(t, address)
@@ -96,13 +122,18 @@ func request(t *testing.T, address *url.URL, raw string) (string, net.Conn) {
 	status, err := reader.ReadString('\n')
 	require.NoError(t, err)
 
-	// the headers of the response, up to the empty line
-	for line := ""; line != "\r\n"; {
-		line, err = reader.ReadString('\n')
-		require.NoError(t, err)
-	}
+	r := response{status: strings.TrimSpace(status), reader: reader}
 
-	return strings.TrimSpace(status), conn
+	for {
+		line, err := reader.ReadString('\n')
+		require.NoError(t, err)
+
+		if line == "\r\n" {
+			return r, conn
+		}
+
+		r.headers = append(r.headers, strings.TrimSpace(line))
+	}
 }
 
 // echoAfterEOF is a server that answers with everything it read, once the
@@ -179,31 +210,31 @@ func TestServeRefusesAHostThatIsNotAllowed(t *testing.T) {
 	// arrange
 	var mu sync.Mutex
 	var asked string
-	address := serve(t, proxy.Options{Allow: func(host string) bool {
+	address := serve(t, proxy.Options{Allow: func(host, port string) bool {
 		mu.Lock()
 		defer mu.Unlock()
 
-		asked = host
+		asked = host + ":" + port
 
 		return false
 	}})
 
 	// act
-	status, _ := connect(t, address, "example.com:443")
+	status, _ := connect(t, address, "example.com:8443")
 
 	// assert
 	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, "example.com", asked)
+	assert.Equal(t, "example.com:8443", asked)
 }
 
 func TestServeReportsARefusedHost(t *testing.T) {
 	// arrange
 	refused := make(chan string, 1)
 	address := serve(t, proxy.Options{
-		Allow:     func(string) bool { return false },
+		Allow:     func(string, string) bool { return false },
 		OnRefused: func(host string) { refused <- host },
 	})
 
@@ -214,8 +245,8 @@ func TestServeReportsARefusedHost(t *testing.T) {
 	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
 
 	select {
-	case host := <-refused:
-		assert.Equal(t, "example.com", host)
+	case target := <-refused:
+		assert.Equal(t, "example.com:443", target)
 	case <-time.After(timeout):
 		t.Fatal("OnRefused was not called")
 	}
@@ -227,15 +258,15 @@ func TestRefusalLogWritesEachHostOnce(t *testing.T) {
 	refused := proxy.RefusalLog(&log)
 
 	// act
-	refused("evil.example")
-	refused("evil.example")
-	refused("other.example")
+	refused("evil.example:443")
+	refused("evil.example:443")
+	refused("evil.example:80")
 
 	// assert
 	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
 	require.Len(t, lines, 2)
-	assert.Regexp(t, `^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ refused "evil.example"$`, lines[0])
-	assert.Contains(t, lines[1], `refused "other.example"`)
+	assert.Regexp(t, `^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ refused "evil.example:443"$`, lines[0])
+	assert.Contains(t, lines[1], `refused "evil.example:80"`)
 }
 
 // resolveTo is a resolver that answers every name with the addresses.
@@ -270,8 +301,8 @@ func TestServeRefusesANameThatResolvesToTheHostItself(t *testing.T) {
 	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
 
 	select {
-	case host := <-refused:
-		assert.Equal(t, "evil.example", host)
+	case target := <-refused:
+		assert.Equal(t, "evil.example:443", target)
 	case <-time.After(timeout):
 		t.Fatal("OnRefused was not called")
 	}
@@ -294,7 +325,7 @@ func TestServeDialsAListedAddressEvenOnTheHostItself(t *testing.T) {
 	host, _, err := net.SplitHostPort(target)
 	require.NoError(t, err)
 
-	address := serve(t, proxy.Options{Allow: func(h string) bool { return h == host }})
+	address := serve(t, proxy.Options{Allow: func(h, _ string) bool { return h == host }})
 
 	// act
 	status, _ := connect(t, address, target)
@@ -316,15 +347,58 @@ func TestServeReportsANameItCannotResolve(t *testing.T) {
 	assert.Equal(t, "HTTP/1.1 502 Bad Gateway", status)
 }
 
+func TestServeAnswersConnectWithoutAContentLength(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{})
+
+	// act
+	r, _ := connectResponse(t, address, echoAfterEOF(t))
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", r.status)
+	assert.Empty(t, r.headers)
+}
+
+func TestServeSaysWhatItRefused(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Allow: func(string, string) bool { return false },
+		Hint:  "Add it to /somewhere/config.yaml to allow it.",
+	})
+
+	// act
+	r, _ := connectResponse(t, address, "example.com:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", r.status)
+	assert.Contains(t, r.headers, "Content-Type: text/plain; charset=utf-8")
+	assert.Contains(t, r.headers, "Connection: close")
+
+	body := r.body(t)
+	assert.Equal(t, "aibox: example.com:443 is not on the allow list\nAdd it to /somewhere/config.yaml to allow it.\n", body)
+	assert.Contains(t, r.headers, "Content-Length: "+strconv.Itoa(len(body)))
+}
+
+func TestServeAnswers400ToARequestItCannotRead(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{})
+
+	// act
+	r, _ := request(t, address, "garbage\r\n\r\n")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 400 Bad Request", r.status)
+}
+
 func TestServeRefusesOtherMethods(t *testing.T) {
 	// arrange
 	address := serve(t, proxy.Options{})
 
 	// act
-	status, _ := request(t, address, "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	r, _ := request(t, address, "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
 
 	// assert
-	assert.Equal(t, "HTTP/1.1 405 Method Not Allowed", status)
+	assert.Equal(t, "HTTP/1.1 405 Method Not Allowed", r.status)
 }
 
 func TestServeRefusesATargetWithoutAHost(t *testing.T) {

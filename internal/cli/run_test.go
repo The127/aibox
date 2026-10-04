@@ -286,8 +286,10 @@ func TestRunPassesTheAllowListToTheProxy(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	require.NotNil(t, f.launch.options.Proxy.Allow)
-	assert.True(t, f.launch.options.Proxy.Allow("example.com"))
-	assert.False(t, f.launch.options.Proxy.Allow("api.anthropic.com"))
+	assert.True(t, f.launch.options.Proxy.Allow("example.com", "443"))
+	assert.False(t, f.launch.options.Proxy.Allow("example.com", "80"))
+	assert.False(t, f.launch.options.Proxy.Allow("api.anthropic.com", "443"))
+	assert.Contains(t, f.launch.options.Proxy.Hint, f.project(t).Config)
 }
 
 func TestRunWritesTheDefaultConfigForANewProject(t *testing.T) {

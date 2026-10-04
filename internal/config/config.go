@@ -70,7 +70,6 @@ allow:
   - claude.com                # the sign-in page redirects through here
   - platform.claude.com       # login tokens
   - mcp-proxy.anthropic.com   # MCP connectors of a claude.ai account
-  - downloads.claude.ai       # update checks
   - code.claude.com           # documentation lookups
 
 # The size of the VM, for example:
@@ -86,7 +85,6 @@ func Default() Config {
 		"claude.com",
 		"platform.claude.com",
 		"mcp-proxy.anthropic.com",
-		"downloads.claude.ai",
 		"code.claude.com",
 	}}
 }

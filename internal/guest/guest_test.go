@@ -308,7 +308,7 @@ func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
-func TestCommandTurnsTheUpdaterOff(t *testing.T) {
+func TestCommandTurnsNonessentialTrafficOff(t *testing.T) {
 	// arrange
 	tty := newConsoleFile(t)
 
@@ -316,7 +316,7 @@ func TestCommandTurnsTheUpdaterOff(t *testing.T) {
 	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm")
 
 	// assert
-	assert.Contains(t, cmd.Env, "DISABLE_AUTOUPDATER=1")
+	assert.Contains(t, cmd.Env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 }
 
 func TestCommandRunsAShellWhenAsked(t *testing.T) {

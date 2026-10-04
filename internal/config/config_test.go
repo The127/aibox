@@ -33,6 +33,14 @@ func TestLoadReadsTheAllowList(t *testing.T) {
 	assert.Equal(t, config.Hosts{"example.com", "*.github.com"}, cfg.Allow)
 }
 
+func TestDefaultHasNoHostForUpdates(t *testing.T) {
+	// act
+	cfg := config.Default()
+
+	// assert
+	assert.NotContains(t, cfg.Allow, "downloads.claude.ai")
+}
+
 func TestLoadWritesTheDefaultFileWhenThereIsNone(t *testing.T) {
 	// arrange
 	path := filepath.Join(t.TempDir(), "config.yaml")

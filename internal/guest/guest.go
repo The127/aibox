@@ -181,8 +181,9 @@ func Command(options Options, terminal *os.File, term string) *exec.Cmd {
 		"TERM=" + term,
 		"LANG=C.UTF-8",
 		// an update would land in the home share and never run, because the
-		// image's binary comes first on PATH
-		"DISABLE_AUTOUPDATER=1",
+		// image's binary comes first on PATH. Telemetry and error reports go
+		// to hosts the allow list does not have.
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	}
 
 	// the proxy speaks CONNECT only, which is how HTTPS goes through a proxy.

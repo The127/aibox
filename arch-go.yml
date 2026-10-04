@@ -114,6 +114,7 @@ dependenciesRules:
       internal:
         - '**.internal.tunnel$'
         - '**.internal.vm$'
+        - '**.internal.session$'
     shouldNotDependsOn:
       internal:
         - '**.cmd.**'

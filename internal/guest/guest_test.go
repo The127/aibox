@@ -22,7 +22,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/guest"
+	"github.com/the127/aibox/internal/session"
 )
+
+// terminalPort is the vsock port the fake host serves the terminal on.
+const terminalPort = 5432
+
+// withTerminal is the kernel command line of a VM whose host serves a
+// terminal and nothing else.
+const withTerminal = "console=hvc0 aibox.terminal=5432"
 
 func TestParseCmdline(t *testing.T) {
 	// arrange
@@ -34,6 +42,7 @@ func TestParseCmdline(t *testing.T) {
 		"console=tty0 console=ttyS0,115200n8":  {Console: "/dev/ttyS0"},
 		"console= quiet":                       {Console: "/dev/console"},
 		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
+		"console=hvc0 aibox.terminal=5432":     {Console: "/dev/hvc0", TerminalPort: 5432},
 	}
 
 	for cmdline, want := range tests {
@@ -48,16 +57,19 @@ func TestParseCmdline(t *testing.T) {
 	}
 }
 
-func TestParseCmdlineRejectsABadProxyPort(t *testing.T) {
-	for _, value := range []string{"x", "0", "4294967295", "99999999999", ""} {
-		t.Run(value, func(t *testing.T) {
-			// act
-			options, err := guest.ParseCmdline("console=ttyS0 aibox.proxy=" + value)
+func TestParseCmdlineRejectsABadPort(t *testing.T) {
+	for _, word := range []string{"aibox.proxy", "aibox.terminal"} {
+		for _, value := range []string{"x", "0", "4294967295", "99999999999", ""} {
+			t.Run(word+"="+value, func(t *testing.T) {
+				// act
+				options, err := guest.ParseCmdline("console=ttyS0 " + word + "=" + value)
 
-			// assert
-			assert.ErrorIs(t, err, guest.ErrBadProxyPort)
-			assert.Equal(t, guest.Options{Console: "/dev/ttyS0"}, options)
-		})
+				// assert
+				assert.ErrorIs(t, err, guest.ErrBadPort)
+				assert.ErrorContains(t, err, word)
+				assert.Equal(t, guest.Options{Console: "/dev/ttyS0"}, options)
+			})
+		}
 	}
 }
 
@@ -66,7 +78,7 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty)
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm-kitty")
 
 	// assert
 	assert.Equal(t, []string{"/usr/local/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md"}, cmd.Args)
@@ -74,7 +86,7 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	assert.Contains(t, cmd.Env, "AIBOX=1")
 	assert.Contains(t, cmd.Env, "HOME=/home/user")
 	assert.Contains(t, cmd.Env, "USER=user")
-	assert.Contains(t, cmd.Env, "TERM=xterm-256color")
+	assert.Contains(t, cmd.Env, "TERM=xterm-kitty")
 	assert.Contains(t, cmd.Env, "PATH=/usr/local/bin:/usr/bin:/bin")
 	assert.Equal(t, &syscall.Credential{Uid: 1000, Gid: 1000}, cmd.SysProcAttr.Credential)
 	assert.True(t, cmd.SysProcAttr.Setsid)
@@ -90,7 +102,7 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), ProxyPort: 4321}, tty)
+	cmd := guest.Command(guest.Options{Console: tty.Name(), ProxyPort: 4321}, tty, "xterm")
 
 	// assert
 	assert.Contains(t, cmd.Env, "HTTPS_PROXY=http://127.0.0.1:3128")
@@ -99,12 +111,23 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	assert.Contains(t, cmd.Env, "no_proxy=localhost,127.0.0.1")
 }
 
+func TestCommandWithoutATermFallsBackToXterm(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "")
+
+	// assert
+	assert.Contains(t, cmd.Env, "TERM=xterm-256color")
+}
+
 func TestCommandWithoutAProxy(t *testing.T) {
 	// arrange
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty)
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm")
 
 	// assert
 	require.NotEmpty(t, cmd.Env)
@@ -219,7 +242,7 @@ func TestForwardClosesTheTunnelsWhenTheContextEnds(t *testing.T) {
 
 func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=4321"}
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321"}
 
 	// act
 	err := guest.Run(sys)
@@ -245,7 +268,7 @@ func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
 
 func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=4321", failLoopback: errors.New("not permitted")}
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321", failLoopback: errors.New("not permitted")}
 
 	// act
 	err := guest.Run(sys)
@@ -258,7 +281,7 @@ func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
 
 func TestRunReportsABadProxyPortAndGoesOnWithoutAProxy(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=x"}
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=x"}
 
 	// act
 	err := guest.Run(sys)
@@ -272,7 +295,7 @@ func TestRunReportsABadProxyPortAndGoesOnWithoutAProxy(t *testing.T) {
 
 func TestRunWithoutAProxy(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: "console=ttyS0"}
+	sys := &fakeSystem{t: t, cmdline: withTerminal}
 
 	// act
 	err := guest.Run(sys)
@@ -285,7 +308,7 @@ func TestRunWithoutAProxy(t *testing.T) {
 
 func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: "console=ttyS0 aibox.proxy=4321", failListen: errors.New("address in use")}
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321", failListen: errors.New("address in use")}
 
 	// act
 	err := guest.Run(sys)
@@ -301,7 +324,7 @@ func TestCommandTurnsTheUpdaterOff(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty)
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm")
 
 	// assert
 	assert.Contains(t, cmd.Env, "DISABLE_AUTOUPDATER=1")
@@ -312,7 +335,7 @@ func TestCommandRunsAShellWhenAsked(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), Shell: true}, tty)
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Shell: true}, tty, "xterm")
 
 	// assert
 	assert.Equal(t, []string{"/usr/bin/bash", "-l"}, cmd.Args)
@@ -321,7 +344,7 @@ func TestCommandRunsAShellWhenAsked(t *testing.T) {
 
 func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: "root=/dev/vda console=ttyS0"}
+	sys := &fakeSystem{t: t, cmdline: "root=/dev/vda " + withTerminal}
 
 	// act
 	err := guest.Run(sys)
@@ -332,7 +355,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount devtmpfs /dev",
 		"mount proc /proc",
 		"read cmdline",
-		"open /dev/ttyS0",
+		"open /dev/hvc0",
 		"mount sysfs /sys",
 		"mount devpts /dev/pts",
 		"mount tmpfs /dev/shm",
@@ -345,10 +368,12 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"link /dev/stdout -> /proc/self/fd/1",
 		"link /dev/stderr -> /proc/self/fd/2",
 		"hostname aibox",
+		"dial host 5432",
 		"start /usr/local/bin/claude",
 		"wait",
 		"halt",
 	}, sys.calls)
+	assert.Equal(t, 0, sys.exitCodeOnTheHost(t))
 	assert.Equal(t, mounted{"proc", "/proc", "proc", syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/proc"])
 	assert.Equal(t, mounted{"devpts", "/dev/pts", "devpts", syscall.MS_NOSUID | syscall.MS_NOEXEC, "mode=620,ptmxmode=666,gid=5"}, sys.mounts["/dev/pts"])
 	assert.Equal(t, mounted{"tmpfs", "/tmp", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV, "mode=1777"}, sys.mounts["/tmp"])
@@ -420,7 +445,7 @@ func TestRunKeepsGoingWhenTheHostnameFails(t *testing.T) {
 	assert.Contains(t, sys.calls, "start /usr/local/bin/claude")
 }
 
-func TestRunPowersOffWhenClaudeCodeFails(t *testing.T) {
+func TestRunHandsTheExitCodeToTheHostAndPowersOff(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, exitCode: 7}
 
@@ -429,7 +454,50 @@ func TestRunPowersOffWhenClaudeCodeFails(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, sys.consoleOutput(), "exit code 7")
+	assert.Equal(t, 7, sys.exitCodeOnTheHost(t))
+	assert.Equal(t, "halt", lastCall(t, sys))
+}
+
+func TestRunGivesTheCommandTheTerminalOfTheHost(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, realCommand: "stty size; echo TERM=$TERM; tty"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 0, sys.exitCodeOnTheHost(t))
+	assert.Contains(t, sys.screen.String(), "50 160")
+	assert.Contains(t, sys.screen.String(), "TERM=xterm-kitty")
+	assert.Contains(t, sys.screen.String(), "/dev/pts/")
+}
+
+func TestRunPowersOffWithoutATerminalPort(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "console=hvc0"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.ErrorIs(t, err, guest.ErrNoTerminal)
+	assert.Contains(t, sys.consoleOutput(), "aibox.terminal")
+	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.Equal(t, "halt", lastCall(t, sys))
+}
+
+func TestRunPowersOffWhenTheHostDoesNotAnswer(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failDial: errors.New("connection reset")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "connection reset")
+	assert.Contains(t, sys.consoleOutput(), "connection reset")
+	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -495,6 +563,10 @@ type mounted struct {
 	data                   string
 }
 
+// fakeSystem stands in for the kernel. It also plays the host on the other
+// end of the terminal port: a session client whose screen collects what the
+// command prints. realCommand, when set, runs in place of the command with
+// its terminal, so that a test can look at the terminal from inside.
 type fakeSystem struct {
 	t            *testing.T
 	cmdline      string
@@ -507,14 +579,60 @@ type fakeSystem struct {
 	child        int
 	listener     net.Listener
 	mu           sync.Mutex
+	screen       syncBuffer
+	attached     chan attachResult
+	realCommand  string
+	real         *exec.Cmd
 	failMount    string
 	failLoopback error
 	failListen   error
 	failOpen     error
 	failHostname error
+	failDial     error
 	failStart    error
 	failWait     error
 	failHalt     error
+}
+
+type attachResult struct {
+	code int
+	err  error
+}
+
+type syncBuffer struct {
+	mu     sync.Mutex
+	buffer strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buffer.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buffer.String()
+}
+
+// exitCodeOnTheHost is what the session client on the host came back with.
+func (s *fakeSystem) exitCodeOnTheHost(t *testing.T) int {
+	t.Helper()
+	require.NotNil(t, s.attached, "the host was never dialed")
+
+	select {
+	case result := <-s.attached:
+		require.NoError(t, result.err)
+
+		return result.code
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session on the host did not end")
+
+		return 0
+	}
 }
 
 func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data string) error {
@@ -543,7 +661,7 @@ func (s *fakeSystem) ReadCmdline() (string, error) {
 	s.record("read cmdline")
 
 	if s.cmdline == "" {
-		return "console=ttyS0", nil
+		return withTerminal, nil
 	}
 
 	return s.cmdline, nil
@@ -587,7 +705,41 @@ func (s *fakeSystem) Listen(address string) (net.Listener, error) {
 func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 	s.record(fmt.Sprintf("dial host %d", port))
 
-	return nil, errors.New("no host in the test")
+	if port != terminalPort {
+		return nil, errors.New("no host in the test")
+	}
+
+	if s.failDial != nil {
+		return nil, s.failDial
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(s.t, err)
+
+	defer func() { _ = listener.Close() }()
+
+	s.attached = make(chan attachResult, 1)
+
+	go func() {
+		hostSide, err := listener.Accept()
+		if err != nil {
+			s.attached <- attachResult{err: err}
+
+			return
+		}
+
+		defer func() { _ = hostSide.Close() }()
+
+		client := session.Client{In: strings.NewReader(""), Out: &s.screen, Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}}
+		code, err := client.Attach(hostSide)
+		s.attached <- attachResult{code: code, err: err}
+	}()
+
+	guestSide, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(s.t, err)
+	s.t.Cleanup(func() { _ = guestSide.Close() })
+
+	return guestSide, nil
 }
 
 // record is for the calls the forwarder goroutine makes while the test reads
@@ -621,6 +773,22 @@ func (s *fakeSystem) Start(cmd *exec.Cmd) (int, error) {
 
 	s.child = 4242
 
+	if s.realCommand == "" {
+		return s.child, nil
+	}
+
+	// the test does not run as root, so it cannot become the VM user
+	s.real = exec.Command("/bin/sh", "-c", s.realCommand) //nolint:gosec // the command comes from the test
+	s.real.Env = cmd.Env
+	s.real.Stdin, s.real.Stdout, s.real.Stderr = cmd.Stdin, cmd.Stdout, cmd.Stderr
+	s.real.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+
+	if err := s.real.Start(); err != nil {
+		return 0, err
+	}
+
+	s.child = s.real.Process.Pid
+
 	return s.child, nil
 }
 
@@ -634,6 +802,17 @@ func (s *fakeSystem) Wait() (int, int, error) {
 
 	if s.waits <= s.orphans {
 		return 100 + s.waits, 0, nil
+	}
+
+	if s.real != nil {
+		err := s.real.Wait()
+
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return s.child, exitErr.ExitCode(), nil
+		}
+
+		return s.child, 0, err
 	}
 
 	return s.child, s.exitCode, nil

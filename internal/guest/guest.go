@@ -1,7 +1,8 @@
 //go:build linux
 
 // Package guest is the first process of the VM. It mounts what Claude Code
-// needs, starts it on the console and powers the VM off when it exits.
+// needs, runs it on a terminal served to the host and powers the VM off
+// when it exits.
 package guest
 
 import (
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/tunnel"
 	"github.com/the127/aibox/internal/vm"
 )
@@ -35,17 +37,24 @@ const (
 
 	// where Claude Code finds the proxy inside the VM
 	guestProxyAddress = "127.0.0.1:3128"
+
+	fallbackTerm = "xterm-256color"
 )
 
-// ErrBadProxyPort is a kernel command line whose aibox.proxy word is not a
-// vsock port.
-var ErrBadProxyPort = errors.New("aibox.proxy is not a port")
+var (
+	// ErrBadPort is a kernel command line whose aibox.proxy or
+	// aibox.terminal word is not a vsock port.
+	ErrBadPort = errors.New("not a vsock port")
+	// ErrNoTerminal is a kernel command line without an aibox.terminal word.
+	ErrNoTerminal = errors.New("no aibox.terminal on the kernel command line")
+)
 
 // Options come from the kernel command line.
 type Options struct {
-	Console   string
-	Shell     bool
-	ProxyPort uint32
+	Console      string
+	Shell        bool
+	ProxyPort    uint32
+	TerminalPort uint32
 }
 
 // Network is what the proxy side of the VM needs from the kernel.
@@ -113,7 +122,7 @@ var (
 func ParseCmdline(cmdline string) (Options, error) {
 	options := Options{Console: "/dev/console"}
 
-	var err error
+	var errs []error
 
 	for _, word := range strings.Fields(cmdline) {
 		key, value, _ := strings.Cut(word, "=")
@@ -126,30 +135,38 @@ func ParseCmdline(cmdline string) (Options, error) {
 		case "aibox.shell":
 			options.Shell = true
 		case "aibox.proxy":
-			options.ProxyPort, err = parsePort(value)
+			options.ProxyPort = parsePort(key, value, &errs)
+		case "aibox.terminal":
+			options.TerminalPort = parsePort(key, value, &errs)
 		}
 	}
 
-	return options, err
+	return options, errors.Join(errs...)
 }
 
 // parsePort reads a vsock port. 0 and the highest value are not ports a
 // listener can have.
-func parsePort(value string) (uint32, error) {
+func parsePort(key, value string, errs *[]error) uint32 {
 	port, err := strconv.ParseUint(value, 10, 32)
 	if err != nil || port == 0 || port == 0xFFFFFFFF {
-		return 0, fmt.Errorf("%w: %q", ErrBadProxyPort, value)
+		*errs = append(*errs, fmt.Errorf("%s=%q: %w", key, value, ErrBadPort))
+
+		return 0
 	}
 
-	return uint32(port), nil
+	return uint32(port)
 }
 
 // Command is Claude Code, or a shell when the options ask for one, set up to
-// run as the user on the console.
-func Command(options Options, console *os.File) *exec.Cmd {
+// run as the user on the terminal with the TERM of the host.
+func Command(options Options, terminal *os.File, term string) *exec.Cmd {
 	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
 	if options.Shell {
 		cmd = exec.Command(bash, "-l")
+	}
+
+	if term == "" {
+		term = fallbackTerm
 	}
 
 	cmd.Dir = project
@@ -160,7 +177,7 @@ func Command(options Options, console *os.File) *exec.Cmd {
 		"LOGNAME=" + userName,
 		"SHELL=" + bash,
 		"PATH=/usr/local/bin:/usr/bin:/bin",
-		"TERM=xterm-256color",
+		"TERM=" + term,
 		"LANG=C.UTF-8",
 		// an update would land in the home share and never run, because the
 		// image's binary comes first on PATH
@@ -178,9 +195,9 @@ func Command(options Options, console *os.File) *exec.Cmd {
 		)
 	}
 
-	cmd.Stdin = console
-	cmd.Stdout = console
-	cmd.Stderr = console
+	cmd.Stdin = terminal
+	cmd.Stdout = terminal
+	cmd.Stderr = terminal
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
 		Setsid:     true,
@@ -213,12 +230,13 @@ func Forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, 
 	})
 }
 
-// Run sets the VM up, runs the command until it exits and halts the VM. The
-// error says what went wrong before the halt.
+// Run sets the VM up, serves the terminal session to the host until the
+// command exits and halts the VM. The error says what went wrong before the
+// halt.
 func Run(sys System) error {
 	console, options, err := setup(sys)
 	if err == nil {
-		err = supervise(sys, Command(options, console), console)
+		err = serve(sys, options)
 	}
 
 	if err != nil && console != nil {
@@ -304,30 +322,96 @@ func startProxy(network Network, port uint32, console io.Writer) error {
 	return nil
 }
 
-// supervise runs the command and reaps every child until the command
-// exits. As PID 1 the init also inherits the children whose parents are
-// gone.
-func supervise(sys System, cmd *exec.Cmd, console io.Writer) error {
-	pid, err := sys.Start(cmd)
-	if err != nil {
-		return fmt.Errorf("start %s: %w", cmd.Path, err)
+// serve connects to the terminal on the host and serves the session on it.
+func serve(sys System, options Options) error {
+	if options.TerminalPort == 0 {
+		return ErrNoTerminal
 	}
 
+	conn, err := sys.DialHost(options.TerminalPort)
+	if err != nil {
+		return fmt.Errorf("connect to the terminal on the host: %w", err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	key, err := session.NewHostKey()
+	if err != nil {
+		return fmt.Errorf("generate the host key: %w", err)
+	}
+
+	var started *process
+
+	defer func() {
+		if started != nil {
+			_ = started.pty.Master.Close()
+		}
+	}()
+
+	server := session.Server{
+		HostKey: key,
+		Start: func(terminal session.Terminal) (session.Process, error) {
+			p, err := start(sys, options, terminal)
+			if err == nil {
+				started = p
+			}
+
+			return p, err
+		},
+	}
+
+	return server.Serve(conn)
+}
+
+// start runs the command on a new terminal of the size the host asked for.
+func start(sys System, options Options, terminal session.Terminal) (*process, error) {
+	pty, err := session.OpenPTY(terminal.Size)
+	if err != nil {
+		return nil, fmt.Errorf("open a terminal: %w", err)
+	}
+
+	// programs that open their terminal by name need to own it
+	_ = pty.Slave.Chown(int(vm.GuestUID), int(vm.GuestGID))
+
+	cmd := Command(options, pty.Slave, terminal.Term)
+
+	pid, err := sys.Start(cmd)
+
+	_ = pty.Slave.Close()
+
+	if err != nil {
+		_ = pty.Master.Close()
+
+		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
+	}
+
+	return &process{pty: pty, pid: pid, sys: sys}, nil
+}
+
+// process is the command on its terminal.
+type process struct {
+	pty *session.PTY
+	pid int
+	sys System
+}
+
+func (p *process) Read(b []byte) (int, error)  { return p.pty.Master.Read(b) }
+func (p *process) Write(b []byte) (int, error) { return p.pty.Master.Write(b) }
+
+func (p *process) Resize(size session.Size) error { return p.pty.Resize(size) }
+
+// Wait reaps every child until the command exits. As PID 1 the init also
+// inherits the children whose parents are gone.
+func (p *process) Wait() (int, error) {
 	for {
-		exited, exitCode, err := sys.Wait()
+		exited, exitCode, err := p.sys.Wait()
 		if err != nil {
-			return fmt.Errorf("wait for %s: %w", cmd.Path, err)
+			return 0, err
 		}
 
-		if exited != pid {
-			continue
+		if exited == p.pid {
+			return exitCode, nil
 		}
-
-		if exitCode != 0 {
-			say(console, "aibox: %s ended with exit code %d\n", cmd.Path, exitCode)
-		}
-
-		return nil
 	}
 }
 

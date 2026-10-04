@@ -157,12 +157,14 @@ const (
 var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
 
 // gitDir is pinned by protectGit, and gitConfig and gitDirs made read-only.
+// .git/info stays writable: lefthook keeps unstaged changes there during a
+// commit, and exclude and attributes in it run nothing on the host.
 const (
 	gitDir    = project + "/.git"
 	gitConfig = gitDir + "/config"
 )
 
-var gitDirs = []string{gitDir + "/hooks", gitDir + "/info"}
+var gitDirs = []string{gitDir + "/hooks"}
 
 // stateDirs are the folders of the state disk and where they are bound.
 var stateDirs = []struct{ dir, target string }{
@@ -538,14 +540,14 @@ func setup(sys System) (*os.File, Options, error) {
 	return console, options, nil
 }
 
-// protectGit makes the config, hooks and info of the project's .git
-// read-only, because a config key or a hook written there in the VM would
-// run on the host the next time the person uses git, and neither git
-// status nor git diff would show it. The .git folder itself is pinned, or
-// it could be renamed away and made again without the mounts. A .git that
-// is a file, as in a worktree or a submodule, names the real folder and is
-// made read-only as a whole. A missing hooks or info folder is made first,
-// since a folder made later in the VM would not be read-only.
+// protectGit makes the config and hooks of the project's .git read-only,
+// because a config key or a hook written there in the VM would run on the
+// host the next time the person uses git, and neither git status nor git
+// diff would show it. The .git folder itself is pinned, or it could be
+// renamed away and made again without the mounts. A .git that is a file, as
+// in a worktree or a submodule, names the real folder and is made read-only
+// as a whole. A missing hooks folder is made first, since a folder made
+// later in the VM would not be read-only.
 func protectGit(sys System) error {
 	err := sys.Pin(gitDir)
 	if errors.Is(err, fs.ErrNotExist) {

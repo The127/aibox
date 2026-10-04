@@ -17,9 +17,11 @@ Files and tools:
   for each project. At every start aibox copies the name and email that git
   uses for the project on the host into ~/.config/git/config here. A
   ~/.gitconfig you write here wins over that.
-- .git/config, .git/hooks and .git/info of the project are read-only, so
+- .git/config and .git/hooks of the project are read-only, so
   `git config --local`, `git remote add` and hook changes fail. Use
-  `git -c key=value` for one command instead.
+  `git -c key=value` for one command instead. `git branch -D` and other
+  commands that also tidy the config warn about it but still do their
+  work.
 - Other folders of the host may be mounted read-only. `mount -t virtiofs`
   shows where, as the entries named mount0, mount1 and so on.
 - /usr/local and ~/.cache are on a disk of this project that survives

@@ -4,20 +4,21 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
 
 - The VM runs on QEMU's microvm machine type.
 - The project folder is shared into the VM with virtio-fs. Your user on the
-  host is the user inside the VM. The VM sees `.git/config`, `.git/hooks`
-  and `.git/info` read-only: a config key or a hook written there would run
-  on the host the next time you use git, and nothing in `git status` or
-  `git diff` would show it. `.git` itself can neither be renamed nor
-  removed in the VM, so it cannot be swapped for a writable copy, and a
-  `.git` file of a worktree or submodule is read-only as a whole. The rest
-  of `.git` and the working tree stay writable, so `git worktree add` and
-  submodules work. Inside the VM, `git -c key=value` still sets a key for
-  one command. Not covered: a worktree or submodule made in the VM, whose
-  own config and hooks git reads when you run it inside that folder on
-  the host; a project that gets its `.git` only inside the VM; a config
-  that includes a file from the working tree; `.git/config.worktree`; and
-  a git dir placed inside the project with `--separate-git-dir`. A symlink
-  in place of one of the protected paths stops the VM from starting.
+  host is the user inside the VM. The VM sees `.git/config` and `.git/hooks`
+  read-only: a config key or a hook written there would run on the host the
+  next time you use git, and nothing in `git status` or `git diff` would
+  show it. `.git` itself can neither be renamed nor removed in the VM, so it
+  cannot be swapped for a writable copy, and a `.git` file of a worktree or
+  submodule is read-only as a whole. `.git/info` stays writable, since
+  lefthook keeps unstaged changes there during a commit. The rest of `.git`
+  and the working tree stay writable, so `git worktree add` and submodules
+  work. Inside the VM, `git -c key=value` still sets a key for one command.
+  Not covered: a worktree or submodule made in the VM, whose own config and
+  hooks git reads when you run it inside that folder on the host; a project
+  that gets its `.git` only inside the VM; a config that includes a file
+  from the working tree; `.git/config.worktree`; and a git dir placed inside
+  the project with `--separate-git-dir`. A symlink in place of one of the
+  protected paths stops the VM from starting.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
   host, which only lets through hosts on an allowlist. Each VM gets a vsock
   namespace of its own, which aibox creates inside an unprivileged user

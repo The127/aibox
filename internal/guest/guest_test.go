@@ -534,7 +534,7 @@ func TestRunPowersOffWhenADeviceCannotBeOpenedToEveryone(t *testing.T) {
 	assert.Equal(t, "halt", sys.calls[len(sys.calls)-1])
 }
 
-func TestRunProtectsTheGitConfigHooksAndInfoOfTheProject(t *testing.T) {
+func TestRunProtectsTheGitConfigAndHooksOfTheProject(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/hooks", "/project/.git/info"}}
 
@@ -547,7 +547,6 @@ func TestRunProtectsTheGitConfigHooksAndInfoOfTheProject(t *testing.T) {
 		"pin /project/.git",
 		"protect /project/.git/config",
 		"protect /project/.git/hooks",
-		"protect /project/.git/info",
 	}, sys.gitCalls())
 }
 
@@ -567,7 +566,7 @@ func TestRunProtectsTheGitFileOfAWorktree(t *testing.T) {
 	}, sys.gitCalls())
 }
 
-func TestRunMakesTheGitHooksAndInfoFoldersWhenTheyAreMissing(t *testing.T) {
+func TestRunMakesTheGitHooksFolderWhenItIsMissing(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}}
 
@@ -582,9 +581,6 @@ func TestRunMakesTheGitHooksAndInfoFoldersWhenTheyAreMissing(t *testing.T) {
 		"protect /project/.git/hooks",
 		"mkdir /project/.git/hooks",
 		"protect /project/.git/hooks",
-		"protect /project/.git/info",
-		"mkdir /project/.git/info",
-		"protect /project/.git/info",
 	}, sys.gitCalls())
 }
 

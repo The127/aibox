@@ -1,7 +1,9 @@
 package guest
 
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
+
+	"github.com/the127/aibox/internal/vm"
 )
 
 // Linux is the System of the running kernel.
@@ -22,6 +26,51 @@ func (Linux) Mount(source, target, fstype string, flags uintptr, data string) er
 	}
 
 	return syscall.Mount(source, target, fstype, flags, data)
+}
+
+const (
+	// the superblock of ext4 starts at 1024 and keeps its magic 56 bytes in
+	ext4MagicOffset = 1024 + 56
+	ext4Magic       = 0xEF53
+	mke2fs          = "/usr/sbin/mke2fs"
+)
+
+// Blank tells whether the disk has no ext4 file system yet.
+func (Linux) Blank(device string) (bool, error) {
+	disk, err := os.Open(device) //nolint:gosec // the device is fixed
+	if err != nil {
+		return false, err
+	}
+
+	defer func() { _ = disk.Close() }()
+
+	magic := make([]byte, 2)
+	if _, err := disk.ReadAt(magic, ext4MagicOffset); err != nil {
+		return false, err
+	}
+
+	return binary.LittleEndian.Uint16(magic) != ext4Magic, nil
+}
+
+// Format puts an ext4 file system on the disk.
+func (Linux) Format(device string) error {
+	cmd := exec.Command(mke2fs, "-t", "ext4", "-q", "-F", device) //nolint:gosec // the device is fixed
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	return nil
+}
+
+// Own makes the folder, if missing, and gives it to the user.
+func (Linux) Own(path string) error {
+	if err := os.MkdirAll(path, 0o755); err != nil { //nolint:gosec // a folder everyone may enter
+		return err
+	}
+
+	return os.Chown(path, int(vm.GuestUID), int(vm.GuestGID))
 }
 
 // Symlink creates a symbolic link.

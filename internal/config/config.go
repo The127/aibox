@@ -23,8 +23,15 @@ import (
 // ErrBadHost is an allow entry that no host name can match.
 var ErrBadHost = errors.New("not a host name")
 
-// ErrNotPositive is a memory or cpus setting below one.
+// ErrNotPositive is a memory, cpus or disk setting below one.
 var ErrNotPositive = errors.New("must be at least 1")
+
+// ErrDiskTooLarge is a disk setting beyond MaxDiskGiB.
+var ErrDiskTooLarge = errors.New("must be at most 1048576 GiB")
+
+// MaxDiskGiB is the largest disk the config accepts, 1 PiB: ext4 goes up
+// to 1 EiB, and the number of bytes has to fit the size of a file.
+const MaxDiskGiB = 1 << 20
 
 // ErrUnknownPreset is a preset entry that names no known preset.
 var ErrUnknownPreset = errors.New("unknown preset")
@@ -112,6 +119,8 @@ type Config struct {
 	Memory *int `yaml:"memory"`
 	// CPUs is the number of CPUs of the VM.
 	CPUs *int `yaml:"cpus"`
+	// Disk is the size of the state disk of the project in GiB.
+	Disk *int `yaml:"disk"`
 	// Mounts are folders of the host the VM sees read-only.
 	Mounts []Mount `yaml:"mounts"`
 	// Path are folders in the VM that go in front of its PATH, or names of
@@ -287,6 +296,12 @@ allow:
 # memory: 4096   # MiB
 # cpus: 4
 
+# The size of the disk that keeps /usr/local and ~/.cache of the VM between
+# runs. It takes up space on the host only as it fills. The size is fixed
+# when the disk is created on the first run; changing it later has no
+# effect. For example:
+# disk: 16   # GiB
+
 # Folders of the host the VM sees read-only, written host:guest, for example:
 # mounts:
 #   - ~/sdk/go:/opt/go
@@ -385,6 +400,14 @@ func parse(content []byte) (Config, error) {
 
 	if err := atLeastOne("cpus", cfg.CPUs); err != nil {
 		return Config{}, err
+	}
+
+	if err := atLeastOne("disk", cfg.Disk); err != nil {
+		return Config{}, err
+	}
+
+	if cfg.Disk != nil && *cfg.Disk > MaxDiskGiB {
+		return Config{}, fmt.Errorf("disk %d: %w", *cfg.Disk, ErrDiskTooLarge)
 	}
 
 	if err := checkMounts(cfg.Mounts); err != nil {

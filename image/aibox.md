@@ -19,8 +19,13 @@ Files and tools:
   ~/.gitconfig you write here wins over that.
 - Other folders of the host may be mounted read-only. `mount -t virtiofs`
   shows where, as the entries named mount0, mount1 and so on.
+- /usr/local and ~/.cache are on a disk of this project that survives
+  restarts. Install tools into /usr/local or your home, both stay. Caches
+  belong in ~/.cache, which is a real disk, while the rest of the home is
+  shared from the host and slow for many small files.
 - /tmp, /run and /dev/shm are RAM, shared with everything else in the VM,
-  which has 2 GB by default. Writes anywhere else fail.
+  which has 2 GB by default. Writes anywhere else are lost when the VM
+  stops.
 - You are the user "user", without root or sudo.
 - The image has only bash, git, busybox and claude. There is no Go, Node,
   Python, make or curl unless the person mounted them and put them on PATH.

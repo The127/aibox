@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/sandbox"
@@ -29,13 +30,14 @@ func machine(t *testing.T) vm.Machine {
 	t.Helper()
 
 	image := t.TempDir()
-	for _, name := range []string{"vmlinuz", "os.ext4"} {
+	for _, name := range []string{"vmlinuz", "os.ext4", "state.ext4"} {
 		require.NoError(t, os.WriteFile(filepath.Join(image, name), nil, 0o600))
 	}
 
 	return vm.Machine{
 		Kernel:    filepath.Join(image, "vmlinuz"),
 		Rootfs:    filepath.Join(image, "os.ext4"),
+		State:     filepath.Join(image, "state.ext4"),
 		MemoryMiB: 512,
 		CPUs:      1,
 		Shares: []vm.Share{
@@ -95,7 +97,7 @@ func TestRunGivesBubblewrapTheKernelToCopy(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"file"}, f.record(t, "bwrap-kernel-kind"))
+	assert.Equal(t, []string{"file ro"}, f.record(t, "bwrap-kernel-kind"))
 }
 
 func TestRunGivesQEMUNoEnvironmentInTheSandbox(t *testing.T) {
@@ -181,9 +183,10 @@ func TestRunGivesQEMUTheRightFileInEachSlot(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 
-	// the KVM device, the console, the root disk, two shares and the vhost
-	// device, in the order QEMU's arguments name them
-	assert.Equal(t, []string{"device", "socket", "file", "socket", "socket", "device"}, f.record(t, "qemu-fd-kinds"))
+	// the KVM device, the console, the root disk, the state disk twice as
+	// vm.Files says, two shares and the vhost device, in the order QEMU's
+	// arguments name them
+	assert.Equal(t, []string{"device", "socket", "file ro", "file ro", "file rw", "socket", "socket", "device"}, f.record(t, "qemu-fd-kinds"))
 	assert.Contains(t, f.record(t, "virtiofsd-project.sock"), "--shared-dir=/home/someone/project")
 	assert.Contains(t, f.record(t, "virtiofsd-home.sock"), "--shared-dir=/home/someone/.aibox/home")
 }
@@ -236,6 +239,25 @@ func TestRunReturnsWhenQEMUCannotStart(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return")
 	}
+}
+
+func TestRunFailsBeforeQEMUWhenAnotherRunHasTheStateDisk(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+
+	other, err := os.Open(m.State)
+	require.NoError(t, err)
+	require.NoError(t, unix.Flock(int(other.Fd()), unix.LOCK_EX))
+
+	defer func() { _ = other.Close() }()
+
+	// act
+	err = launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorContains(t, err, "another aibox")
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 
 func TestRunFailsBeforeQEMUWhenTheKernelCannotBeOpened(t *testing.T) {

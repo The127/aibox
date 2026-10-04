@@ -395,6 +395,56 @@ func TestLoadReadsTheDefaultFileBackAsTheDefault(t *testing.T) {
 	assert.Equal(t, config.Default(), cfg)
 }
 
+func TestLoadReadsTheDiskSize(t *testing.T) {
+	// arrange
+	path := write(t, "disk: 4\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Disk)
+	assert.Equal(t, 4, *cfg.Disk)
+}
+
+func TestLoadRejectsADiskSizeBelowOne(t *testing.T) {
+	// arrange
+	path := write(t, "disk: 0\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrNotPositive)
+}
+
+func TestLoadRejectsADiskSizeThatDoesNotFitAFile(t *testing.T) {
+	// arrange
+	path := write(t, "disk: 1048577\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrDiskTooLarge)
+}
+
+func TestLoadWritesTheDiskKeyAsAnExample(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# disk:")
+}
+
 func TestLoadReadsMemoryAndCPUs(t *testing.T) {
 	// arrange
 	path := write(t, "allow: []\nmemory: 4096\ncpus: 4\n")

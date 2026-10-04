@@ -99,7 +99,7 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, session.Request{Term: "xterm-kitty"})
 
 	// assert
-	assert.Equal(t, []string{"/usr/local/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md"}, cmd.Args)
+	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md"}, cmd.Args)
 	assert.Equal(t, "/project", cmd.Dir)
 	assert.Contains(t, cmd.Env, "AIBOX=1")
 	assert.Contains(t, cmd.Env, "HOME=/home/user")
@@ -327,11 +327,11 @@ func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
 
 	calls := sys.callsCopy()
 	assert.Contains(t, calls, "loopback up")
-	assert.Contains(t, calls, "start /usr/local/bin/claude")
+	assert.Contains(t, calls, "start /usr/bin/claude")
 
 	listen := slices.Index(calls, "listen 127.0.0.1:3128")
 	require.NotEqual(t, -1, listen)
-	assert.Less(t, listen, slices.Index(calls, "start /usr/local/bin/claude"))
+	assert.Less(t, listen, slices.Index(calls, "start /usr/bin/claude"))
 
 	// the forwarder is running on the listener and dials the host port
 	client := dialWithDeadline(t, sys.listener.Addr().String())
@@ -350,7 +350,7 @@ func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "loopback")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -365,7 +365,7 @@ func TestRunReportsABadProxyPortAndGoesOnWithoutAProxy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, sys.consoleOutput(), "aibox.proxy")
 	assert.NotContains(t, sys.calls, "listen 127.0.0.1:3128")
-	assert.Contains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.Contains(t, sys.calls, "start /usr/bin/claude")
 }
 
 func TestRunWithoutAProxy(t *testing.T) {
@@ -390,7 +390,7 @@ func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "address in use")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -438,13 +438,20 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount tmpfs /run",
 		"mount project /project",
 		"mount home /home/user",
+		"blank /dev/vdb",
+		"format /dev/vdb",
+		"mount /dev/vdb /var/lib/aibox/state",
+		"own /var/lib/aibox/state/local",
+		"mount /var/lib/aibox/state/local /usr/local",
+		"own /var/lib/aibox/state/cache",
+		"mount /var/lib/aibox/state/cache /home/user/.cache",
 		"link /dev/fd -> /proc/self/fd",
 		"link /dev/stdin -> /proc/self/fd/0",
 		"link /dev/stdout -> /proc/self/fd/1",
 		"link /dev/stderr -> /proc/self/fd/2",
 		"hostname aibox",
 		"dial host 5432",
-		"start /usr/local/bin/claude",
+		"start /usr/bin/claude",
 		"wait",
 		"halt",
 	}, sys.calls)
@@ -453,6 +460,35 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, mounted{"devpts", "/dev/pts", "devpts", syscall.MS_NOSUID | syscall.MS_NOEXEC, "mode=620,ptmxmode=666,gid=5"}, sys.mounts["/dev/pts"])
 	assert.Equal(t, mounted{"tmpfs", "/tmp", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV, "mode=1777"}, sys.mounts["/tmp"])
 	assert.Equal(t, mounted{"project", "/project", "virtiofs", 0, ""}, sys.mounts["/project"])
+	assert.Equal(t, mounted{"/dev/vdb", "/var/lib/aibox/state", "ext4", syscall.MS_NOSUID | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/state"])
+	assert.Equal(t, mounted{"/var/lib/aibox/state/local", "/usr/local", "", syscall.MS_BIND, ""}, sys.mounts["/usr/local"])
+}
+
+func TestRunDoesNotFormatAStateDiskThatHasAFileSystem(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, formatted: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.calls, "format /dev/vdb")
+	assert.Contains(t, sys.calls, "mount /dev/vdb /var/lib/aibox/state")
+}
+
+func TestRunPowersOffWhenTheStateDiskCannotBeFormatted(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failFormat: errors.New("no mke2fs")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "no mke2fs")
+	assert.Contains(t, sys.consoleOutput(), "no mke2fs")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
@@ -465,10 +501,10 @@ func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 
-	home := slices.Index(sys.calls, "mount home /home/user")
-	require.NotEqual(t, -1, home)
+	cache := slices.Index(sys.calls, "mount /var/lib/aibox/state/cache /home/user/.cache")
+	require.NotEqual(t, -1, cache)
 
-	next := sys.calls[home+1:]
+	next := sys.calls[cache+1:]
 	assert.Equal(t, []string{"mount mount0 /opt/go", "mount mount1 /opt/bin", "link /dev/fd -> /proc/self/fd"}, next[:3])
 }
 
@@ -494,7 +530,7 @@ func TestRunPowersOffWhenAMountOfTheHostFails(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "/opt/go")
 	assert.Contains(t, sys.consoleOutput(), "/opt/go")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -521,7 +557,7 @@ func TestRunPowersOffWhenAShareIsMissing(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "home")
 	assert.Contains(t, sys.consoleOutput(), "home")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -546,7 +582,7 @@ func TestRunPowersOffWithoutAConsole(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "no such device")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -560,7 +596,7 @@ func TestRunKeepsGoingWhenTheHostnameFails(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Contains(t, sys.consoleOutput(), "not permitted")
-	assert.Contains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.Contains(t, sys.calls, "start /usr/bin/claude")
 }
 
 func TestRunHandsTheExitCodeToTheHostAndPowersOff(t *testing.T) {
@@ -601,7 +637,7 @@ func TestRunPowersOffWithoutATerminalPort(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, guest.ErrNoTerminal)
 	assert.Contains(t, sys.consoleOutput(), "aibox.terminal")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -615,7 +651,7 @@ func TestRunPowersOffWhenTheHostDoesNotAnswer(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "connection reset")
 	assert.Contains(t, sys.consoleOutput(), "connection reset")
-	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
@@ -705,6 +741,8 @@ type fakeSystem struct {
 	clientEnv []string
 	// started is the last command Start was given
 	started      *exec.Cmd
+	formatted    bool
+	failFormat   error
 	failMount    string
 	failLoopback error
 	failListen   error
@@ -769,6 +807,24 @@ func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data st
 	if source == s.failMount {
 		return errors.New("no such device")
 	}
+
+	return nil
+}
+
+func (s *fakeSystem) Blank(device string) (bool, error) {
+	s.record("blank " + device)
+
+	return !s.formatted, nil
+}
+
+func (s *fakeSystem) Format(device string) error {
+	s.record("format " + device)
+
+	return s.failFormat
+}
+
+func (s *fakeSystem) Own(path string) error {
+	s.record("own " + path)
 
 	return nil
 }

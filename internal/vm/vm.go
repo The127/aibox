@@ -21,14 +21,16 @@ const GuestCID uint32 = 3
 // -no-reboot below turns into a QEMU exit.
 const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
 
-// Machine is a VM that boots a kernel with a root disk. Shell boots it into
-// a shell instead of Claude Code. ProxyPort and TerminalPort are the vsock
-// ports of the proxy and the terminal session on the host, and 0 leaves
-// the port off the kernel command line. Owner is the host user the VM user
-// stands for in the shares, and nil leaves the ids as they are.
+// Machine is a VM that boots a kernel with a root disk and keeps its state
+// on a second disk. Shell boots it into a shell instead of Claude Code.
+// ProxyPort and TerminalPort are the vsock ports of the proxy and the
+// terminal session on the host, and 0 leaves the port off the kernel
+// command line. Owner is the host user the VM user stands for in the
+// shares, and nil leaves the ids as they are.
 type Machine struct {
 	Kernel       string
 	Rootfs       string
+	State        string
 	MemoryMiB    int
 	CPUs         int
 	Shares       []Share
@@ -39,17 +41,22 @@ type Machine struct {
 }
 
 // Files are the numbers of the files QEMU was started with: the KVM and
-// vhost-vsock devices, the root disk, the socket QEMU writes the console
-// to, and one connection to virtiofsd per entry of Machine.Shares, in the
-// same order. Kernel is a path, not a number, because the kernel loader of
-// QEMU cannot take a descriptor.
+// vhost-vsock devices, the root disk, the state disk opened read-only and
+// once more read-write, the socket QEMU writes the console to, and one
+// connection to virtiofsd per entry of Machine.Shares, in the same order.
+// Kernel is a path, not a number, because the kernel loader of QEMU cannot
+// take a descriptor. The state disk comes in both modes because QEMU opens
+// a drive read-only first and asks the fdset for a read-write descriptor
+// when the device attaches.
 type Files struct {
-	KVM     int
-	Vhost   int
-	Kernel  string
-	Rootfs  int
-	Console int
-	Shares  []int
+	KVM        int
+	Vhost      int
+	Kernel     string
+	Rootfs     int
+	StateRead  int
+	StateWrite int
+	Console    int
+	Shares     []int
 }
 
 // seccomp is the syscall filter QEMU puts on itself: no syscalls it does
@@ -77,6 +84,7 @@ type Share struct {
 const (
 	kvmSet    = 1
 	rootfsSet = 2
+	stateSet  = 3
 )
 
 // QEMUArgs returns the arguments for qemu-system-x86_64. QEMU gets every
@@ -107,6 +115,10 @@ func (m Machine) QEMUArgs(files Files) []string {
 		"-add-fd", fdset(files.Rootfs, rootfsSet),
 		"-drive", "id=root,file=" + fdsetPath(rootfsSet) + ",format=raw,if=none,snapshot=on",
 		"-device", "virtio-blk-device,drive=root",
+		"-add-fd", fdset(files.StateRead, stateSet),
+		"-add-fd", fdset(files.StateWrite, stateSet),
+		"-drive", "id=state,file=" + fdsetPath(stateSet) + ",format=raw,if=none",
+		"-device", "virtio-blk-device,drive=state",
 	}
 
 	for i, share := range m.Shares {

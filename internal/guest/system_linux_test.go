@@ -3,7 +3,10 @@
 package guest_test
 
 import (
+	"encoding/binary"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,4 +41,52 @@ func TestLinuxWaitReportsASignalAsShellsDo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cmd.Process.Pid, pid)
 	assert.Equal(t, 128+15, exitCode)
+}
+
+func TestBlankIsTrueForADiskWithoutAFileSystem(t *testing.T) {
+	// arrange
+	disk := filepath.Join(t.TempDir(), "disk")
+	require.NoError(t, os.WriteFile(disk, make([]byte, 4096), 0o600))
+
+	// act
+	blank, err := guest.Linux{}.Blank(disk)
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, blank)
+}
+
+func TestBlankIsFalseForAnExt4Disk(t *testing.T) {
+	// arrange
+	disk := filepath.Join(t.TempDir(), "disk")
+	content := make([]byte, 4096)
+	binary.LittleEndian.PutUint16(content[1024+56:], 0xEF53)
+	require.NoError(t, os.WriteFile(disk, content, 0o600))
+
+	// act
+	blank, err := guest.Linux{}.Blank(disk)
+
+	// assert
+	require.NoError(t, err)
+	assert.False(t, blank)
+}
+
+func TestBlankFailsForADiskTooSmallForASuperblock(t *testing.T) {
+	// arrange
+	disk := filepath.Join(t.TempDir(), "disk")
+	require.NoError(t, os.WriteFile(disk, make([]byte, 100), 0o600))
+
+	// act
+	_, err := guest.Linux{}.Blank(disk)
+
+	// assert
+	require.Error(t, err)
+}
+
+func TestBlankFailsForAMissingDisk(t *testing.T) {
+	// act
+	_, err := guest.Linux{}.Blank(filepath.Join(t.TempDir(), "gone"))
+
+	// assert
+	require.Error(t, err)
 }

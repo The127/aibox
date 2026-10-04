@@ -123,9 +123,14 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer func() { _ = log.Close() }()
 
+	if err := project.CreateState(p.State, stateBytes(cfg)); err != nil {
+		return err
+	}
+
 	machine := vm.Machine{
 		Kernel:    kernel,
 		Rootfs:    rootfs,
+		State:     p.State,
 		MemoryMiB: flagOrConfig(cmd, "memory", cfg.Memory),
 		CPUs:      flagOrConfig(cmd, "cpus", cfg.CPUs),
 		Shares: append([]vm.Share{
@@ -230,6 +235,19 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 	}
 
 	return env, nil
+}
+
+// defaultDiskGiB is the size of the state disk unless the config says
+// otherwise. It is sparse, so the number costs nothing until used.
+const defaultDiskGiB = 16
+
+func stateBytes(cfg config.Config) int64 {
+	gib := defaultDiskGiB
+	if cfg.Disk != nil {
+		gib = *cfg.Disk
+	}
+
+	return int64(gib) << 30
 }
 
 // mountShares returns the share of the skills of the person, when the host

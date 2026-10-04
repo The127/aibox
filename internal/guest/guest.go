@@ -28,10 +28,15 @@ const (
 	hostname = "aibox"
 	project  = "/project"
 	home     = "/home/user"
-	claude   = "/usr/local/bin/claude"
+	claude   = "/usr/bin/claude"
 	prompt   = "/etc/aibox/prompt.md"
 	bash     = "/usr/bin/bash"
 	userName = "user"
+
+	// the second disk is mounted outside the folders anyone looks at, and
+	// the folders on it are bound where tools and caches land
+	stateDevice = "/dev/vdb"
+	stateMount  = "/var/lib/aibox/state"
 
 	// the tags of the shares, as the host names them
 	projectShare = "project"
@@ -83,6 +88,12 @@ type Network interface {
 type System interface {
 	Network
 	Mount(source, target, fstype string, flags uintptr, data string) error
+	// Blank tells whether the disk has no ext4 file system yet.
+	Blank(device string) (bool, error)
+	// Format puts a file system on the disk.
+	Format(device string) error
+	// Own makes the folder, if missing, and gives it to the user.
+	Own(path string) error
 	Symlink(target, path string) error
 	ReadCmdline() (string, error)
 	OpenConsole(path string) (*os.File, error)
@@ -106,7 +117,14 @@ const (
 	noDevices = syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV
 	// programs in a mounted folder must run, so it stays executable
 	readOnlyShare = syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NODEV
+	stateFlags    = syscall.MS_NOSUID | syscall.MS_NODEV
 )
+
+// stateDirs are the folders of the state disk and where they are bound.
+var stateDirs = []struct{ dir, target string }{
+	{"local", "/usr/local"},
+	{"cache", home + "/.cache"},
+}
 
 var (
 	// the console lives in /dev and its name is in /proc, so these two come
@@ -401,6 +419,10 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	if err := mountState(sys); err != nil {
+		return console, options, err
+	}
+
 	for _, m := range options.Mounts {
 		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
@@ -424,6 +446,39 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	return console, options, nil
+}
+
+// mountState mounts the state disk of the project, formatting it on the
+// first boot, and binds its folders where tools and caches land.
+func mountState(sys System) error {
+	blank, err := sys.Blank(stateDevice)
+	if err != nil {
+		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
+	}
+
+	if blank {
+		if err := sys.Format(stateDevice); err != nil {
+			return fmt.Errorf("format the state disk: %w", err)
+		}
+	}
+
+	if err := sys.Mount(stateDevice, stateMount, "ext4", stateFlags, ""); err != nil {
+		return fmt.Errorf("mount the state disk: %w", err)
+	}
+
+	for _, d := range stateDirs {
+		source := stateMount + "/" + d.dir
+
+		if err := sys.Own(source); err != nil {
+			return fmt.Errorf("make %s: %w", source, err)
+		}
+
+		if err := sys.Mount(source, d.target, "", syscall.MS_BIND, ""); err != nil {
+			return fmt.Errorf("bind %s on %s: %w", source, d.target, err)
+		}
+	}
+
+	return nil
 }
 
 // startProxy listens on the proxy address of the VM and forwards each

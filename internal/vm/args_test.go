@@ -12,12 +12,13 @@ import (
 const baseline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
 
 // files are the descriptors QEMU gets in the tests.
-var files = vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, Console: 7, Shares: []int{8, 9}}
+var files = vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, StateRead: 7, StateWrite: 8, Shares: []int{9, 10}, Console: 11}
 
 func machine() vm.Machine {
 	return vm.Machine{
 		Kernel:    "/images/vmlinuz",
 		Rootfs:    "/images/os.ext4",
+		State:     "/home/someone/.aibox/projects/p/state.ext4",
 		MemoryMiB: 2048,
 		CPUs:      2,
 		Shares: []vm.Share{
@@ -42,7 +43,7 @@ func TestQEMUArgs(t *testing.T) {
 		"-object", "memory-backend-memfd,id=mem,size=2048M,share=on",
 		"-nodefaults", "-no-user-config", "-display", "none", "-no-reboot",
 		"-sandbox", "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny",
-		"-chardev", "socket,id=console,fd=7",
+		"-chardev", "socket,id=console,fd=11",
 		"-device", "virtio-serial-device",
 		"-device", "virtconsole,chardev=console",
 		"-kernel", "/dev/fd/5",
@@ -50,9 +51,13 @@ func TestQEMUArgs(t *testing.T) {
 		"-add-fd", "fd=6,set=2",
 		"-drive", "id=root,file=/dev/fdset/2,format=raw,if=none,snapshot=on",
 		"-device", "virtio-blk-device,drive=root",
-		"-chardev", "socket,id=share-project,fd=8",
+		"-add-fd", "fd=7,set=3",
+		"-add-fd", "fd=8,set=3",
+		"-drive", "id=state,file=/dev/fdset/3,format=raw,if=none",
+		"-device", "virtio-blk-device,drive=state",
+		"-chardev", "socket,id=share-project,fd=9",
 		"-device", "vhost-user-fs-device,chardev=share-project,tag=project",
-		"-chardev", "socket,id=share-home,fd=9",
+		"-chardev", "socket,id=share-home,fd=10",
 		"-device", "vhost-user-fs-device,chardev=share-home,tag=home",
 		"-device", "vhost-vsock-device,guest-cid=3,vhostfd=4",
 	}, args)
@@ -64,7 +69,7 @@ func TestQEMUArgsWithoutShares(t *testing.T) {
 	m.Shares = nil
 
 	// act
-	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, Console: 7})
+	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, StateRead: 7, StateWrite: 8, Console: 9})
 
 	// assert
 	for _, arg := range args {
@@ -130,11 +135,11 @@ func TestQEMUArgsTellTheVMWhereToMountAShare(t *testing.T) {
 	)
 
 	// act
-	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, Console: 7, Shares: []int{8, 9, 10, 11}})
+	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, StateRead: 7, StateWrite: 8, Shares: []int{9, 10, 11, 12}, Console: 13})
 
 	// assert
 	assert.Contains(t, args, baseline+" aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin")
-	assert.Contains(t, args, "socket,id=share-mount1,fd=11")
+	assert.Contains(t, args, "socket,id=share-mount1,fd=12")
 }
 
 func TestVirtiofsdArgs(t *testing.T) {

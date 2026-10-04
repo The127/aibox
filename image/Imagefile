@@ -35,14 +35,17 @@ OUTPUT kernel vmlinuz --path=/src/linux/arch/x86/boot/bzImage
 FROM debian:sid AS tools
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      pax-utils busybox-static bash git ca-certificates curl
-# The installer puts Claude Code in the home directory.
+      pax-utils busybox-static bash git ca-certificates curl e2fsprogs
+# The installer puts Claude Code in the home directory. It goes to /usr/bin
+# because the disk of a project is mounted over /usr/local.
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
-    install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
+    install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/bin/claude
 
 RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
 RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
-RUN lddtree --copy-to-tree /out/claude /usr/local/bin/claude
+RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
+# the init formats the state disk of a project on its first boot
+RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
 
 FROM scratch
 
@@ -51,13 +54,16 @@ FROM scratch
 COPY --from=tools /bin/busybox /bin/busybox
 COPY sh /bin/sh
 RUN /bin/busybox --install -s /bin
-RUN mkdir -p /run /tmp /root /project /home/user
+# /usr/local and /var/lib/aibox/state are mount points for the state disk
+RUN mkdir -p /run /tmp /root /project /home/user /usr/local /var/lib/aibox/state
 
 COPY --from=tools /out/bash/ /
 COPY --from=tools /out/git/ /
 COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
 COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
+COPY --from=tools /out/mke2fs/ /
+COPY --from=tools /etc/mke2fs.conf /etc/
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group /etc/
 COPY aibox.md /etc/aibox/prompt.md

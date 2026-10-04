@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/mdlayher/vsock"
 	"github.com/stretchr/testify/require"
 
@@ -409,6 +411,16 @@ func consoleDescriptor(args []string) int {
 	return 0
 }
 
+// accessMode is "ro" or "rw" for the mode a file was opened with.
+func accessMode(number int) string {
+	flags, err := unix.FcntlInt(uintptr(number), unix.F_GETFL, 0)
+	if err != nil || flags&unix.O_ACCMODE == unix.O_RDONLY {
+		return "ro"
+	}
+
+	return "rw"
+}
+
 // kindOf tells what kind of file the descriptor is, or "missing".
 func kindOf(number int) string {
 	info, err := os.NewFile(uintptr(number), "").Stat()
@@ -418,7 +430,7 @@ func kindOf(number int) string {
 
 	switch {
 	case info.Mode().IsRegular():
-		return "file"
+		return "file " + accessMode(number)
 	case info.Mode()&os.ModeSocket != 0:
 		return "socket"
 	case info.Mode()&os.ModeCharDevice != 0:

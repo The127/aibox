@@ -20,6 +20,14 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   `~/.aibox/projects/<escaped path>/config.yaml`, so the VM can't change them.
 - The VM's home directory is `~/.aibox/projects/<escaped path>/home/`, shared
   into the VM over virtio-fs, so `~/.claude` and the login survive restarts.
+- Each project has a disk of its own, `state.ext4` next to the home, that
+  the VM keeps `/usr/local` and `~/.cache` on. Tools installed there survive
+  restarts and rebuilds of the image, and caches of many small files, like
+  the Go build cache or pip's, stay off the shared home, which is slow for
+  them. The file is sparse and takes up host disk only as it fills. Its
+  size is fixed when the disk is created on the first run, 16 GiB unless
+  `disk` in the config says otherwise. The init formats it on the first
+  boot.
 - QEMU runs in a bubblewrap sandbox with no network and no environment. It
   sees only its own program, libraries and firmware, a copy of the kernel
   and a small tmpfs. Devices, the disk and the sockets reach it as open

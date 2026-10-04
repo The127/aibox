@@ -61,10 +61,15 @@ func (b *syncBuffer) String() string {
 // fakeProcesses are links to the test binary named after the programs Run
 // starts. The fakes write what they were started with into records.
 type fakeProcesses struct {
-	qemu          string
-	virtiofsd     string
-	records       string
-	proxyListener chan net.Listener
+	qemu             string
+	virtiofsd        string
+	records          string
+	proxyListener    chan net.Listener
+	terminalListener chan net.Listener
+	listens          int
+	stdin            *os.File
+	stdout           io.Writer
+	stderr           io.Writer
 }
 
 func fakes(t *testing.T) *fakeProcesses {
@@ -75,10 +80,11 @@ func fakes(t *testing.T) *fakeProcesses {
 	require.NoError(t, err)
 
 	f := &fakeProcesses{
-		qemu:          filepath.Join(dir, "qemu"),
-		virtiofsd:     filepath.Join(dir, "virtiofsd"),
-		records:       filepath.Join(dir, "records"),
-		proxyListener: make(chan net.Listener, 1),
+		qemu:             filepath.Join(dir, "qemu"),
+		virtiofsd:        filepath.Join(dir, "virtiofsd"),
+		records:          filepath.Join(dir, "records"),
+		proxyListener:    make(chan net.Listener, 1),
+		terminalListener: make(chan net.Listener, 1),
 	}
 
 	require.NoError(t, os.Symlink(self, f.qemu))
@@ -89,16 +95,25 @@ func fakes(t *testing.T) *fakeProcesses {
 	return f
 }
 
-// options use a TCP listener in place of vsock, so that the tests run on a
-// machine without vsock.
+// options use TCP listeners in place of vsock, so that the tests run on a
+// machine without vsock. Run listens for the proxy first and for the
+// terminal second.
 func (f *fakeProcesses) options() launch.Options {
-	return launch.Options{
+	options := launch.Options{
 		QEMU:          f.qemu,
 		Virtiofsd:     f.virtiofsd,
+		Stdin:         f.stdin,
 		Stdout:        io.Discard,
+		Stderr:        f.stderr,
 		SocketTimeout: 5 * time.Second,
 		ListenVsock:   f.listenTCP,
 	}
+
+	if f.stdout != nil {
+		options.Stdout = f.stdout
+	}
+
+	return options
 }
 
 func (f *fakeProcesses) listenTCP() (net.Listener, uint32, error) {
@@ -107,7 +122,12 @@ func (f *fakeProcesses) listenTCP() (net.Listener, uint32, error) {
 		return nil, 0, err
 	}
 
-	f.proxyListener <- listener
+	f.listens++
+	if f.listens == 1 {
+		f.proxyListener <- listener
+	} else {
+		f.terminalListener <- listener
+	}
 
 	return &fromGuest{Listener: listener}, uint32(listener.Addr().(*net.TCPAddr).Port), nil //nolint:gosec // a TCP port fits
 }
@@ -137,11 +157,24 @@ func (guestConn) RemoteAddr() net.Addr { return &vsock.Addr{ContextID: guestCID,
 func (f *fakeProcesses) listener(t *testing.T) net.Listener {
 	t.Helper()
 
+	return await(t, f.proxyListener, "the proxy")
+}
+
+// terminal is the terminal listener Run opened, or the test fails.
+func (f *fakeProcesses) terminal(t *testing.T) net.Listener {
+	t.Helper()
+
+	return await(t, f.terminalListener, "the terminal")
+}
+
+func await(t *testing.T, listeners <-chan net.Listener, what string) net.Listener {
+	t.Helper()
+
 	select {
-	case listener := <-f.proxyListener:
+	case listener := <-listeners:
 		return listener
 	case <-time.After(5 * time.Second):
-		t.Fatal("ListenVsock was not called")
+		t.Fatalf("ListenVsock was not called for %s", what)
 
 		return nil
 	}

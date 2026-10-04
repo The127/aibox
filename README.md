@@ -7,6 +7,12 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   host is the user inside the VM.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
   host, which only lets through hosts on an allowlist.
+- The terminal is an SSH session over vsock. The init of the VM runs Claude
+  Code on a pseudo terminal and serves it to aibox on the host, which puts
+  your terminal into raw mode and attaches it. The size of your terminal and
+  its changes reach the VM, and the exit code of Claude Code comes back. The
+  virtio console of the VM, with the messages of the kernel and of the init,
+  goes into `console.log` in the project's aibox folder.
 - Settings for each project live outside the project, in
   `~/.aibox/projects/<escaped path>/config.yaml`, so the VM can't change them.
 - The VM's home directory is `~/.aibox/projects/<escaped path>/home/`, shared

@@ -51,6 +51,7 @@ dependenciesRules:
       internal:
         - '**.internal.vm$'
         - '**.internal.proxy$'
+        - '**.internal.session$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'

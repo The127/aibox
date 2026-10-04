@@ -69,13 +69,17 @@ var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // line.
 var ErrCmdlineFull = errors.New("the mounts do not fit on the kernel command line together")
 
-// reservedPaths are what the VM mounts itself, the two shares and the
+// reservedPaths are what the VM mounts itself, the project share and the
 // kernel file systems, and the folders its programs live in. A mount on,
 // above or inside one of them hides something the VM needs.
 var reservedPaths = []string{
-	"/project", "/home/user", "/dev", "/proc", "/sys", "/run", "/tmp",
+	"/project", "/dev", "/proc", "/sys", "/run", "/tmp",
 	"/etc", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/root",
 }
+
+// homePath is the home share. A mount on or above it hides the home, a
+// mount inside is fine, because the home of the VM is a folder of aibox.
+const homePath = "/home/user"
 
 // maxCmdlineBytes is what the mounts may take up together on the kernel
 // command line, which holds 2048 bytes and needs room for the rest.
@@ -196,7 +200,7 @@ func parseMount(text string) (Mount, error) {
 	}
 
 	mount := Mount{Host: filepath.Clean(host), Guest: filepath.Clean(guest)}
-	if slices.ContainsFunc(reservedPaths, mount.touches) {
+	if mount.reserved() {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrReservedMount)
 	}
 
@@ -225,9 +229,19 @@ func expandHome(path string) (string, error) {
 	return filepath.Join(home, rest), nil
 }
 
-// touches tells whether the mount is on the path, above it or inside it.
-func (m Mount) touches(path string) bool {
-	return m.Guest == path || isBelow(path, m.Guest) || isBelow(m.Guest, path)
+// reserved tells whether the mount hides something the VM needs.
+func (m Mount) reserved() bool {
+	return slices.ContainsFunc(reservedPaths, m.Touches) || m.covers(homePath)
+}
+
+// Touches tells whether the mount is on the path, above it or inside it.
+func (m Mount) Touches(path string) bool {
+	return m.covers(path) || isBelow(m.Guest, path)
+}
+
+// covers tells whether the mount is on the path or above it.
+func (m Mount) covers(path string) bool {
+	return m.Guest == path || isBelow(path, m.Guest)
 }
 
 func isBelow(path, folder string) bool {
@@ -239,7 +253,7 @@ func isBelow(path, folder string) bool {
 func checkMounts(mounts []Mount) error {
 	for i, a := range mounts {
 		for _, b := range mounts[:i] {
-			if a.touches(b.Guest) {
+			if a.Touches(b.Guest) {
 				return fmt.Errorf("mounts %s and %s: %w", b.Guest, a.Guest, ErrMountOverlap)
 			}
 		}

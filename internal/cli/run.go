@@ -28,6 +28,14 @@ const (
 	mountTagPrefix = "mount"
 )
 
+// The skills of the person are shared from their home on the host into the
+// home of the VM.
+const (
+	skillsTag      = "skills"
+	hostSkillsDir  = ".claude/skills"
+	guestSkillsDir = "/home/user/.claude/skills"
+)
+
 func runCommand(deps dependencies) *cli.Command {
 	return &cli.Command{
 		Name:  "run",
@@ -81,7 +89,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	mounts, err := mountShares(cfg.Mounts)
+	mounts, err := mountShares(deps.homeDir, cfg.Mounts)
 	if err != nil {
 		return err
 	}
@@ -217,10 +225,23 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 	return env, nil
 }
 
-// mountShares returns a share for each mount of the config, once the host
-// folders are known to exist.
-func mountShares(mounts []config.Mount) ([]vm.Share, error) {
-	shares := make([]vm.Share, 0, len(mounts))
+// mountShares returns the share of the skills of the person, when the host
+// has any and no mount of the config takes their place, and a share for
+// each mount of the config, once the host folders are known to exist.
+func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]vm.Share, error) {
+	home, err := homeDir()
+	if err != nil {
+		return nil, fmt.Errorf("find the home folder: %w", err)
+	}
+
+	shares := make([]vm.Share, 0, len(mounts)+1)
+
+	// a person without skills is the normal case, so a missing folder is
+	// nothing to report
+	skills := filepath.Join(home, hostSkillsDir)
+	if isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
+		shares = append(shares, vm.Share{Tag: skillsTag, Dir: skills, Guest: guestSkillsDir})
+	}
 
 	for i, mount := range mounts {
 		info, err := os.Stat(mount.Host)
@@ -236,6 +257,12 @@ func mountShares(mounts []config.Mount) ([]vm.Share, error) {
 	}
 
 	return shares, nil
+}
+
+func isFolder(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && info.IsDir()
 }
 
 func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.Options {

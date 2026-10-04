@@ -54,6 +54,7 @@ func writeImage(t *testing.T, dir string, names ...string) string {
 type fixture struct {
 	cwd      string
 	aiboxDir string
+	homeDir  string
 	launch   *fakeLaunch
 	deps     dependencies
 }
@@ -61,10 +62,11 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 
-	f := &fixture{cwd: t.TempDir(), aiboxDir: t.TempDir(), launch: &fakeLaunch{}}
+	f := &fixture{cwd: t.TempDir(), aiboxDir: t.TempDir(), homeDir: t.TempDir(), launch: &fakeLaunch{}}
 	f.deps = dependencies{
 		getwd:       func() (string, error) { return f.cwd, nil },
 		aiboxDir:    func() (string, error) { return f.aiboxDir, nil },
+		homeDir:     func() (string, error) { return f.homeDir, nil },
 		owner:       func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
 		lookupEnv:   func(string) (string, bool) { return "", false },
 		gitIdentity: func(string) gitconfig.Identity { return gitconfig.Identity{} },
@@ -444,6 +446,87 @@ func TestRunWhenAVariableToPassThroughIsNotSetOnTheHost(t *testing.T) {
 	// assert
 	require.ErrorContains(t, err, "GITHUB_TOKEN")
 	assert.False(t, f.launch.called)
+}
+
+func (f *fixture) skillsFolder(t *testing.T) string {
+	t.Helper()
+
+	skills := filepath.Join(f.homeDir, ".claude", "skills")
+	require.NoError(t, os.MkdirAll(skills, 0o700))
+
+	return skills
+}
+
+func tags(shares []vm.Share) []string {
+	result := make([]string, 0, len(shares))
+	for _, share := range shares {
+		result = append(result, share.Tag)
+	}
+
+	return result
+}
+
+func TestRunSharesTheSkillsOfThePersonBeforeTheMounts(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	skills := f.skillsFolder(t)
+	f.writeConfig(t, "mounts:\n  - "+t.TempDir()+":/opt/go\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"project", "home", "skills", "mount0"}, tags(f.launch.machine.Shares))
+	assert.Equal(t, vm.Share{Tag: "skills", Dir: skills, Guest: "/home/user/.claude/skills"}, f.launch.machine.Shares[2])
+}
+
+func TestRunSharesNoSkillsWhenThePersonHasNone(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"project", "home"}, tags(f.launch.machine.Shares))
+}
+
+func TestRunSharesNoSkillsWhenTheSkillsAreAFile(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	require.NoError(t, os.MkdirAll(filepath.Join(f.homeDir, ".claude"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(f.homeDir, ".claude", "skills"), nil, 0o600))
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"project", "home"}, tags(f.launch.machine.Shares))
+}
+
+func TestRunLetsAMountOfTheConfigTakeThePlaceOfTheSkills(t *testing.T) {
+	for name, guest := range map[string]string{"on the skills": "/home/user/.claude/skills", "above the skills": "/home/user/.claude", "inside the skills": "/home/user/.claude/skills/mine"} {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.skillsFolder(t)
+			f.writeConfig(t, "mounts:\n  - "+t.TempDir()+":"+guest+"\n")
+
+			// act
+			err := f.run("--image", image)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, []string{"project", "home", "mount0"}, tags(f.launch.machine.Shares))
+		})
+	}
 }
 
 func TestRunWhenAMountedFolderIsMissing(t *testing.T) {

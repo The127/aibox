@@ -18,6 +18,7 @@ import (
 type dependencies struct {
 	getwd       func() (string, error)
 	aiboxDir    func() (string, error)
+	homeDir     func() (string, error)
 	owner       func() vm.Owner
 	lookupEnv   func(name string) (string, bool)
 	gitIdentity func(dir string) gitconfig.Identity
@@ -29,6 +30,7 @@ func NewRootCommand() *cli.Command {
 	return newRootCommand(dependencies{
 		getwd:       os.Getwd,
 		aiboxDir:    aiboxDir,
+		homeDir:     os.UserHomeDir,
 		owner:       owner,
 		lookupEnv:   os.LookupEnv,
 		gitIdentity: gitconfig.Read,

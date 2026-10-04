@@ -128,7 +128,6 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 		"the project":          "/project",
 		"inside the project":   "/project/vendor",
 		"the home":             "/home/user",
-		"inside the home":      "/home/user/go",
 		"above the home":       "/home",
 		"a kernel file system": "/dev",
 		"inside one":           "/dev/shm",
@@ -149,6 +148,40 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 			// assert
 			assert.ErrorIs(t, err, config.ErrReservedMount)
 			assert.ErrorContains(t, err, guest)
+		})
+	}
+}
+
+func TestLoadAcceptsAMountInsideTheHome(t *testing.T) {
+	// arrange
+	path := write(t, "mounts:\n  - /home/someone/.claude/skills:/home/user/.claude/skills\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Mount{{Host: "/home/someone/.claude/skills", Guest: "/home/user/.claude/skills"}}, cfg.Mounts)
+}
+
+func TestLoadRejectsMountsThatOverlap(t *testing.T) {
+	tests := map[string]string{
+		"the same path twice":    "mounts:\n  - /opt/a:/opt/go\n  - /opt/b:/opt/go\n",
+		"one inside the other":   "mounts:\n  - /opt/a:/opt\n  - /opt/b:/opt/go\n",
+		"one containing another": "mounts:\n  - /opt/b:/opt/go\n  - /opt/a:/opt\n",
+	}
+
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrMountOverlap)
+			assert.ErrorContains(t, err, "/opt/go")
 		})
 	}
 }

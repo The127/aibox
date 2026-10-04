@@ -49,10 +49,19 @@ over the file. Without either, the VM gets 2048 MiB and 2 CPUs.
 `mounts` lists folders of the host the VM sees read-only, written
 `host:guest` with guest the path in the VM, for example
 `~/sdk/go1.26.8:/opt/go`. The guest path must stay clear of the folders the
-VM needs, such as `/project`, `/home/user`, `/usr` and `/etc`, and of the
-other mounts. Each mount is shared over virtio-fs like the project folder,
-with names and attributes cached for the whole run, so a change to the
-folder on the host may not show in a running VM.
+VM needs, such as `/project`, `/usr` and `/etc`, and of the other mounts. A
+mount inside `/home/user` is fine, because the home of the VM is a folder of
+aibox, not your home on the host. Leave `/home/user/.claude` itself alone,
+the login of the VM lives there. Each mount is shared over virtio-fs like
+the project folder, with names and attributes cached for the whole run, so a
+change to the folder on the host may not show in a running VM.
+
+Your skills in `~/.claude/skills` are mounted read-only at the same place
+in the home of the VM, so Claude Code finds them. A symlink in there that
+points outside the folder does not resolve in the VM. Without that folder
+nothing is mounted. Your settings, plugins and MCP servers are not shared,
+the VM starts with its own. A mount of the config on or around that path
+takes its place.
 
 `path` lists folders in the VM that go in front of its `PATH`, for Claude
 Code and the shell alike, for example `/opt/go/bin` from the mount above. An
@@ -64,10 +73,10 @@ checked against the mounts. They are sent with the other variables when the
 terminal session starts.
 
 `env` lists variables for the command in the VM. `NAME=value` sets a value,
-`NAME` alone passes the value the host has when the VM starts, which is how
-a secret gets in without being written into the file. They travel over the terminal
-session, not over the kernel command line. A variable aibox sets itself,
-such as `HOME`, `PATH` or the proxy variables, is refused.
+`NAME` alone passes the value the host has when the VM starts, which is how a
+secret gets in without being written into the file. They travel over the
+terminal session, not over the kernel command line. A variable aibox sets
+itself, such as `HOME`, `PATH` or the proxy variables, is refused.
 
 
 ## Contributing

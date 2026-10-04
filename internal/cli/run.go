@@ -101,9 +101,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 			{Tag: "project", Dir: cwd},
 			{Tag: "home", Dir: p.Home},
 		},
-		Owner:    &owner,
-		GuestCID: randomCID(),
-		Shell:    cmd.Bool("shell"),
+		Owner:      &owner,
+		GuestCID:   randomCID(),
+		Shell:      cmd.Bool("shell"),
+		ConsoleLog: p.ConsoleLog,
 	}
 
 	return deps.run(ctx, machine, launchOptions(cfg, p, log))

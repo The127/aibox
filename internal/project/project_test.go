@@ -44,6 +44,7 @@ func TestOpen(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "home"), p.Home)
 	assert.Equal(t, filepath.Join(dir, "config.yaml"), p.Config)
 	assert.Equal(t, filepath.Join(dir, "proxy.log"), p.Log)
+	assert.Equal(t, filepath.Join(dir, "console.log"), p.ConsoleLog)
 
 	info, err := os.Stat(p.Home)
 	require.NoError(t, err)

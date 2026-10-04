@@ -22,7 +22,8 @@ func TestQEMUArgs(t *testing.T) {
 			{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"},
 			{Tag: "home", Dir: "/home/someone/.aibox/home", Socket: "/run/aibox/home.sock"},
 		},
-		GuestCID: 42,
+		GuestCID:   42,
+		ConsoleLog: "/home/someone/.aibox/projects/p/console.log",
 	}
 
 	// act
@@ -35,8 +36,8 @@ func TestQEMUArgs(t *testing.T) {
 		"-smp", "2",
 		"-m", "2048M",
 		"-object", "memory-backend-memfd,id=mem,size=2048M,share=on",
-		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot",
-		"-chardev", "stdio,id=console,signal=off",
+		"-nodefaults", "-no-user-config", "-display", "none", "-no-reboot",
+		"-chardev", "file,id=console,path=/home/someone/.aibox/projects/p/console.log",
 		"-device", "virtio-serial-device",
 		"-device", "virtconsole,chardev=console",
 		"-kernel", "/images/vmlinuz",
@@ -76,12 +77,13 @@ func TestQEMUArgsWithoutShares(t *testing.T) {
 func TestQEMUArgsEscapesCommas(t *testing.T) {
 	// arrange
 	machine := vm.Machine{
-		Kernel:    "/images/vmlinuz",
-		Rootfs:    "/images/my,disk.ext4",
-		MemoryMiB: 512,
-		CPUs:      1,
-		Shares:    []vm.Share{{Tag: "project", Dir: "/project", Socket: "/run/a,b/project.sock"}},
-		GuestCID:  3,
+		Kernel:     "/images/vmlinuz",
+		Rootfs:     "/images/my,disk.ext4",
+		MemoryMiB:  512,
+		CPUs:       1,
+		Shares:     []vm.Share{{Tag: "project", Dir: "/project", Socket: "/run/a,b/project.sock"}},
+		GuestCID:   3,
+		ConsoleLog: "/home/a,b/console.log",
 	}
 
 	// act
@@ -90,6 +92,37 @@ func TestQEMUArgsEscapesCommas(t *testing.T) {
 	// assert
 	assert.Contains(t, args, "id=root,file=/images/my,,disk.ext4,format=raw,if=none,snapshot=on")
 	assert.Contains(t, args, "socket,id=share-project,path=/run/a,,b/project.sock")
+	assert.Contains(t, args, "file,id=console,path=/home/a,,b/console.log")
+}
+
+func TestQEMUArgsDropTheConsoleWithoutALog(t *testing.T) {
+	// arrange
+	machine := vm.Machine{Kernel: "/images/vmlinuz", Rootfs: "/images/os.ext4", MemoryMiB: 512, CPUs: 1, GuestCID: 3}
+
+	// act
+	args := machine.QEMUArgs()
+
+	// assert
+	assert.Contains(t, args, "null,id=console")
+}
+
+func TestQEMUArgsWithTerminalPort(t *testing.T) {
+	// arrange
+	machine := vm.Machine{
+		Kernel:       "/images/vmlinuz",
+		Rootfs:       "/images/os.ext4",
+		MemoryMiB:    512,
+		CPUs:         1,
+		GuestCID:     3,
+		ProxyPort:    4321,
+		TerminalPort: 5432,
+	}
+
+	// act
+	args := machine.QEMUArgs()
+
+	// assert
+	assert.Contains(t, args, baseline+" aibox.proxy=4321 aibox.terminal=5432")
 }
 
 func TestQEMUArgsEndQEMUWhenTheVMResets(t *testing.T) {

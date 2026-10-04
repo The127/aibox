@@ -136,6 +136,19 @@ func TestRunSharesTheProjectAndItsHome(t *testing.T) {
 	assert.DirExists(t, home)
 }
 
+func TestRunWritesTheConsoleIntoTheProjectFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, f.project(t).ConsoleLog, f.launch.machine.ConsoleLog)
+}
+
 func TestRunAttachesTheTerminal(t *testing.T) {
 	// arrange
 	f := newFixture(t)

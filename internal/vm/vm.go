@@ -18,19 +18,23 @@ const (
 const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk. Shell boots it into
-// a shell instead of Claude Code. ProxyPort is the vsock port of the proxy
-// on the host, and 0 means there is none. Owner is the host user the VM
-// user stands for in the shares, and nil leaves the ids as they are.
+// a shell instead of Claude Code. ProxyPort and TerminalPort are the vsock
+// ports of the proxy and the terminal session on the host, and 0 means
+// there is none. ConsoleLog is the file the console of the VM is written
+// to, and "" throws it away. Owner is the host user the VM user stands for
+// in the shares, and nil leaves the ids as they are.
 type Machine struct {
-	Kernel    string
-	Rootfs    string
-	MemoryMiB int
-	CPUs      int
-	Shares    []Share
-	GuestCID  uint32
-	Shell     bool
-	ProxyPort uint32
-	Owner     *Owner
+	Kernel       string
+	Rootfs       string
+	MemoryMiB    int
+	CPUs         int
+	Shares       []Share
+	GuestCID     uint32
+	Shell        bool
+	ProxyPort    uint32
+	TerminalPort uint32
+	ConsoleLog   string
+	Owner        *Owner
 }
 
 // Owner is a user on the host. In the shares, the VM user sees this user's
@@ -62,9 +66,8 @@ func (m Machine) QEMUArgs() []string {
 		// virtiofsd reads and writes the guest memory directly
 		"-object", "memory-backend-memfd,id=mem,size=" + memory + ",share=on",
 		// the VM ends itself with a reset, which -no-reboot turns into an exit
-		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot",
-		// signal=off hands Ctrl-C to the VM instead of ending QEMU
-		"-chardev", "stdio,id=console,signal=off",
+		"-nodefaults", "-no-user-config", "-display", "none", "-no-reboot",
+		"-chardev", m.consoleChardev(),
 		"-device", "virtio-serial-device",
 		"-device", "virtconsole,chardev=console",
 		"-kernel", m.Kernel,
@@ -84,6 +87,14 @@ func (m Machine) QEMUArgs() []string {
 	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(m.GuestCID), 10))
 }
 
+func (m Machine) consoleChardev() string {
+	if m.ConsoleLog == "" {
+		return "null,id=console"
+	}
+
+	return "file,id=console,path=" + escape(m.ConsoleLog)
+}
+
 func (m Machine) cmdline() string {
 	words := []string{baseCmdline}
 	if m.Shell {
@@ -92,6 +103,10 @@ func (m Machine) cmdline() string {
 
 	if m.ProxyPort != 0 {
 		words = append(words, "aibox.proxy="+strconv.FormatUint(uint64(m.ProxyPort), 10))
+	}
+
+	if m.TerminalPort != 0 {
+		words = append(words, "aibox.terminal="+strconv.FormatUint(uint64(m.TerminalPort), 10))
 	}
 
 	return strings.Join(words, " ")

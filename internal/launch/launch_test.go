@@ -229,7 +229,7 @@ func guestServes(t *testing.T, listener net.Listener, output string, code int) <
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	start := func(session.Terminal) (session.Process, error) { //nolint:unparam // the signature is session.Starter
+	start := func(session.Request) (session.Process, error) { //nolint:unparam // the signature is session.Starter
 		return &printingProcess{output: strings.NewReader(output), code: code}, nil
 	}
 
@@ -248,6 +248,37 @@ func sessionOver(t *testing.T, served <-chan error) {
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the session did not end")
+	}
+}
+
+func TestRunHandsTheEnvToTheSessionOfTheVM(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	f.env = []string{"GOFLAGS=-mod=mod"}
+	_, stop := running(t, f)
+	t.Cleanup(func() { assert.ErrorIs(t, stop(), context.Canceled) })
+
+	conn, err := net.Dial("tcp", f.terminal(t).Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	asked := make(chan session.Request, 1)
+
+	// act
+	go func() {
+		_ = session.Serve(conn, func(request session.Request) (session.Process, error) {
+			asked <- request
+
+			return &printingProcess{output: strings.NewReader("")}, nil
+		})
+	}()
+
+	// assert
+	select {
+	case request := <-asked:
+		assert.Equal(t, []string{"GOFLAGS=-mod=mod"}, request.Env)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session was not started")
 	}
 }
 
@@ -323,7 +354,7 @@ func TestRunEndsASessionStillRunningWhenItIsStoppedAndSaysNothing(t *testing.T) 
 	served := make(chan error, 1)
 
 	go func() {
-		served <- session.Serve(conn, func(session.Terminal) (session.Process, error) {
+		served <- session.Serve(conn, func(session.Request) (session.Process, error) {
 			close(process.started)
 
 			return process, nil

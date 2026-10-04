@@ -233,15 +233,32 @@ func parsePort(key, value string) (uint32, error) {
 }
 
 // Command is Claude Code, or a shell when the options ask for one, set up to
-// run as the user on the terminal with the TERM of the host.
-func Command(options Options, terminal *os.File, term string) *exec.Cmd {
+// run as the user on the terminal with the TERM and the variables of the
+// request.
+func Command(options Options, terminal *os.File, request session.Request) *exec.Cmd {
 	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
 	if options.Shell {
 		cmd = exec.Command(bash, "-l")
 	}
 
 	cmd.Dir = project
-	cmd.Env = []string{
+	cmd.Env = slices.Concat(ownVariables(options, request.Term), request.Env)
+	cmd.Stdin = terminal
+	cmd.Stdout = terminal
+	cmd.Stderr = terminal
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
+		Setsid:     true,
+		Setctty:    true,
+		Ctty:       0,
+	}
+
+	return cmd
+}
+
+// ownVariables are the variables aibox sets for the command.
+func ownVariables(options Options, term string) []string {
+	env := []string{
 		"AIBOX=1",
 		"HOME=" + home,
 		"USER=" + userName,
@@ -259,7 +276,7 @@ func Command(options Options, terminal *os.File, term string) *exec.Cmd {
 	// the proxy speaks CONNECT only, which is how HTTPS goes through a proxy.
 	// Tools like curl read the lower case names.
 	if options.ProxyPort != 0 {
-		cmd.Env = append(cmd.Env,
+		env = append(env,
 			"HTTPS_PROXY=http://"+guestProxyAddress,
 			"https_proxy=http://"+guestProxyAddress,
 			"NO_PROXY=localhost,127.0.0.1",
@@ -267,17 +284,30 @@ func Command(options Options, terminal *os.File, term string) *exec.Cmd {
 		)
 	}
 
-	cmd.Stdin = terminal
-	cmd.Stdout = terminal
-	cmd.Stderr = terminal
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
-		Setsid:     true,
-		Setctty:    true,
-		Ctty:       0,
+	return env
+}
+
+// splitVariables sorts the variables of the host into the ones to take and
+// the names of the ones aibox sets itself. The host refuses those names in
+// the config already, so this only guards against another client.
+func splitVariables(own, requested []string) (accepted, rejected []string) {
+	names := make(map[string]bool, len(own))
+
+	for _, variable := range own {
+		name, _, _ := strings.Cut(variable, "=")
+		names[name] = true
 	}
 
-	return cmd
+	for _, variable := range requested {
+		name, _, _ := strings.Cut(variable, "=")
+		if names[name] {
+			rejected = append(rejected, name)
+		} else {
+			accepted = append(accepted, variable)
+		}
+	}
+
+	return accepted, rejected
 }
 
 // Forward joins each client of the listener with a connection from dial. A
@@ -413,14 +443,14 @@ func serve(sys System, options Options, console io.Writer) error {
 
 	defer func() { _ = conn.Close() }()
 
-	return session.Serve(conn, func(terminal session.Terminal) (session.Process, error) {
-		return start(sys, options, terminal, console)
+	return session.Serve(conn, func(request session.Request) (session.Process, error) {
+		return start(sys, options, request, console)
 	})
 }
 
 // start runs the command on a new terminal of the size the host asked for.
-func start(sys System, options Options, terminal session.Terminal, console io.Writer) (*process, error) {
-	pty, err := session.OpenPTY(terminal.Size)
+func start(sys System, options Options, request session.Request, console io.Writer) (*process, error) {
+	pty, err := session.OpenPTY(request.Size)
 	if err != nil {
 		return nil, fmt.Errorf("open a terminal: %w", err)
 	}
@@ -430,7 +460,14 @@ func start(sys System, options Options, terminal session.Terminal, console io.Wr
 		say(console, "aibox: own the terminal: %v\n", err)
 	}
 
-	cmd := Command(options, pty.Slave, terminal.Term)
+	accepted, rejected := splitVariables(ownVariables(options, request.Term), request.Env)
+	if len(rejected) > 0 {
+		say(console, "aibox: %s stay as the VM sets them\n", strings.Join(rejected, ", "))
+	}
+
+	request.Env = accepted
+
+	cmd := Command(options, pty.Slave, request)
 
 	pid, err := sys.Start(cmd)
 

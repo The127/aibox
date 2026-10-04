@@ -84,6 +84,11 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
+	env, err := environment(cfg.Env, deps.lookupEnv)
+	if err != nil {
+		return err
+	}
+
 	// the VM has a home of its own, so git there knows nothing of the person
 	if identity := deps.gitIdentity(cwd); identity != (gitconfig.Identity{}) {
 		if err := gitconfig.Write(p.Home, identity); err != nil {
@@ -116,7 +121,33 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		Path:       cfg.Path,
 	}
 
-	return deps.run(ctx, machine, launchOptions(cfg, p, log))
+	options := launchOptions(cfg, p, log)
+	options.Env = env
+
+	return deps.run(ctx, machine, options)
+}
+
+// environment returns the variables of the config as NAME=value, taking
+// the values of the pass-through ones from the host.
+func environment(variables []config.Variable, lookup func(string) (string, bool)) ([]string, error) {
+	env := make([]string, 0, len(variables))
+
+	for _, variable := range variables {
+		value := variable.Value
+
+		if variable.FromHost {
+			var ok bool
+
+			value, ok = lookup(variable.Name)
+			if !ok {
+				return nil, fmt.Errorf("env %s is not set on the host", variable.Name)
+			}
+		}
+
+		env = append(env, variable.Name+"="+value)
+	}
+
+	return env, nil
 }
 
 // mountShares returns a share for each mount of the config, once the host

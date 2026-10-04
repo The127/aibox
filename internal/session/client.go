@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"golang.org/x/crypto/ssh"
@@ -25,6 +26,8 @@ type Client struct {
 	Term    string
 	Size    Size
 	Resized <-chan Size
+	// Env are variables for the command, as NAME=value.
+	Env []string
 }
 
 // NewClient prepares the terminal on stdin for a session: raw mode, its size
@@ -143,6 +146,13 @@ func (c Client) Attach(conn net.Conn) (int, error) {
 
 	if err := s.RequestPty(c.Term, int(c.Size.Rows), int(c.Size.Cols), ssh.TerminalModes{}); err != nil {
 		return 0, fmt.Errorf("request a terminal: %w", err)
+	}
+
+	for _, variable := range c.Env {
+		name, value, _ := strings.Cut(variable, "=")
+		if err := s.Setenv(name, value); err != nil {
+			return 0, fmt.Errorf("send %s: %w", name, err)
+		}
 	}
 
 	if err := s.Shell(); err != nil {

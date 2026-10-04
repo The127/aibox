@@ -50,6 +50,8 @@ type Options struct {
 	// its port. Nil listens on vsock.
 	ListenVsock func() (net.Listener, uint32, error)
 	Proxy       proxy.Options
+	// Env are variables for the command in the VM, as NAME=value.
+	Env []string
 }
 
 // Run boots the machine with the proxy and the terminal listening for it
@@ -228,6 +230,8 @@ func attach(ctx context.Context, listener net.Listener, options Options) bool {
 
 		return true
 	}
+
+	client.Env = options.Env
 
 	code, err := client.Attach(conn)
 

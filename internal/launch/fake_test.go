@@ -70,6 +70,7 @@ type fakeProcesses struct {
 	stdin            *os.File
 	stdout           io.Writer
 	stderr           io.Writer
+	env              []string
 }
 
 func fakes(t *testing.T) *fakeProcesses {
@@ -107,6 +108,7 @@ func (f *fakeProcesses) options() launch.Options {
 		Stderr:        f.stderr,
 		SocketTimeout: 5 * time.Second,
 		ListenVsock:   f.listenTCP,
+		Env:           f.env,
 	}
 
 	if f.stdout != nil {

@@ -110,7 +110,7 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm-kitty")
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, session.Request{Term: "xterm-kitty"})
 
 	// assert
 	assert.Equal(t, []string{"/usr/local/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md"}, cmd.Args)
@@ -134,7 +134,7 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), ProxyPort: 4321}, tty, "xterm")
+	cmd := guest.Command(guest.Options{Console: tty.Name(), ProxyPort: 4321}, tty, session.Request{Term: "xterm"})
 
 	// assert
 	assert.Contains(t, cmd.Env, "HTTPS_PROXY=http://127.0.0.1:3128")
@@ -148,10 +148,52 @@ func TestCommandPutsThePathOfTheOptionsBeforeTheImage(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), Path: []string{"/opt/go/bin", "/opt/bin"}}, tty, "xterm")
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Path: []string{"/opt/go/bin", "/opt/bin"}}, tty, session.Request{Term: "xterm"})
 
 	// assert
 	assert.Contains(t, cmd.Env, "PATH=/opt/go/bin:/opt/bin:/usr/local/bin:/usr/bin:/bin")
+}
+
+func TestCommandTakesTheVariablesOfTheHost(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+	request := session.Request{Term: "xterm", Env: []string{"GOFLAGS=-mod=mod", "TOKEN=s3cret=with=equals"}}
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, request)
+
+	// assert
+	assert.Contains(t, cmd.Env, "GOFLAGS=-mod=mod")
+	assert.Contains(t, cmd.Env, "TOKEN=s3cret=with=equals")
+}
+
+func TestRunKeepsItsOwnVariablesOverThoseOfTheHost(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, clientEnv: []string{"PATH=/evil", "HOME=/elsewhere", "GOFLAGS=-mod=mod"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.started.Env, "PATH=/usr/local/bin:/usr/bin:/bin")
+	assert.Contains(t, sys.started.Env, "HOME=/home/user")
+	assert.NotContains(t, sys.started.Env, "PATH=/evil")
+	assert.NotContains(t, sys.started.Env, "HOME=/elsewhere")
+	assert.Contains(t, sys.started.Env, "GOFLAGS=-mod=mod")
+}
+
+func TestRunTellsTheConsoleAboutVariablesItDropped(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, clientEnv: []string{"PATH=/evil", "HOME=/elsewhere", "GOFLAGS=-mod=mod"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.consoleOutput(), "aibox: PATH, HOME stay as the VM sets them")
+	assert.NotContains(t, sys.consoleOutput(), "GOFLAGS")
 }
 
 func TestCommandWithoutAProxy(t *testing.T) {
@@ -159,7 +201,7 @@ func TestCommandWithoutAProxy(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm")
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, session.Request{Term: "xterm"})
 
 	// assert
 	require.NotEmpty(t, cmd.Env)
@@ -356,7 +398,7 @@ func TestCommandTurnsNonessentialTrafficOff(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "xterm")
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, session.Request{Term: "xterm"})
 
 	// assert
 	assert.Contains(t, cmd.Env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
@@ -367,7 +409,7 @@ func TestCommandRunsAShellWhenAsked(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), Shell: true}, tty, "xterm")
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Shell: true}, tty, session.Request{Term: "xterm"})
 
 	// assert
 	assert.Equal(t, []string{"/usr/bin/bash", "-l"}, cmd.Args)
@@ -643,21 +685,25 @@ type mounted struct {
 // command prints. realCommand, when set, runs in place of the command with
 // its terminal, so that a test can look at the terminal from inside.
 type fakeSystem struct {
-	t            *testing.T
-	cmdline      string
-	calls        []string
-	mounts       map[string]mounted
-	tty          *os.File
-	exitCode     int
-	orphans      int
-	waits        int
-	child        int
-	listener     net.Listener
-	mu           sync.Mutex
-	screen       syncBuffer
-	attached     chan attachResult
-	realCommand  string
-	real         *exec.Cmd
+	t           *testing.T
+	cmdline     string
+	calls       []string
+	mounts      map[string]mounted
+	tty         *os.File
+	exitCode    int
+	orphans     int
+	waits       int
+	child       int
+	listener    net.Listener
+	mu          sync.Mutex
+	screen      syncBuffer
+	attached    chan attachResult
+	realCommand string
+	real        *exec.Cmd
+	// clientEnv is what the session client on the host sends
+	clientEnv []string
+	// started is the last command Start was given
+	started      *exec.Cmd
 	failMount    string
 	failLoopback error
 	failListen   error
@@ -805,7 +851,7 @@ func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 
 		defer func() { _ = hostSide.Close() }()
 
-		client := session.Client{In: strings.NewReader(""), Out: &s.screen, Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}}
+		client := session.Client{In: strings.NewReader(""), Out: &s.screen, Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}, Env: s.clientEnv}
 		code, err := client.Attach(hostSide)
 		s.attached <- attachResult{code: code, err: err}
 	}()
@@ -841,6 +887,7 @@ func (s *fakeSystem) Sethostname(name string) error {
 
 func (s *fakeSystem) Start(cmd *exec.Cmd) (int, error) {
 	s.record("start " + cmd.Path)
+	s.started = cmd
 
 	if s.failStart != nil {
 		return 0, s.failStart

@@ -58,10 +58,12 @@ folder on the host may not show in a running VM.
 Claude Code and the shell alike, for example `/opt/go/bin` from the mount
 above. The entries are not checked against the mounts.
 
-Not there yet:
+`env` lists variables for the command in the VM. `NAME=value` sets a value,
+`NAME` alone passes the value the host has when the VM starts, which is how
+a secret gets in without being written into the file. They travel over the terminal
+session, not over the kernel command line. A variable aibox sets itself,
+such as `HOME`, `PATH` or the proxy variables, is refused.
 
-- There is no way to pass secrets into the VM. You log in with
-  `claude /login` inside it.
 
 ## Contributing
 

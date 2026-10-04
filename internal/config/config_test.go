@@ -283,6 +283,78 @@ func TestLoadWritesAPathExampleIntoTheDefaultFile(t *testing.T) {
 	assert.Contains(t, string(content), "# path:\n#   - ")
 }
 
+func TestLoadReadsTheEnv(t *testing.T) {
+	// arrange
+	path := write(t, "env:\n  - GOFLAGS=-mod=mod\n  - TOKEN=a=b\n  - GITHUB_TOKEN\n  - empty=\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Variable{
+		{Name: "GOFLAGS", Value: "-mod=mod"},
+		{Name: "TOKEN", Value: "a=b"},
+		{Name: "GITHUB_TOKEN", FromHost: true},
+		{Name: "empty", Value: ""},
+	}, cfg.Env)
+}
+
+func TestLoadRejectsAVariableItCannotRead(t *testing.T) {
+	tests := map[string]string{
+		"no name":                        "=x",
+		"empty":                          "",
+		"name starting with a digit":     "1ABC=x",
+		"space in the name":              "A B=x",
+		"dash in the name":               "A-B",
+		"control character in the value": "A=B=C\\u0001",
+	}
+
+	for name, entry := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, "env:\n  - \""+entry+"\"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrBadVariable)
+		})
+	}
+}
+
+func TestLoadRejectsAVariableAiboxSetsItself(t *testing.T) {
+	for _, name := range []string{"HOME", "PATH", "TERM", "HTTPS_PROXY", "no_proxy", "AIBOX", "USER"} {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, "env:\n  - "+name+"=x\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrReservedVariable)
+			assert.ErrorContains(t, err, name)
+		})
+	}
+}
+
+func TestLoadWritesAnEnvExampleIntoTheDefaultFile(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# env:\n#   - ")
+}
+
 func TestDefaultHasNoHostForUpdates(t *testing.T) {
 	// act
 	cfg := config.Default()

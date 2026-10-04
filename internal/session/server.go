@@ -32,10 +32,12 @@ type Size struct {
 	Cols uint16
 }
 
-// Terminal is the terminal a client asked for.
-type Terminal struct {
+// Request is what a client asked for: the TERM and the size of its
+// terminal, and the variables it sent, as NAME=value.
+type Request struct {
 	Term string
 	Size Size
+	Env  []string
 }
 
 // Process is a command running on a terminal. Reads return what it prints
@@ -46,8 +48,8 @@ type Process interface {
 	Wait() (exitCode int, err error)
 }
 
-// Starter runs the command of a session on a terminal.
-type Starter func(terminal Terminal) (Process, error)
+// Starter runs the command of a session as the client asked for it.
+type Starter func(request Request) (Process, error)
 
 // Serve runs an SSH server on the connection, serves the first session with
 // a command from start and returns when that session is over.
@@ -116,6 +118,11 @@ type windowChange struct {
 	HeightPx uint32
 }
 
+type envRequest struct {
+	Name  string
+	Value string
+}
+
 type exitStatus struct {
 	Status uint32
 }
@@ -127,11 +134,11 @@ type result struct {
 
 // served is one session being served.
 type served struct {
-	channel  ssh.Channel
-	start    Starter
-	terminal Terminal
-	process  Process
-	exited   chan result
+	channel ssh.Channel
+	start   Starter
+	request Request
+	process Process
+	exited  chan result
 }
 
 func (s *served) serve(requests <-chan *ssh.Request) error {
@@ -198,7 +205,8 @@ func (s *served) handle(request *ssh.Request) error {
 
 		err := ssh.Unmarshal(request.Payload, &r)
 		if err == nil {
-			s.terminal = Terminal{Term: r.Term, Size: sizeOf(r.Rows, r.Cols)}
+			s.request.Term = r.Term
+			s.request.Size = sizeOf(r.Rows, r.Cols)
 		}
 
 		reply(request, err == nil)
@@ -208,6 +216,15 @@ func (s *served) handle(request *ssh.Request) error {
 		err := ssh.Unmarshal(request.Payload, &r)
 		if err == nil {
 			err = s.resize(sizeOf(r.Rows, r.Cols))
+		}
+
+		reply(request, err == nil)
+	case "env":
+		var r envRequest
+
+		err := ssh.Unmarshal(request.Payload, &r)
+		if err == nil {
+			s.request.Env = append(s.request.Env, r.Name+"="+r.Value)
 		}
 
 		reply(request, err == nil)
@@ -225,7 +242,7 @@ func (s *served) handle(request *ssh.Request) error {
 
 func (s *served) resize(size Size) error {
 	if s.process == nil {
-		s.terminal.Size = size
+		s.request.Size = size
 
 		return nil
 	}
@@ -238,7 +255,7 @@ func (s *served) startCommand() error {
 		return errAlreadyStarted
 	}
 
-	process, err := s.start(s.terminal)
+	process, err := s.start(s.request)
 	if err != nil {
 		return fmt.Errorf("start the command: %w", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,6 +44,25 @@ var ErrMountOverlap = errors.New("mounts overlap")
 // ErrBadPath is a path entry that is not an absolute path the kernel command
 // line can carry, or that has a colon.
 var ErrBadPath = errors.New("must be an absolute path without a colon")
+
+// ErrBadVariable is an env entry that is not NAME or NAME=value with a
+// name of letters, digits and underscores.
+var ErrBadVariable = errors.New("must be NAME or NAME=value")
+
+// ErrReservedVariable is an env entry with a name aibox sets itself.
+var ErrReservedVariable = errors.New("aibox sets this variable itself")
+
+// reservedVariables are the names the guest sets for the command, so that
+// an entry with one of them fails at load time. The guest keeps its own
+// values anyway. The list has to match ownVariables in internal/guest,
+// which this package cannot import.
+var reservedVariables = []string{
+	"AIBOX", "HOME", "USER", "LOGNAME", "SHELL", "PATH", "TERM", "LANG",
+	"HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy",
+	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+}
+
+var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ErrCmdlineFull are mounts and path entries that together do not fit on
 // the kernel command line.
@@ -91,6 +111,47 @@ type Config struct {
 	Mounts []Mount `yaml:"mounts"`
 	// Path are folders in the VM that go in front of its PATH.
 	Path []string `yaml:"path"`
+	// Env are variables for the command in the VM.
+	Env []Variable `yaml:"env"`
+}
+
+// Variable is an environment variable for the command in the VM. With
+// FromHost the value is the one the host has when the VM starts. In the
+// file it is written as NAME=value or NAME.
+type Variable struct {
+	Name     string
+	Value    string
+	FromHost bool
+}
+
+// UnmarshalYAML reads a variable from its NAME=value or NAME form.
+func (v *Variable) UnmarshalYAML(value *yaml.Node) error {
+	var text string
+	if err := value.Decode(&text); err != nil {
+		return err
+	}
+
+	variable, err := parseVariable(text)
+	if err != nil {
+		return err
+	}
+
+	*v = variable
+
+	return nil
+}
+
+func parseVariable(text string) (Variable, error) {
+	name, val, hasValue := strings.Cut(text, "=")
+	if !variableName.MatchString(name) || strings.ContainsFunc(val, unicode.IsControl) {
+		return Variable{}, fmt.Errorf("env entry %q: %w", text, ErrBadVariable)
+	}
+
+	if slices.Contains(reservedVariables, name) {
+		return Variable{}, fmt.Errorf("env entry %q: %w", text, ErrReservedVariable)
+	}
+
+	return Variable{Name: name, Value: val, FromHost: !hasValue}, nil
 }
 
 // Mount is a folder of the host that the VM sees read-only at Guest. In the
@@ -217,6 +278,12 @@ allow:
 # Folders in the VM that go in front of its PATH, for example:
 # path:
 #   - /opt/go/bin
+
+# Variables for the command in the VM, as NAME=value, or as NAME for the
+# value the host has when the VM starts, for example:
+# env:
+#   - GOFLAGS=-mod=mod
+#   - GITHUB_TOKEN
 `
 
 // Default is the config of a project that has no config file yet.

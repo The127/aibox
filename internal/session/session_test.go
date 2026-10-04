@@ -20,14 +20,14 @@ import (
 // writes what the process prints into output and reads what the client
 // typed from typed.
 type fakeProcess struct {
-	terminal session.Terminal
-	output   *io.PipeReader
-	typed    *syncBuffer
-	resized  chan session.Size
-	exit     chan int
-	started  chan struct{}
-	waited   chan struct{}
-	closed   chan struct{}
+	request session.Request
+	output  *io.PipeReader
+	typed   *syncBuffer
+	resized chan session.Size
+	exit    chan int
+	started chan struct{}
+	waited  chan struct{}
+	closed  chan struct{}
 }
 
 func (p *fakeProcess) Read(b []byte) (int, error)  { return p.output.Read(b) }
@@ -111,12 +111,12 @@ func newFixture(t *testing.T, startErr error, clientOptions ...func(*session.Cli
 		attached: make(chan attachResult, 1),
 	}
 
-	start := func(terminal session.Terminal) (session.Process, error) {
+	start := func(request session.Request) (session.Process, error) {
 		if startErr != nil {
 			return nil, startErr
 		}
 
-		f.process.terminal = terminal
+		f.process.request = request
 		close(f.process.started)
 
 		return f.process, nil
@@ -128,6 +128,7 @@ func newFixture(t *testing.T, startErr error, clientOptions ...func(*session.Cli
 		Term:    "xterm-kitty",
 		Size:    session.Size{Rows: 50, Cols: 160},
 		Resized: f.resizes,
+		Env:     []string{"GOFLAGS=-mod=mod", "TOKEN=s3cret=with=equals"},
 	}
 
 	for _, option := range clientOptions {
@@ -264,7 +265,7 @@ func TestSessionTypesWhatTheClientSendsIntoTheProcess(t *testing.T) {
 	assert.Eventually(t, func() bool { return f.process.typed.String() == "ls\r" }, 5*time.Second, 10*time.Millisecond)
 }
 
-func TestSessionStartsTheProcessWithTheClientsTerminal(t *testing.T) {
+func TestSessionStartsTheProcessAsTheClientAsked(t *testing.T) {
 	// arrange
 	f := newFixture(t, nil)
 
@@ -272,7 +273,11 @@ func TestSessionStartsTheProcessWithTheClientsTerminal(t *testing.T) {
 	f.waitStarted(t)
 
 	// assert
-	assert.Equal(t, session.Terminal{Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}}, f.process.terminal)
+	assert.Equal(t, session.Request{
+		Term: "xterm-kitty",
+		Size: session.Size{Rows: 50, Cols: 160},
+		Env:  []string{"GOFLAGS=-mod=mod", "TOKEN=s3cret=with=equals"},
+	}, f.process.request)
 }
 
 func TestSessionResizesTheProcessWithTheClient(t *testing.T) {

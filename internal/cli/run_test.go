@@ -64,6 +64,7 @@ func newFixture(t *testing.T) *fixture {
 		getwd:       func() (string, error) { return f.cwd, nil },
 		aiboxDir:    func() (string, error) { return f.aiboxDir, nil },
 		owner:       func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
+		lookupEnv:   func(string) (string, bool) { return "", false },
 		gitIdentity: func(string) gitconfig.Identity { return gitconfig.Identity{} },
 		run:         f.launch.run,
 	}
@@ -322,6 +323,41 @@ func TestRunPassesThePathOfTheConfigToTheMachine(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/opt/go/bin", "/opt/bin"}, f.launch.machine.Path)
+}
+
+func TestRunPassesTheEnvOfTheConfigToTheSession(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.lookupEnv = func(name string) (string, bool) {
+		if name == "GITHUB_TOKEN" {
+			return "s3cret", true
+		}
+
+		return "", false
+	}
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - GOFLAGS=-mod=mod\n  - GITHUB_TOKEN\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "GITHUB_TOKEN=s3cret"}, f.launch.options.Env)
+}
+
+func TestRunWhenAVariableToPassThroughIsNotSetOnTheHost(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - GITHUB_TOKEN\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorContains(t, err, "GITHUB_TOKEN")
+	assert.False(t, f.launch.called)
 }
 
 func TestRunWhenAMountedFolderIsMissing(t *testing.T) {

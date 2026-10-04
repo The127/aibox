@@ -35,9 +35,8 @@ Files and tools:
   of the project. A container shares the network of the VM, so it has
   only loopback and the proxy, and gets the proxy variables. Registries
   need entries on the allow list like everything else, preset:docker for
-  Docker Hub. Resource limits such as --memory are not applied. podman
-  and QEMU themselves are not in the image and come from the host like
-  other tools.
+  Docker Hub. Limits such as --memory, --cpus and --pids-limit apply. podman and QEMU themselves are not in the image and come
+  from the host like other tools.
 - You are the user "user", without root or sudo.
 - The image itself has only bash, git, busybox and claude. Everything else,
   such as Go, Node, Python, make or curl, is there only when the person put

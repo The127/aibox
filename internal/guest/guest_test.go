@@ -441,6 +441,10 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount tmpfs /run",
 		"mount project /project",
 		"mount home /home/user",
+		"controllers /sys/fs/cgroup",
+		"delegate /sys/fs/cgroup/user",
+		"controllers /sys/fs/cgroup/user",
+		"delegate /sys/fs/cgroup/user/session",
 		"chmod 666 /dev/kvm",
 		"chmod 666 /dev/fuse",
 		"pin /project/.git",
@@ -476,6 +480,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, mounted{"overlay", "/run/root", "overlay", 0, "lowerdir=/,upperdir=/run/upper,workdir=/run/work"}, sys.mounts["/run/root"])
 	assert.Equal(t, mounted{"overlay", "/", "", syscall.MS_REMOUNT | syscall.MS_BIND | syscall.MS_RDONLY, ""}, sys.mounts["/"])
 	assert.Equal(t, mounted{"shared", "/", "", syscall.MS_REC | syscall.MS_SHARED, ""}, sys.mountsOf["/"][0])
+	assert.Equal(t, "/sys/fs/cgroup/user/session", sys.startedIn)
 }
 
 func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
@@ -488,6 +493,19 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "make /run/root the root: invalid argument")
 	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
+}
+
+func TestRunPowersOffWhenTheCgroupOfTheUserCannotBeMade(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "/sys/fs/cgroup/user")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
+	assert.Equal(t, "halt", sys.calls[len(sys.calls)-1])
 }
 
 func TestRunSkipsADeviceTheKernelDidNotMake(t *testing.T) {
@@ -891,6 +909,10 @@ type fakeSystem struct {
 	failPivot   bool
 	failProtect error
 	failChmod   error
+	// failDelegate is the error of every Delegate, startedIn the cgroup
+	// the command was started in
+	failDelegate error
+	startedIn    string
 	// files are the paths of the project that exist, and gitIsFile makes
 	// .git a file instead of a folder
 	files        []string
@@ -1164,9 +1186,22 @@ func (s *fakeSystem) Sethostname(name string) error {
 	return s.failHostname
 }
 
-func (s *fakeSystem) Start(cmd *exec.Cmd) (int, error) {
+func (s *fakeSystem) Controllers(cgroup string) error {
+	s.record("controllers " + cgroup)
+
+	return nil
+}
+
+func (s *fakeSystem) Delegate(cgroup string) error {
+	s.record("delegate " + cgroup)
+
+	return s.failDelegate
+}
+
+func (s *fakeSystem) Start(cmd *exec.Cmd, cgroup string) (int, error) {
 	s.record("start " + cmd.Path)
 	s.started = cmd
+	s.startedIn = cgroup
 
 	if s.failStart != nil {
 		return 0, s.failStart

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -195,12 +196,47 @@ func (Linux) Sethostname(name string) error {
 }
 
 // Start starts the command and returns its PID.
-func (Linux) Start(cmd *exec.Cmd) (int, error) {
+func (Linux) Start(cmd *exec.Cmd, cgroup string) (int, error) {
+	dir, err := os.Open(cgroup) //nolint:gosec // the cgroup is fixed
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() { _ = dir.Close() }()
+
+	// the kernel puts the child into the cgroup before it runs anything
+	cmd.SysProcAttr.UseCgroupFD = true
+	cmd.SysProcAttr.CgroupFD = int(dir.Fd())
+
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
 
 	return cmd.Process.Pid, nil
+}
+
+// cgroupControllers are all the controllers the kernel of the image has.
+const cgroupControllers = "+cpuset +cpu +io +memory +pids"
+
+// Controllers turns the controllers on for the cgroups below.
+func (Linux) Controllers(cgroup string) error {
+	return os.WriteFile(cgroup+"/cgroup.subtree_control", []byte(cgroupControllers), 0)
+}
+
+// Delegate makes the cgroup and gives it to the user, with the files the
+// kernel documents for delegation.
+func (Linux) Delegate(cgroup string) error {
+	if err := os.Mkdir(cgroup, 0o755); err != nil && !errors.Is(err, fs.ErrExist) { //nolint:gosec // a cgroup everyone may read
+		return err
+	}
+
+	for _, name := range []string{"", "/cgroup.procs", "/cgroup.subtree_control", "/cgroup.threads"} {
+		if err := os.Chown(cgroup+name, int(vm.GuestUID), int(vm.GuestGID)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Wait waits for any child to exit and returns its PID and exit code. A

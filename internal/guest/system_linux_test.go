@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,22 @@ func TestLinuxWaitReportsASignalAsShellsDo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cmd.Process.Pid, pid)
 	assert.Equal(t, 128+15, exitCode)
+}
+
+func TestStartAsksTheKernelToStartTheCommandInTheCgroup(t *testing.T) {
+	// arrange
+	cgroup := filepath.Join(t.TempDir(), "not-a-cgroup")
+	require.NoError(t, os.Mkdir(cgroup, 0o700))
+	cmd := exec.Command("true")
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+
+	// act
+	_, err := guest.Linux{}.Start(cmd, cgroup)
+
+	// assert
+	// a plain folder refuses the process, which shows the kernel was asked
+	require.Error(t, err)
+	assert.True(t, cmd.SysProcAttr.UseCgroupFD)
 }
 
 func TestBlankIsTrueForADiskWithoutAFileSystem(t *testing.T) {

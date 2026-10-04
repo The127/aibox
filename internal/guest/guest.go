@@ -123,7 +123,14 @@ type System interface {
 	ReadCmdline() (string, error)
 	OpenConsole(path string) (*os.File, error)
 	Sethostname(name string) error
-	Start(cmd *exec.Cmd) (pid int, err error)
+	// Start starts the command in the cgroup, a folder of the cgroup2 file
+	// system.
+	Start(cmd *exec.Cmd, cgroup string) (pid int, err error)
+	// Controllers turns the cgroup controllers on for the cgroups below.
+	Controllers(cgroup string) error
+	// Delegate makes the cgroup, if missing, and gives it to the user, so
+	// that the user can make cgroups below it.
+	Delegate(cgroup string) error
 	Wait() (pid, exitCode int, err error)
 	Halt() error
 }
@@ -165,6 +172,16 @@ var stateDirs = []struct{ dir, target string }{
 	// a real disk
 	{"containers", home + "/.local/share/containers"},
 }
+
+// The command runs in a cgroup of its own below one that belongs to the
+// user, so that containers can have limits. A cgroup with processes in it
+// cannot hand controllers down, which is why the command is one level
+// further down.
+const (
+	cgroupRoot    = "/sys/fs/cgroup"
+	userCgroup    = cgroupRoot + "/user"
+	sessionCgroup = userCgroup + "/session"
+)
 
 // devices are opened to everyone for containers and VMs inside the VM. A
 // missing one is skipped, since the kernel makes /dev/kvm only where the
@@ -470,6 +487,10 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	if err := delegateCgroups(sys); err != nil {
+		return console, options, err
+	}
+
 	for _, device := range devices {
 		if err := sys.Chmod(device, 0o666); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return console, options, fmt.Errorf("open %s to everyone: %w", device, err)
@@ -599,6 +620,26 @@ func enterOverlay(sys System) error {
 	return nil
 }
 
+// delegateCgroups gives the user a cgroup with every controller and puts
+// the cgroup of the command below it.
+func delegateCgroups(sys System) error {
+	for _, step := range []struct {
+		do     func(string) error
+		cgroup string
+	}{
+		{sys.Controllers, cgroupRoot},
+		{sys.Delegate, userCgroup},
+		{sys.Controllers, userCgroup},
+		{sys.Delegate, sessionCgroup},
+	} {
+		if err := step.do(step.cgroup); err != nil {
+			return fmt.Errorf("set up the cgroup %s: %w", step.cgroup, err)
+		}
+	}
+
+	return nil
+}
+
 // shareMounts makes every mount shared, which rootless containers need to
 // propagate their mounts.
 func shareMounts(sys System) error {
@@ -713,7 +754,7 @@ func start(sys System, options Options, request session.Request, console io.Writ
 
 	cmd := Command(options, pty.Slave, request)
 
-	pid, err := sys.Start(cmd)
+	pid, err := sys.Start(cmd, sessionCgroup)
 
 	_ = pty.Slave.Close()
 

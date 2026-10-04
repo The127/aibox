@@ -43,6 +43,10 @@ func TestParseCmdline(t *testing.T) {
 		"console= quiet":                       {Console: "/dev/console"},
 		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
 		"console=hvc0 aibox.terminal=5432":     {Console: "/dev/hvc0", TerminalPort: 5432},
+		"console=hvc0 aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin": {
+			Console: "/dev/hvc0",
+			Mounts:  []guest.Mount{{Tag: "mount0", Path: "/opt/go"}, {Tag: "mount1", Path: "/opt/bin"}},
+		},
 	}
 
 	for cmdline, want := range tests {
@@ -53,6 +57,20 @@ func TestParseCmdline(t *testing.T) {
 			// assert
 			require.NoError(t, err)
 			assert.Equal(t, want, options)
+		})
+	}
+}
+
+func TestParseCmdlineRejectsAMountItCannotRead(t *testing.T) {
+	for _, value := range []string{"mount0", "mount0:", ":/opt/go", "mount0:opt/go", "mount0:/", "mount0:/opt/go:x"} {
+		t.Run(value, func(t *testing.T) {
+			// act
+			options, err := guest.ParseCmdline("console=hvc0 aibox.mount=" + value)
+
+			// assert
+			assert.ErrorIs(t, err, guest.ErrBadMountWord)
+			assert.ErrorContains(t, err, value)
+			assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
 		})
 	}
 }
@@ -367,6 +385,49 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, mounted{"devpts", "/dev/pts", "devpts", syscall.MS_NOSUID | syscall.MS_NOEXEC, "mode=620,ptmxmode=666,gid=5"}, sys.mounts["/dev/pts"])
 	assert.Equal(t, mounted{"tmpfs", "/tmp", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV, "mode=1777"}, sys.mounts["/tmp"])
 	assert.Equal(t, mounted{"project", "/project", "virtiofs", 0, ""}, sys.mounts["/project"])
+}
+
+func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+
+	home := slices.Index(sys.calls, "mount home /home/user")
+	require.NotEqual(t, -1, home)
+
+	next := sys.calls[home+1:]
+	assert.Equal(t, []string{"mount mount0 /opt/go", "mount mount1 /opt/bin", "link /dev/fd -> /proc/self/fd"}, next[:3])
+}
+
+func TestRunMountsTheSharesOfTheHostReadOnlyButExecutable(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/opt/go"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, mounted{"mount0", "/opt/go", "virtiofs", syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NODEV, ""}, sys.mounts["/opt/go"])
+}
+
+func TestRunPowersOffWhenAMountOfTheHostFails(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/opt/go", failMount: "mount0"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "/opt/go")
+	assert.Contains(t, sys.consoleOutput(), "/opt/go")
+	assert.NotContains(t, sys.calls, "start /usr/local/bin/claude")
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunReapsOtherChildrenUntilClaudeCodeExits(t *testing.T) {

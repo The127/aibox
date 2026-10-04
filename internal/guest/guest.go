@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -45,14 +46,25 @@ var (
 	ErrBadPort = errors.New("not a vsock port")
 	// ErrNoTerminal is a kernel command line without an aibox.terminal word.
 	ErrNoTerminal = errors.New("no aibox.terminal on the kernel command line")
+	// ErrBadMountWord is an aibox.mount word that is not a share tag and an
+	// absolute path joined by a colon.
+	ErrBadMountWord = errors.New("not tag:path with an absolute path")
 )
 
-// Options come from the kernel command line.
+// Options come from the kernel command line. Mounts are the shares of the
+// host that are mounted read-only where the host says.
 type Options struct {
 	Console      string
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
+	Mounts       []Mount
+}
+
+// Mount is a share of the host and the path the VM mounts it on.
+type Mount struct {
+	Tag  string
+	Path string
 }
 
 // Network is what the proxy side of the VM needs from the kernel.
@@ -85,7 +97,11 @@ type link struct {
 	target, path string
 }
 
-const noDevices = syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV
+const (
+	noDevices = syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV
+	// programs in a mounted folder must run, so it stays executable
+	readOnlyShare = syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NODEV
+)
 
 var (
 	// the console lives in /dev and its name is in /proc, so these two come
@@ -131,6 +147,17 @@ func ParseCmdline(cmdline string) (Options, error) {
 		return port
 	}
 
+	mount := func(value string) {
+		mount, err := parseMount(value)
+		if err != nil {
+			errs = append(errs, err)
+
+			return
+		}
+
+		options.Mounts = append(options.Mounts, mount)
+	}
+
 	for _, word := range strings.Fields(cmdline) {
 		key, value, _ := strings.Cut(word, "=")
 
@@ -145,10 +172,23 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.ProxyPort = port(key, value)
 		case "aibox.terminal":
 			options.TerminalPort = port(key, value)
+		case "aibox.mount":
+			mount(value)
 		}
 	}
 
 	return options, errors.Join(errs...)
+}
+
+// parseMount reads a tag:path word. The host checked the path already, but
+// the kernel command line is input like any other.
+func parseMount(value string) (Mount, error) {
+	tag, path, _ := strings.Cut(value, ":")
+	if tag == "" || strings.Count(value, ":") != 1 || !filepath.IsAbs(path) || filepath.Clean(path) == "/" {
+		return Mount{}, fmt.Errorf("aibox.mount=%q: %w", value, ErrBadMountWord)
+	}
+
+	return Mount{Tag: tag, Path: filepath.Clean(path)}, nil
 }
 
 // parsePort reads a vsock port. 0 and the highest value are not ports a
@@ -278,6 +318,12 @@ func setup(sys System) (*os.File, Options, error) {
 	for _, m := range mounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
+		}
+	}
+
+	for _, m := range options.Mounts {
+		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
+			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
 		}
 	}
 

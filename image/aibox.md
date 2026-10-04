@@ -17,6 +17,8 @@ Files and tools:
   for each project. At every start aibox copies the name and email that git
   uses for the project on the host into ~/.config/git/config here. A
   ~/.gitconfig you write here wins over that.
+- Other folders of the host may be mounted read-only. `mount -t virtiofs`
+  shows where, as the entries named mount0, mount1 and so on.
 - /tmp, /run and /dev/shm are RAM, shared with everything else in the VM,
   which has 2 GB by default. Writes anywhere else fail.
 - You are the user "user", without root or sudo.

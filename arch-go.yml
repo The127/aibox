@@ -72,6 +72,14 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the session speaks SSH over a connection and knows nothing else
+  - package: '**.internal.session$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the gitconfig runs git on the host and knows nothing else
   - package: '**.internal.gitconfig$'
     shouldNotDependsOn:

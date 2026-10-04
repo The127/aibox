@@ -433,12 +433,16 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"read cmdline",
 		"open /dev/hvc0",
 		"mount sysfs /sys",
+		"mount cgroup2 /sys/fs/cgroup",
 		"mount devpts /dev/pts",
 		"mount tmpfs /dev/shm",
 		"mount tmpfs /tmp",
+		"mount tmpfs /var/tmp",
 		"mount tmpfs /run",
 		"mount project /project",
 		"mount home /home/user",
+		"chmod 666 /dev/kvm",
+		"chmod 666 /dev/fuse",
 		"pin /project/.git",
 		"blank /dev/vdb",
 		"format /dev/vdb",
@@ -447,6 +451,9 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount /var/lib/aibox/state/local /usr/local",
 		"own /var/lib/aibox/state/cache",
 		"mount /var/lib/aibox/state/cache /home/user/.cache",
+		"own /var/lib/aibox/state/containers",
+		"mount /var/lib/aibox/state/containers /home/user/.local/share/containers",
+		"mount shared /",
 		"mount overlay /",
 		"link /dev/fd -> /proc/self/fd",
 		"link /dev/stdin -> /proc/self/fd/0",
@@ -465,8 +472,10 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, mounted{"project", "/project", "virtiofs", 0, ""}, sys.mounts["/project"])
 	assert.Equal(t, mounted{"/dev/vdb", "/var/lib/aibox/state", "ext4", syscall.MS_NOSUID | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/state"])
 	assert.Equal(t, mounted{"/var/lib/aibox/state/local", "/usr/local", "", syscall.MS_BIND, ""}, sys.mounts["/usr/local"])
+	assert.Equal(t, mounted{"cgroup2", "/sys/fs/cgroup", "cgroup2", syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, "nsdelegate"}, sys.mounts["/sys/fs/cgroup"])
 	assert.Equal(t, mounted{"overlay", "/run/root", "overlay", 0, "lowerdir=/,upperdir=/run/upper,workdir=/run/work"}, sys.mounts["/run/root"])
 	assert.Equal(t, mounted{"overlay", "/", "", syscall.MS_REMOUNT | syscall.MS_BIND | syscall.MS_RDONLY, ""}, sys.mounts["/"])
+	assert.Equal(t, mounted{"shared", "/", "", syscall.MS_REC | syscall.MS_SHARED, ""}, sys.mountsOf["/"][0])
 }
 
 func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
@@ -479,6 +488,32 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "make /run/root the root: invalid argument")
 	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
+}
+
+func TestRunSkipsADeviceTheKernelDidNotMake(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/dev/fuse"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.calls, "chmod 666 /dev/kvm")
+	assert.Contains(t, sys.calls, "start /usr/bin/claude")
+}
+
+func TestRunPowersOffWhenADeviceCannotBeOpenedToEveryone(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/dev/kvm"}, failChmod: errors.New("read-only file system")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "/dev/kvm")
+	assert.ErrorContains(t, err, "read-only file system")
+	assert.Equal(t, "halt", sys.calls[len(sys.calls)-1])
 }
 
 func TestRunProtectsTheGitConfigHooksAndInfoOfTheProject(t *testing.T) {
@@ -598,10 +633,10 @@ func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 
-	cache := slices.Index(sys.calls, "mount /var/lib/aibox/state/cache /home/user/.cache")
-	require.NotEqual(t, -1, cache)
+	last := slices.Index(sys.calls, "mount /var/lib/aibox/state/containers /home/user/.local/share/containers")
+	require.NotEqual(t, -1, last)
 
-	next := sys.calls[cache+1:]
+	next := sys.calls[last+1:]
 	assert.Equal(t, []string{"mount mount0 /opt/go", "mount mount1 /opt/bin"}, next[:2])
 }
 
@@ -829,10 +864,12 @@ var overlayCalls = []string{
 }
 
 type fakeSystem struct {
-	t           *testing.T
-	cmdline     string
-	calls       []string
+	t       *testing.T
+	cmdline string
+	calls   []string
+	// mounts is the last mount on each target, mountsOf all of them
 	mounts      map[string]mounted
+	mountsOf    map[string][]mounted
 	tty         *os.File
 	exitCode    int
 	orphans     int
@@ -853,6 +890,7 @@ type fakeSystem struct {
 	failMount   string
 	failPivot   bool
 	failProtect error
+	failChmod   error
 	// files are the paths of the project that exist, and gitIsFile makes
 	// .git a file instead of a folder
 	files        []string
@@ -913,9 +951,11 @@ func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data st
 
 	if s.mounts == nil {
 		s.mounts = map[string]mounted{}
+		s.mountsOf = map[string][]mounted{}
 	}
 
 	s.mounts[target] = mounted{source, target, fstype, flags, data}
+	s.mountsOf[target] = append(s.mountsOf[target], s.mounts[target])
 
 	if source == s.failMount {
 		return errors.New("no such device")
@@ -953,6 +993,16 @@ func (s *fakeSystem) gitCalls() []string {
 	}
 
 	return calls
+}
+
+func (s *fakeSystem) Chmod(path string, mode os.FileMode) error {
+	s.record(fmt.Sprintf("chmod %o %s", mode, path))
+
+	if err := s.exists(path); err != nil {
+		return err
+	}
+
+	return s.failChmod
 }
 
 func (s *fakeSystem) Pin(path string) error {

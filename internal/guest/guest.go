@@ -99,6 +99,9 @@ type System interface {
 	Mount(source, target, fstype string, flags uintptr, data string) error
 	// Mkdir makes the folder and its parents, if missing.
 	Mkdir(path string) error
+	// Chmod sets the mode of the file. The error wraps fs.ErrNotExist when
+	// there is no such file.
+	Chmod(path string, mode os.FileMode) error
 	// Pin makes the file or folder a mount point, so that it can neither
 	// be renamed nor removed. The error wraps fs.ErrNotExist when the path
 	// does not exist, and syscall.ENOTDIR when a folder on the way is a file.
@@ -158,7 +161,15 @@ var gitDirs = []string{gitDir + "/hooks", gitDir + "/info"}
 var stateDirs = []struct{ dir, target string }{
 	{"local", "/usr/local"},
 	{"cache", home + "/.cache"},
+	// overlayfs does not work on top of virtio-fs, so container images need
+	// a real disk
+	{"containers", home + "/.local/share/containers"},
 }
+
+// devices are opened to everyone for containers and VMs inside the VM. A
+// missing one is skipped, since the kernel makes /dev/kvm only where the
+// host allows nested virtualisation.
+var devices = []string{"/dev/kvm", "/dev/fuse"}
 
 var (
 	// the console lives in /dev and its name is in /proc, so these two come
@@ -170,9 +181,11 @@ var (
 
 	mounts = []mount{
 		{source: "sysfs", target: "/sys", fstype: "sysfs", flags: noDevices},
+		{source: "cgroup2", target: "/sys/fs/cgroup", fstype: "cgroup2", flags: noDevices, data: "nsdelegate"},
 		{source: "devpts", target: "/dev/pts", fstype: "devpts", flags: syscall.MS_NOSUID | syscall.MS_NOEXEC, data: "mode=620,ptmxmode=666,gid=5"},
 		{source: "tmpfs", target: "/dev/shm", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
 		{source: "tmpfs", target: "/tmp", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
+		{source: "tmpfs", target: "/var/tmp", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
 		{source: "tmpfs", target: "/run", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=755"},
 		{source: projectShare, target: project, fstype: "virtiofs"},
 		{source: homeShare, target: home, fstype: "virtiofs"},
@@ -457,6 +470,12 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	for _, device := range devices {
+		if err := sys.Chmod(device, 0o666); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return console, options, fmt.Errorf("open %s to everyone: %w", device, err)
+		}
+	}
+
 	if err := protectGit(sys); err != nil {
 		return console, options, err
 	}
@@ -469,6 +488,10 @@ func setup(sys System) (*os.File, Options, error) {
 		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
 		}
+	}
+
+	if err := shareMounts(sys); err != nil {
+		return console, options, err
 	}
 
 	if err := lockRoot(sys); err != nil {
@@ -571,6 +594,16 @@ func enterOverlay(sys System) error {
 
 	if err := sys.PivotRoot(overlayRoot, oldRoot); err != nil {
 		return fmt.Errorf("make %s the root: %w", overlayRoot, err)
+	}
+
+	return nil
+}
+
+// shareMounts makes every mount shared, which rootless containers need to
+// propagate their mounts.
+func shareMounts(sys System) error {
+	if err := sys.Mount("shared", "/", "", syscall.MS_REC|syscall.MS_SHARED, ""); err != nil {
+		return fmt.Errorf("share the mounts: %w", err)
 	}
 
 	return nil

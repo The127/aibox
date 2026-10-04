@@ -26,9 +26,18 @@ Files and tools:
   restarts. Install tools into /usr/local or your home, both stay. Caches
   belong in ~/.cache, which is a real disk, while the rest of the home is
   shared from the host and slow for many small files.
-- /tmp, /run and /dev/shm are RAM, shared with everything else in the VM,
-  which has 2 GB by default. Apart from those, the home, the project,
-  /usr/local and ~/.cache, the file system is read-only.
+- /tmp, /var/tmp, /run and /dev/shm are RAM, shared with everything else
+  in the VM, which has 2 GB by default. Apart from those, the home, the
+  project, /usr/local, ~/.cache and ~/.local/share/containers, the file
+  system is read-only.
+- Containers and VMs work here without root: /dev/kvm, /dev/fuse, user
+  namespaces and cgroups are there, and podman's storage is on the disk
+  of the project. A container shares the network of the VM, so it has
+  only loopback and the proxy, and gets the proxy variables. Registries
+  need entries on the allow list like everything else, preset:docker for
+  Docker Hub. Resource limits such as --memory are not applied. podman
+  and QEMU themselves are not in the image and come from the host like
+  other tools.
 - You are the user "user", without root or sudo.
 - The image itself has only bash, git, busybox and claude. Everything else,
   such as Go, Node, Python, make or curl, is there only when the person put

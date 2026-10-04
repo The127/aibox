@@ -44,6 +44,11 @@ func (Linux) Mkdir(path string) error {
 	return os.MkdirAll(path, 0o755) //nolint:gosec // a folder everyone may enter
 }
 
+// Chmod sets the mode of the file.
+func (Linux) Chmod(path string, mode os.FileMode) error {
+	return os.Chmod(path, mode)
+}
+
 // Pin binds the file or folder on itself, which no one without
 // CAP_SYS_ADMIN can undo. A symlink is refused, because the mount would
 // sit on its target while the link itself stays replaceable.

@@ -42,6 +42,18 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   `disk` in the config says otherwise. The init formats it on the first
   boot and refuses a disk whose superblock has data but no ext4 magic, so
   a damaged disk is never formatted over.
+- Containers and VMs run inside the VM without root. The kernel has user
+  namespaces, cgroups, overlayfs and now KVM, the init opens `/dev/kvm`
+  and `/dev/fuse` to everyone and mounts cgroup2, and the image has
+  `newuidmap` and `newgidmap` with a subuid range for the user. podman's
+  storage lives on the state disk under `~/.local/share/containers`, since
+  overlayfs does not work on virtio-fs. A container shares the network of
+  the VM, so it has only loopback and the proxy, and gets the proxy
+  variables. `preset:docker` allows pulls from Docker Hub. podman and QEMU
+  themselves come from the host like other tools, through `mounts` and
+  `path`. Resource limits such as `--memory` are not applied yet, since no
+  cgroup belongs to the user, and setuid programs inside an image do not
+  work, since the state disk is mounted nosuid.
 - QEMU runs in a bubblewrap sandbox with no network, no environment and
   no writable file system. It sees only its own program, libraries and
   firmware and a copy of the kernel. Devices, the disks and the sockets
@@ -75,14 +87,15 @@ aibox run
 
 The proxy only lets through the hosts listed under `allow` in
 `~/.aibox/projects/<escaped path>/config.yaml`, on port 443 unless an entry
-names another port. `preset:go`, `preset:npm`, `preset:pypi`, `preset:cargo`
-and `preset:github` stand for the hosts those need. The first run writes that
-file with the hosts Claude Code needs. Refused hosts are written to
-`proxy.log` next to it. A listed name that resolves into the host's own
-networks, such as loopback, link-local or private addresses, is refused as
-well, unless the allowlist lists that address. The file can also set `memory` (in MiB) and `cpus`
-for the VM. The flags `--memory` and `--cpus` of `aibox run` take precedence
-over the file. Without either, the VM gets 2048 MiB and 2 CPUs.
+names another port. `preset:go`, `preset:npm`, `preset:pypi`, `preset:cargo`,
+`preset:github` and `preset:docker` stand for the hosts those need. The first
+run writes that file with the hosts Claude Code needs. Refused hosts are
+written to `proxy.log` next to it. A listed name that resolves into the host's
+own networks, such as loopback, link-local or private addresses, is refused as
+well, unless the allowlist lists that address. The file can also set `memory`
+(in MiB) and `cpus` for the VM. The flags `--memory` and `--cpus` of `aibox
+run` take precedence over the file. Without either, the VM gets 2048 MiB and 2
+CPUs.
 
 `aibox config edit` opens the file in the editor git would use, `$VISUAL`,
 then `$EDITOR`, then `vi`, or in the one given with `--editor`. Afterwards

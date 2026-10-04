@@ -35,7 +35,7 @@ OUTPUT kernel vmlinuz --path=/src/linux/arch/x86/boot/bzImage
 FROM debian:sid AS tools
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      pax-utils busybox-static bash git ca-certificates curl e2fsprogs
+      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap
 # The installer puts Claude Code in the home directory. It goes to /usr/bin
 # because the disk of a project is mounted over /usr/local.
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
@@ -46,6 +46,8 @@ RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-ht
 RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
 # the init formats the state disk of a project on its first boot
 RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
+# rootless containers map their users through these two setuid programs
+RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
 
 FROM scratch
 
@@ -64,8 +66,16 @@ COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
 COPY --from=tools /out/mke2fs/ /
 COPY --from=tools /etc/mke2fs.conf /etc/
+# lddtree drops the setuid bit, which the two need to map the subuid
+# range of "user", the user of the passwd file
+COPY --from=tools /out/uidmap/ /
+RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY passwd group /etc/
+COPY passwd group subuid subgid /etc/
+# podman's defaults: a container shares the network of the VM, and images
+# are not checked for signatures, since the allow list of the proxy already
+# says where they may come from
+COPY containers/ /etc/containers/
 COPY aibox.md /etc/aibox/prompt.md
 COPY aibox-init /sbin/init
 

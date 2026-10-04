@@ -11,7 +11,7 @@
     golangci-lint
     just
     lefthook
-    uv
+    reuse
     # go test -race needs a C compiler
     gcc
   ];

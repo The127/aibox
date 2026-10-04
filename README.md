@@ -124,11 +124,12 @@ itself, such as `HOME`, `PATH` or the proxy variables, is refused.
 
 ## Contributing
 
-The tools the justfile needs, Go, golangci-lint, just, lefthook and uv, are
+The tools the justfile needs, Go, golangci-lint, just, lefthook and reuse, are
 in `devenv.nix`. With nix, devenv and direnv installed, `direnv allow` puts
 them on `PATH` in this folder. aibox takes them into its VM with
-`/nix/store:/nix/store` under `mounts` and `PATH` under `path` in the
-project's config.
+`/nix/store:/nix/store` under `mounts` and `/project/.devenv/profile/bin`
+under `path` in the project's config, since that profile links into
+`/nix/store`.
 
 Run `just setup` once after cloning. It installs git hooks with
 [lefthook](https://lefthook.dev/) that run the linter, the architecture and

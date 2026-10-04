@@ -57,7 +57,7 @@ vuln:
 
 # check that every file has license and copyright information
 reuse:
-    uvx reuse lint
+    reuse lint
 
 # check that no em dash is in the repository
 prose:

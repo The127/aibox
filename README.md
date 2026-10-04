@@ -20,6 +20,11 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   `~/.aibox/projects/<escaped path>/config.yaml`, so the VM can't change them.
 - The VM's home directory is `~/.aibox/projects/<escaped path>/home/`, shared
   into the VM over virtio-fs, so `~/.claude` and the login survive restarts.
+- QEMU runs in a bubblewrap sandbox with no network and no environment. It
+  sees only its own program, libraries and firmware, a copy of the kernel
+  and a small tmpfs. Devices, the disk and the sockets reach it as open
+  files from aibox, and it filters its own syscalls. `aibox run
+  --no-sandbox` runs it without bubblewrap, for debugging.
 - The VM image (kernel and root disk) is built with
   [miso](https://github.com/The127/miso). The kernel has no PCI, no ACPI,
   no modules and no network drivers: `image/microvm.config` is a complete

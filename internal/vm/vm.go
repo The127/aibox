@@ -39,17 +39,22 @@ type Machine struct {
 }
 
 // Files are the numbers of the files QEMU was started with: the KVM and
-// vhost-vsock devices, the kernel, the root disk, the socket QEMU writes
-// the console to, and one connection to virtiofsd per entry of
-// Machine.Shares, in the same order.
+// vhost-vsock devices, the root disk, the socket QEMU writes the console
+// to, and one connection to virtiofsd per entry of Machine.Shares, in the
+// same order. Kernel is a path, not a number, because the kernel loader of
+// QEMU cannot take a descriptor.
 type Files struct {
 	KVM     int
 	Vhost   int
-	Kernel  int
+	Kernel  string
 	Rootfs  int
 	Console int
 	Shares  []int
 }
+
+// seccomp is the syscall filter QEMU puts on itself: no syscalls it does
+// not need, no new privileges, no child processes, no resource control.
+const seccomp = "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny"
 
 // Owner is a user on the host. In the shares, the VM user sees this user's
 // files as its own. Files of other host users appear as nobody.
@@ -93,11 +98,11 @@ func (m Machine) QEMUArgs(files Files) []string {
 		"-object", "memory-backend-memfd,id=mem,size=" + memory + ",share=on",
 		// the VM ends itself with a reset, which -no-reboot turns into an exit
 		"-nodefaults", "-no-user-config", "-display", "none", "-no-reboot",
+		"-sandbox", seccomp,
 		"-chardev", "socket,id=console,fd=" + strconv.Itoa(files.Console),
 		"-device", "virtio-serial-device",
 		"-device", "virtconsole,chardev=console",
-		// the kernel loader takes no fdset
-		"-kernel", "/dev/fd/" + strconv.Itoa(files.Kernel),
+		"-kernel", files.Kernel,
 		"-append", m.cmdline(),
 		"-add-fd", fdset(files.Rootfs, rootfsSet),
 		"-drive", "id=root,file=" + fdsetPath(rootfsSet) + ",format=raw,if=none,snapshot=on",

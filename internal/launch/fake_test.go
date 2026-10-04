@@ -31,6 +31,10 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeVirtiofsd(os.Args[1:]))
 	case "qemu":
 		os.Exit(fakeQEMU(os.Args[1:]))
+	case "bwrap":
+		// the fake returns only when it could not run the command
+		fakeBwrap(os.Args[1:])
+		os.Exit(1)
 	}
 
 	os.Exit(m.Run())
@@ -64,6 +68,7 @@ func (b *syncBuffer) String() string {
 // starts. The fakes write what they were started with into records.
 type fakeProcesses struct {
 	qemu             string
+	bwrap            string
 	virtiofsd        string
 	records          string
 	proxyListener    chan net.Listener
@@ -84,6 +89,7 @@ func fakes(t *testing.T) *fakeProcesses {
 
 	f := &fakeProcesses{
 		qemu:             filepath.Join(dir, "qemu"),
+		bwrap:            filepath.Join(dir, "bwrap"),
 		virtiofsd:        filepath.Join(dir, "virtiofsd"),
 		records:          filepath.Join(dir, "records"),
 		consoleLog:       filepath.Join(dir, "console.log"),
@@ -92,6 +98,7 @@ func fakes(t *testing.T) *fakeProcesses {
 	}
 
 	require.NoError(t, os.Symlink(self, f.qemu))
+	require.NoError(t, os.Symlink(self, f.bwrap))
 	require.NoError(t, os.Symlink(self, f.virtiofsd))
 	require.NoError(t, os.Mkdir(f.records, 0o700))
 	t.Setenv("AIBOX_FAKE_RECORDS", f.records)
@@ -104,6 +111,7 @@ func fakes(t *testing.T) *fakeProcesses {
 func (f *fakeProcesses) options() launch.Options {
 	options := launch.Options{
 		QEMU:          f.qemu,
+		Bubblewrap:    f.bwrap,
 		Virtiofsd:     f.virtiofsd,
 		Stdin:         f.stdin,
 		Stdout:        io.Discard,
@@ -258,6 +266,42 @@ func fakeVirtiofsd(args []string) int {
 	return 0
 }
 
+// fakeBwrap records its own arguments and runs the command after "--" in
+// its place, as bubblewrap would: the kernel file is read and closed, the
+// environment is cleared but for what --setenv gives and the variables
+// that steer the fakes, and every other file passes through.
+func fakeBwrap(args []string) {
+	var env []string
+
+	for _, variable := range os.Environ() {
+		if strings.HasPrefix(variable, "AIBOX_FAKE_") {
+			env = append(env, variable)
+		}
+	}
+
+	for i, arg := range args {
+		switch {
+		case arg == "--setenv" && i+2 < len(args):
+			env = append(env, args[i+1]+"="+args[i+2])
+		case arg == "--ro-bind-data" && i+1 < len(args):
+			number, _ := strconv.Atoi(args[i+1])
+			record("bwrap-kernel-kind", []string{kindOf(number)})
+			_ = os.NewFile(uintptr(number), "kernel").Close()
+		case arg == "--" && i+1 < len(args):
+			record("bwrap", args[:i])
+
+			command := args[i+1:]
+
+			err := syscall.Exec(command[0], command, env) //nolint:gosec // the command comes from the test
+			fmt.Fprintln(os.Stderr, "fake bwrap:", err)
+
+			return
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "fake bwrap: no command")
+}
+
 // fakeQEMU records the descriptors it was given, what kind of file each is,
 // and prints a line on the console.
 func fakeQEMU(args []string) int {
@@ -275,6 +319,8 @@ func fakeQEMU(args []string) int {
 	}
 
 	record("qemu", args)
+	record("qemu-program", []string{os.Args[0]})
+	record("qemu-environment", os.Environ())
 	record("qemu-fds", fds)
 	record("qemu-fd-kinds", kinds)
 
@@ -299,16 +345,12 @@ func fakeQEMU(args []string) int {
 }
 
 // descriptors are the numbers of the files the arguments name, in the order
-// of the arguments: fd= and vhostfd= parts of options, and the kernel.
+// of the arguments: the fd= and vhostfd= parts of options.
 func descriptors(args []string) []int {
 	var numbers []int
 
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
-		case "-kernel":
-			if number, err := strconv.Atoi(strings.TrimPrefix(args[i+1], "/dev/fd/")); err == nil {
-				numbers = append(numbers, number)
-			}
 		case "-chardev", "-add-fd", "-device":
 			for _, part := range strings.Split(args[i+1], ",") {
 				value, ok := strings.CutPrefix(part, "fd=")

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/launch"
+	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/vm"
 )
@@ -57,6 +59,88 @@ func TestRunStartsVirtiofsdForEachShareBeforeQEMU(t *testing.T) {
 	assert.Contains(t, stderr.String(), "fake qemu ran")
 }
 
+// argAfter is the value that follows the flag in the arguments, or the test
+// fails.
+func argAfter(t *testing.T, args []string, flag string) string {
+	t.Helper()
+
+	i := slices.Index(args, flag)
+	require.NotEqual(t, -1, i, "no %s in %v", flag, args)
+	require.Less(t, i+1, len(args), "nothing after %s", flag)
+
+	return args[i+1]
+}
+
+func TestRunWrapsQEMUInBubblewrap(t *testing.T) {
+	// arrange
+	f := fakes(t)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.record(t, "bwrap"), "--unshare-all")
+	assert.Equal(t, []string{f.qemu}, f.record(t, "qemu-program"))
+	assert.Equal(t, sandbox.Kernel, argAfter(t, f.record(t, "qemu"), "-kernel"))
+}
+
+func TestRunGivesBubblewrapTheKernelToCopy(t *testing.T) {
+	// arrange
+	f := fakes(t)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"file"}, f.record(t, "bwrap-kernel-kind"))
+}
+
+func TestRunGivesQEMUNoEnvironmentInTheSandbox(t *testing.T) {
+	// arrange
+	f := fakes(t)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.NoError(t, err)
+
+	for _, variable := range f.record(t, "qemu-environment") {
+		assert.True(t, strings.HasPrefix(variable, "TMPDIR=") || strings.HasPrefix(variable, "AIBOX_FAKE_"), variable)
+	}
+}
+
+func TestRunWithoutTheSandboxRunsQEMUAlone(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.NoSandbox = true
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(f.records, "bwrap"))
+	assert.True(t, strings.HasPrefix(argAfter(t, f.record(t, "qemu"), "-kernel"), "/dev/fd/"))
+}
+
+func TestRunFailsWithoutBubblewrapAndNamesTheWayAround(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.Bubblewrap = filepath.Join(t.TempDir(), "no-bwrap")
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.ErrorContains(t, err, "--no-sandbox")
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
+}
+
 func TestRunGivesQEMUTheRightFileInEachSlot(t *testing.T) {
 	// arrange
 	f := fakes(t)
@@ -67,9 +151,9 @@ func TestRunGivesQEMUTheRightFileInEachSlot(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 
-	// the KVM device, the console, the kernel, the root disk, two shares and
-	// the vhost device, in the order QEMU's arguments name them
-	assert.Equal(t, []string{"device", "socket", "file", "file", "socket", "socket", "device"}, f.record(t, "qemu-fd-kinds"))
+	// the KVM device, the console, the root disk, two shares and the vhost
+	// device, in the order QEMU's arguments name them
+	assert.Equal(t, []string{"device", "socket", "file", "socket", "socket", "device"}, f.record(t, "qemu-fd-kinds"))
 	assert.Contains(t, f.record(t, "virtiofsd-project.sock"), "--shared-dir=/home/someone/project")
 	assert.Contains(t, f.record(t, "virtiofsd-home.sock"), "--shared-dir=/home/someone/.aibox/home")
 }

@@ -232,6 +232,32 @@ func TestRunWithoutImage(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
 }
 
+func TestRunSandboxesQEMUByDefault(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.False(t, f.launch.options.NoSandbox)
+}
+
+func TestRunLeavesTheSandboxOffWhenAsked(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--no-sandbox")
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, f.launch.options.NoSandbox)
+}
+
 func TestRunRefusesToRunAsRoot(t *testing.T) {
 	// arrange
 	f := newFixture(t)

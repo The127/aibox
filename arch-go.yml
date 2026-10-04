@@ -53,6 +53,7 @@ dependenciesRules:
         - '**.internal.proxy$'
         - '**.internal.session$'
         - '**.internal.vsockns$'
+        - '**.internal.sandbox$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
@@ -82,6 +83,19 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the sandbox only builds the bubblewrap command line
+  - package: '**.internal.sandbox$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os
+        - os/exec
+        - net
+        - syscall
   # the vsock namespace helper knows the kernel and nothing of aibox
   - package: '**.internal.vsockns$'
     shouldNotDependsOn:

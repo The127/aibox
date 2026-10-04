@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/proxy"
+	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/vm"
 	"github.com/the127/aibox/internal/vsockns"
@@ -31,7 +33,11 @@ var ErrSocketTimeout = errors.New("virtiofsd did not create its socket in time")
 const (
 	defaultSocketTimeout = 10 * time.Second
 	defaultKVMDevice     = "/dev/kvm"
-	stopDelay            = time.Second
+	defaultBubblewrap    = "bwrap"
+	// what QEMU is made of on the host, bound into its sandbox
+	libraries = "/usr/lib64"
+	firmware  = "/usr/share/qemu/qboot.rom"
+	stopDelay = time.Second
 	// sessionEndDelay is how long the session may go on after QEMU has
 	// exited, to show the last output of the VM.
 	sessionEndDelay = 3 * time.Second
@@ -57,6 +63,11 @@ type Options struct {
 	Env []string
 	// KVMDevice is the KVM device file QEMU gets. Empty means /dev/kvm.
 	KVMDevice string
+	// Bubblewrap is the program that runs QEMU in its sandbox. Empty means
+	// bwrap on the PATH.
+	Bubblewrap string
+	// NoSandbox runs QEMU without the sandbox.
+	NoSandbox bool
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string
@@ -81,6 +92,14 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	if options.KVMDevice == "" {
 		options.KVMDevice = defaultKVMDevice
+	}
+
+	if options.Bubblewrap == "" {
+		options.Bubblewrap = defaultBubblewrap
+	}
+
+	if err := findPrograms(&options); err != nil {
+		return err
 	}
 
 	sockets, err := os.MkdirTemp("", "aibox-")
@@ -142,9 +161,10 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 // qemuFiles are the files QEMU inherits beyond its standard three, in the
 // order of their numbers in QEMU, and aibox's end of the console pair.
 type qemuFiles struct {
-	extra   []*os.File
-	numbers vm.Files
-	console *os.File
+	extra    []*os.File
+	numbers  vm.Files
+	kernelFD int
+	console  *os.File
 }
 
 // openFiles opens everything QEMU needs, so that QEMU opens no path itself
@@ -168,7 +188,7 @@ func openFiles(machine vm.Machine, options Options, vhost *os.File) (_ *qemuFile
 		return nil, err
 	}
 
-	if files.numbers.Kernel, err = files.open("kernel", machine.Kernel, os.O_RDONLY); err != nil {
+	if files.kernelFD, err = files.open("kernel", machine.Kernel, os.O_RDONLY); err != nil {
 		return nil, err
 	}
 
@@ -392,9 +412,12 @@ func attach(ctx context.Context, listener net.Listener, options Options) bool {
 // runQEMU runs QEMU with its output on Stderr, because Stdout belongs to
 // the session.
 func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options Options) error {
-	qemu := command(ctx, options.QEMU, machine.QEMUArgs(files.numbers))
-	qemu.Stdout = options.Stderr
-	qemu.Stderr = options.Stderr
+	program, args := qemuCommand(machine, files, options)
+
+	qemu := command(ctx, program, args)
+	// through pipes, so that QEMU never holds the terminal
+	qemu.Stdout = notAFile{options.Stderr}
+	qemu.Stderr = notAFile{options.Stderr}
 	qemu.ExtraFiles = files.extra
 
 	err := qemu.Start()
@@ -416,6 +439,65 @@ func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options 
 	}
 
 	return nil
+}
+
+// findPrograms resolves QEMU and, unless the sandbox is off, bubblewrap,
+// and checks that the host has what the sandbox binds in.
+func findPrograms(options *Options) error {
+	qemu, err := exec.LookPath(options.QEMU)
+	if err != nil {
+		return fmt.Errorf("find qemu: %w", err)
+	}
+
+	// bubblewrap binds the program at its own path, which must be absolute
+	if options.QEMU, err = filepath.Abs(qemu); err != nil {
+		return fmt.Errorf("find qemu: %w", err)
+	}
+
+	if options.NoSandbox {
+		return nil
+	}
+
+	if options.Bubblewrap, err = exec.LookPath(options.Bubblewrap); err != nil {
+		return fmt.Errorf("find bubblewrap for the sandbox of QEMU, or run with --no-sandbox: %w", err)
+	}
+
+	for _, path := range []string{libraries, firmware} {
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+// qemuCommand is QEMU in its sandbox, or QEMU alone without one. Outside
+// the sandbox the kernel is read through /dev/fd.
+func qemuCommand(machine vm.Machine, files *qemuFiles, options Options) (string, []string) {
+	numbers := files.numbers
+
+	if options.NoSandbox {
+		numbers.Kernel = "/dev/fd/" + strconv.Itoa(files.kernelFD)
+
+		return options.QEMU, machine.QEMUArgs(numbers)
+	}
+
+	numbers.Kernel = sandbox.Kernel
+
+	spec := sandbox.Spec{
+		Bubblewrap: options.Bubblewrap,
+		Program:    options.QEMU,
+		Libraries:  libraries,
+		Firmware:   firmware,
+		KernelFD:   files.kernelFD,
+	}
+
+	return spec.Command(machine.QEMUArgs(numbers))
+}
+
+// notAFile stops exec from handing the child the file itself.
+type notAFile struct {
+	io.Writer
 }
 
 // command stops the program with SIGTERM when the context ends and kills it

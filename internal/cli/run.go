@@ -49,6 +49,7 @@ func runCommand(deps dependencies) *cli.Command {
 			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
+			&cli.BoolFlag{Name: "no-sandbox", Usage: "run QEMU outside its sandbox, to debug it"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -137,6 +138,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	options := launchOptions(cfg, p, log)
 	options.Env = env
+	options.NoSandbox = cmd.Bool("no-sandbox")
 
 	return deps.run(ctx, machine, options)
 }

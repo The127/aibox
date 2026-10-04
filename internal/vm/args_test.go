@@ -12,7 +12,7 @@ import (
 const baseline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
 
 // files are the descriptors QEMU gets in the tests.
-var files = vm.Files{KVM: 3, Vhost: 4, Kernel: 5, Rootfs: 6, Console: 7, Shares: []int{8, 9}}
+var files = vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, Console: 7, Shares: []int{8, 9}}
 
 func machine() vm.Machine {
 	return vm.Machine{
@@ -41,6 +41,7 @@ func TestQEMUArgs(t *testing.T) {
 		"-m", "2048M",
 		"-object", "memory-backend-memfd,id=mem,size=2048M,share=on",
 		"-nodefaults", "-no-user-config", "-display", "none", "-no-reboot",
+		"-sandbox", "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny",
 		"-chardev", "socket,id=console,fd=7",
 		"-device", "virtio-serial-device",
 		"-device", "virtconsole,chardev=console",
@@ -63,7 +64,7 @@ func TestQEMUArgsWithoutShares(t *testing.T) {
 	m.Shares = nil
 
 	// act
-	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: 5, Rootfs: 6, Console: 7})
+	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, Console: 7})
 
 	// assert
 	for _, arg := range args {
@@ -129,7 +130,7 @@ func TestQEMUArgsTellTheVMWhereToMountAShare(t *testing.T) {
 	)
 
 	// act
-	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: 5, Rootfs: 6, Console: 7, Shares: []int{8, 9, 10, 11}})
+	args := m.QEMUArgs(vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, Console: 7, Shares: []int{8, 9, 10, 11}})
 
 	// assert
 	assert.Contains(t, args, baseline+" aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin")

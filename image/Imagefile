@@ -9,15 +9,22 @@
 FROM debian:sid AS kernel
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      build-essential bc bison flex libelf-dev libssl-dev cpio xz-utils linux-source
-RUN mkdir /src && tar -xf /usr/src/linux-source-*.tar.xz -C /src && mv /src/linux-source-* /src/linux
+      build-essential bc bison flex libelf-dev libssl-dev cpio xz-utils linux-source-7.2
+RUN mkdir /src && tar -xf /usr/src/linux-source-7.2.tar.xz -C /src && mv /src/linux-source-7.2 /src/linux
 
-COPY kernel.config /src/kernel.config
-RUN cd /src/linux && make x86_64_defconfig && \
-    scripts/kconfig/merge_config.sh -m .config /src/kernel.config && make olddefconfig
-# merge_config.sh only warns about an option it could not set
+# microvm.config is a complete kernel configuration for QEMU's microvm
+# board, generated for the 7.2 kernels above and taken over as it is.
+# kernel.config holds only what aibox changes about it, so that a newer
+# microvm.config can be dropped in.
+COPY microvm.config kernel.config /src/
+RUN cd /src/linux && \
+    scripts/kconfig/merge_config.sh -m /src/microvm.config /src/kernel.config && make olddefconfig
+# merge_config.sh only warns about an option it could not set or unset
 RUN cd /src/linux && grep '^CONFIG_.*=y$' /src/kernel.config | while read -r option; do \
       grep -qx "$option" .config || { echo "$option did not stick"; exit 1; }; \
+    done && \
+    grep -o '^# CONFIG_[A-Z0-9_]* is not set$' /src/kernel.config | cut -d' ' -f2 | while read -r option; do \
+      if grep -q "^$option=" .config; then echo "$option is still set"; exit 1; fi; \
     done
 RUN cd /src/linux && make -j"$(nproc)" bzImage
 

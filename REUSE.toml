@@ -5,3 +5,10 @@ SPDX-PackageName = "aibox"
 path = "**"
 SPDX-FileCopyrightText = "Copyright aibox contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# A kernel configuration is a list of settings, not a creative work.
+[[annotations]]
+path = "image/microvm.config"
+precedence = "override"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "CC0-1.0"

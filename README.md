@@ -12,7 +12,10 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
 - The VM's home directory is `~/.aibox/projects/<escaped path>/home/`, shared
   into the VM over virtio-fs, so `~/.claude` and the login survive restarts.
 - The VM image (kernel and root disk) is built with
-  [miso](https://github.com/The127/miso).
+  [miso](https://github.com/The127/miso). The kernel has no PCI, no ACPI,
+  no modules and no network drivers: `image/microvm.config` is a complete
+  configuration for QEMU's microvm board, and `image/kernel.config` holds
+  what aibox changes about it. `just image` rebuilds the image.
 
 ## Status
 

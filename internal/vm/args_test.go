@@ -9,7 +9,7 @@ import (
 )
 
 // baseline is the kernel command line of every machine.
-const baseline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1 reboot=t"
+const baseline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
 
 func TestQEMUArgs(t *testing.T) {
 	// arrange
@@ -36,7 +36,9 @@ func TestQEMUArgs(t *testing.T) {
 		"-m", "2048M",
 		"-object", "memory-backend-memfd,id=mem,size=2048M,share=on",
 		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot",
-		"-serial", "mon:stdio",
+		"-chardev", "stdio,id=console,signal=off",
+		"-device", "virtio-serial-device",
+		"-device", "virtconsole,chardev=console",
 		"-kernel", "/images/vmlinuz",
 		"-append", baseline,
 		"-drive", "id=root,file=/images/os.ext4,format=raw,if=none,snapshot=on",
@@ -64,7 +66,11 @@ func TestQEMUArgsWithoutShares(t *testing.T) {
 
 	// assert
 	assert.Contains(t, args, "/images/vmlinuz")
-	assert.NotContains(t, args, "-chardev")
+
+	for _, arg := range args {
+		assert.NotContains(t, arg, "vhost-user-fs")
+		assert.NotContains(t, arg, "id=share-")
+	}
 }
 
 func TestQEMUArgsEscapesCommas(t *testing.T) {

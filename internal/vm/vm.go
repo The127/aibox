@@ -15,7 +15,7 @@ const (
 
 // reboot=t makes the kernel reset the machine with a triple fault, which
 // -no-reboot below turns into a QEMU exit.
-const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=ttyS0 quiet panic=-1 reboot=t"
+const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk. Shell boots it into
 // a shell instead of Claude Code. ProxyPort is the vsock port of the proxy
@@ -53,8 +53,8 @@ func (m Machine) QEMUArgs() []string {
 	memory := strconv.Itoa(m.MemoryMiB) + "M"
 
 	args := []string{
-		// acpi=off matches the kernel, see image/kernel.config. Without an RTC
-		// the kernel spends seconds at boot waiting for the time.
+		// the kernel has no ACPI, see image/microvm.config. Without an RTC the
+		// kernel spends seconds at boot waiting for the time.
 		"-machine", "microvm,acpi=off,rtc=on,memory-backend=mem",
 		"-enable-kvm", "-cpu", "host",
 		"-smp", strconv.Itoa(m.CPUs),
@@ -63,7 +63,10 @@ func (m Machine) QEMUArgs() []string {
 		"-object", "memory-backend-memfd,id=mem,size=" + memory + ",share=on",
 		// the VM ends itself with a reset, which -no-reboot turns into an exit
 		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot",
-		"-serial", "mon:stdio",
+		// signal=off hands Ctrl-C to the VM instead of ending QEMU
+		"-chardev", "stdio,id=console,signal=off",
+		"-device", "virtio-serial-device",
+		"-device", "virtconsole,chardev=console",
 		"-kernel", m.Kernel,
 		"-append", m.cmdline(),
 		"-drive", "id=root,file=" + escape(m.Rootfs) + ",format=raw,if=none,snapshot=on",

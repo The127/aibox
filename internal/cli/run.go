@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -19,6 +20,10 @@ import (
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/vm"
 )
+
+// QEMU, virtiofsd and the proxy would run with root rights on the host, and
+// nothing here needs them.
+var errRoot = errors.New("aibox must not run as root, start it as a normal user")
 
 const (
 	qemuProgram      = "qemu-system-x86_64"
@@ -53,6 +58,11 @@ func runCommand(deps dependencies) *cli.Command {
 }
 
 func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
+	owner := deps.owner()
+	if owner.UID == 0 {
+		return errRoot
+	}
+
 	for _, flag := range []string{"memory", "cpus"} {
 		if cmd.Int(flag) < 1 {
 			return fmt.Errorf("--%s must be at least 1", flag)
@@ -112,8 +122,6 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	}
 
 	defer func() { _ = log.Close() }()
-
-	owner := deps.owner()
 
 	machine := vm.Machine{
 		Kernel:    kernel,

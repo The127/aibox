@@ -252,6 +252,21 @@ func TestRunWithoutImage(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
 }
 
+func TestRunRefusesToRunAsRoot(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.owner = func() vm.Owner { return vm.Owner{UID: 0, GID: 0} }
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, errRoot)
+	assert.False(t, f.launch.called)
+	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
+}
+
 func TestRunRejectsBadFlagValues(t *testing.T) {
 	// arrange
 	f := newFixture(t)

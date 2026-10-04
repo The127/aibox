@@ -30,7 +30,7 @@ const terminalPort = 5432
 
 // withTerminal is the kernel command line of a VM whose host serves a
 // terminal and nothing else.
-const withTerminal = "console=hvc0 aibox.terminal=5432"
+var withTerminal = fmt.Sprintf("console=hvc0 aibox.terminal=%d", terminalPort)
 
 func TestParseCmdline(t *testing.T) {
 	// arrange
@@ -109,17 +109,6 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	assert.Contains(t, cmd.Env, "https_proxy=http://127.0.0.1:3128")
 	assert.Contains(t, cmd.Env, "NO_PROXY=localhost,127.0.0.1")
 	assert.Contains(t, cmd.Env, "no_proxy=localhost,127.0.0.1")
-}
-
-func TestCommandWithoutATermFallsBackToXterm(t *testing.T) {
-	// arrange
-	tty := newConsoleFile(t)
-
-	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, "")
-
-	// assert
-	assert.Contains(t, cmd.Env, "TERM=xterm-256color")
 }
 
 func TestCommandWithoutAProxy(t *testing.T) {

@@ -19,10 +19,10 @@ const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-
 
 // Machine is a VM that boots a kernel with a root disk. Shell boots it into
 // a shell instead of Claude Code. ProxyPort and TerminalPort are the vsock
-// ports of the proxy and the terminal session on the host, and 0 means
-// there is none. ConsoleLog is the file the console of the VM is written
-// to, and "" throws it away. Owner is the host user the VM user stands for
-// in the shares, and nil leaves the ids as they are.
+// ports of the proxy and the terminal session on the host, and 0 leaves
+// the port off the kernel command line. ConsoleLog is the file the console
+// of the VM is written to, and "" throws it away. Owner is the host user
+// the VM user stands for in the shares, and nil leaves the ids as they are.
 type Machine struct {
 	Kernel       string
 	Rootfs       string

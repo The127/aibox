@@ -22,19 +22,24 @@ func OpenPTY(size Size) (*PTY, error) {
 		return nil, err
 	}
 
-	fd := int(master.Fd())
+	var number int
 
-	if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
-		_ = master.Close()
+	err = control(master, func(fd int) error {
+		if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
+			return fmt.Errorf("unlock the terminal: %w", err)
+		}
 
-		return nil, fmt.Errorf("unlock the terminal: %w", err)
-	}
+		number, err = unix.IoctlGetInt(fd, unix.TIOCGPTN)
+		if err != nil {
+			return fmt.Errorf("number of the terminal: %w", err)
+		}
 
-	number, err := unix.IoctlGetInt(fd, unix.TIOCGPTN)
+		return nil
+	})
 	if err != nil {
 		_ = master.Close()
 
-		return nil, fmt.Errorf("number of the terminal: %w", err)
+		return nil, err
 	}
 
 	slave, err := os.OpenFile("/dev/pts/"+strconv.Itoa(number), os.O_RDWR|unix.O_NOCTTY, 0)
@@ -56,7 +61,9 @@ func OpenPTY(size Size) (*PTY, error) {
 
 // Resize sets the size of the terminal.
 func (p *PTY) Resize(size Size) error {
-	return unix.IoctlSetWinsize(int(p.Master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: size.Rows, Col: size.Cols})
+	return control(p.Master, func(fd int) error {
+		return unix.IoctlSetWinsize(fd, unix.TIOCSWINSZ, &unix.Winsize{Row: size.Rows, Col: size.Cols})
+	})
 }
 
 // Close closes both sides.
@@ -67,4 +74,21 @@ func (p *PTY) Close() error {
 	}
 
 	return slaveErr
+}
+
+// control runs the ioctl on the file without taking the file out of the Go
+// runtime's poller, which File.Fd would do.
+func control(file *os.File, ioctl func(fd int) error) error {
+	raw, err := file.SyscallConn()
+	if err != nil {
+		return err
+	}
+
+	var ioctlErr error
+
+	if err := raw.Control(func(fd uintptr) { ioctlErr = ioctl(int(fd)) }); err != nil {
+		return err
+	}
+
+	return ioctlErr
 }

@@ -55,12 +55,12 @@ func TestPTYCarriesWhatIsTypedToTheTerminal(t *testing.T) {
 
 	// act
 	_, err = io.WriteString(pty.Master, "hi\n")
+
+	// assert
 	require.NoError(t, err)
 
 	typed := make([]byte, 3)
 	_, err = io.ReadFull(pty.Slave, typed)
-
-	// assert
 	require.NoError(t, err)
 	assert.Equal(t, "hi\n", string(typed))
 }

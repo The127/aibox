@@ -37,8 +37,6 @@ const (
 
 	// where Claude Code finds the proxy inside the VM
 	guestProxyAddress = "127.0.0.1:3128"
-
-	fallbackTerm = "xterm-256color"
 )
 
 var (
@@ -124,6 +122,15 @@ func ParseCmdline(cmdline string) (Options, error) {
 
 	var errs []error
 
+	port := func(key, value string) uint32 {
+		port, err := parsePort(key, value)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		return port
+	}
+
 	for _, word := range strings.Fields(cmdline) {
 		key, value, _ := strings.Cut(word, "=")
 
@@ -135,9 +142,9 @@ func ParseCmdline(cmdline string) (Options, error) {
 		case "aibox.shell":
 			options.Shell = true
 		case "aibox.proxy":
-			options.ProxyPort = parsePort(key, value, &errs)
+			options.ProxyPort = port(key, value)
 		case "aibox.terminal":
-			options.TerminalPort = parsePort(key, value, &errs)
+			options.TerminalPort = port(key, value)
 		}
 	}
 
@@ -146,15 +153,13 @@ func ParseCmdline(cmdline string) (Options, error) {
 
 // parsePort reads a vsock port. 0 and the highest value are not ports a
 // listener can have.
-func parsePort(key, value string, errs *[]error) uint32 {
+func parsePort(key, value string) (uint32, error) {
 	port, err := strconv.ParseUint(value, 10, 32)
 	if err != nil || port == 0 || port == 0xFFFFFFFF {
-		*errs = append(*errs, fmt.Errorf("%s=%q: %w", key, value, ErrBadPort))
-
-		return 0
+		return 0, fmt.Errorf("%s=%q: %w", key, value, ErrBadPort)
 	}
 
-	return uint32(port)
+	return uint32(port), nil
 }
 
 // Command is Claude Code, or a shell when the options ask for one, set up to
@@ -163,10 +168,6 @@ func Command(options Options, terminal *os.File, term string) *exec.Cmd {
 	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
 	if options.Shell {
 		cmd = exec.Command(bash, "-l")
-	}
-
-	if term == "" {
-		term = fallbackTerm
 	}
 
 	cmd.Dir = project
@@ -236,7 +237,7 @@ func Forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, 
 func Run(sys System) error {
 	console, options, err := setup(sys)
 	if err == nil {
-		err = serve(sys, options)
+		err = serve(sys, options, console)
 	}
 
 	if err != nil && console != nil {
@@ -323,7 +324,7 @@ func startProxy(network Network, port uint32, console io.Writer) error {
 }
 
 // serve connects to the terminal on the host and serves the session on it.
-func serve(sys System, options Options) error {
+func serve(sys System, options Options, console io.Writer) error {
 	if options.TerminalPort == 0 {
 		return ErrNoTerminal
 	}
@@ -335,43 +336,22 @@ func serve(sys System, options Options) error {
 
 	defer func() { _ = conn.Close() }()
 
-	key, err := session.NewHostKey()
-	if err != nil {
-		return fmt.Errorf("generate the host key: %w", err)
-	}
-
-	var started *process
-
-	defer func() {
-		if started != nil {
-			_ = started.pty.Master.Close()
-		}
-	}()
-
-	server := session.Server{
-		HostKey: key,
-		Start: func(terminal session.Terminal) (session.Process, error) {
-			p, err := start(sys, options, terminal)
-			if err == nil {
-				started = p
-			}
-
-			return p, err
-		},
-	}
-
-	return server.Serve(conn)
+	return session.Serve(conn, func(terminal session.Terminal) (session.Process, error) {
+		return start(sys, options, terminal, console)
+	})
 }
 
 // start runs the command on a new terminal of the size the host asked for.
-func start(sys System, options Options, terminal session.Terminal) (*process, error) {
+func start(sys System, options Options, terminal session.Terminal, console io.Writer) (*process, error) {
 	pty, err := session.OpenPTY(terminal.Size)
 	if err != nil {
 		return nil, fmt.Errorf("open a terminal: %w", err)
 	}
 
 	// programs that open their terminal by name need to own it
-	_ = pty.Slave.Chown(int(vm.GuestUID), int(vm.GuestGID))
+	if err := pty.Slave.Chown(int(vm.GuestUID), int(vm.GuestGID)); err != nil {
+		say(console, "aibox: own the terminal: %v\n", err)
+	}
 
 	cmd := Command(options, pty.Slave, terminal.Term)
 
@@ -399,6 +379,8 @@ func (p *process) Read(b []byte) (int, error)  { return p.pty.Master.Read(b) }
 func (p *process) Write(b []byte) (int, error) { return p.pty.Master.Write(b) }
 
 func (p *process) Resize(size session.Size) error { return p.pty.Resize(size) }
+
+func (p *process) Close() error { return p.pty.Master.Close() }
 
 // Wait reaps every child until the command exits. As PID 1 the init also
 // inherits the children whose parents are gone.

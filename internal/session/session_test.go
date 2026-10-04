@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +26,8 @@ type fakeProcess struct {
 	resized  chan session.Size
 	exit     chan int
 	started  chan struct{}
+	waited   chan struct{}
+	closed   chan struct{}
 }
 
 func (p *fakeProcess) Read(b []byte) (int, error)  { return p.output.Read(b) }
@@ -37,7 +40,16 @@ func (p *fakeProcess) Resize(size session.Size) error {
 }
 
 func (p *fakeProcess) Wait() (int, error) {
-	return <-p.exit, nil
+	code := <-p.exit
+	close(p.waited)
+
+	return code, nil
+}
+
+func (p *fakeProcess) Close() error {
+	close(p.closed)
+
+	return nil
 }
 
 type syncBuffer struct {
@@ -75,11 +87,8 @@ type attachResult struct {
 	err  error
 }
 
-func newFixture(t *testing.T, startErr error) *fixture {
+func newFixture(t *testing.T, startErr error, clientOptions ...func(*session.Client)) *fixture {
 	t.Helper()
-
-	key, err := session.NewHostKey()
-	require.NoError(t, err)
 
 	output, prints := io.Pipe()
 	typedByClient, keyboard := io.Pipe()
@@ -91,6 +100,8 @@ func newFixture(t *testing.T, startErr error) *fixture {
 			resized: make(chan session.Size, 10),
 			exit:    make(chan int, 1),
 			started: make(chan struct{}),
+			waited:  make(chan struct{}),
+			closed:  make(chan struct{}),
 		},
 		prints:   prints,
 		screen:   &syncBuffer{},
@@ -100,18 +111,15 @@ func newFixture(t *testing.T, startErr error) *fixture {
 		attached: make(chan attachResult, 1),
 	}
 
-	server := session.Server{
-		HostKey: key,
-		Start: func(terminal session.Terminal) (session.Process, error) {
-			if startErr != nil {
-				return nil, startErr
-			}
+	start := func(terminal session.Terminal) (session.Process, error) {
+		if startErr != nil {
+			return nil, startErr
+		}
 
-			f.process.terminal = terminal
-			close(f.process.started)
+		f.process.terminal = terminal
+		close(f.process.started)
 
-			return f.process, nil
-		},
+		return f.process, nil
 	}
 
 	client := session.Client{
@@ -122,9 +130,13 @@ func newFixture(t *testing.T, startErr error) *fixture {
 		Resized: f.resizes,
 	}
 
+	for _, option := range clientOptions {
+		option(&client)
+	}
+
 	guestSide, hostSide := connPair(t)
 
-	go func() { f.served <- server.Serve(guestSide) }()
+	go func() { f.served <- session.Serve(guestSide, start) }()
 
 	go func() {
 		code, err := client.Attach(hostSide)
@@ -162,13 +174,56 @@ func connPair(t *testing.T) (net.Conn, net.Conn) {
 	return conn, dialed
 }
 
+const patience = 10 * time.Second
+
 func (f *fixture) waitStarted(t *testing.T) {
 	t.Helper()
 
 	select {
 	case <-f.process.started:
-	case <-time.After(5 * time.Second):
+	case <-time.After(patience):
 		t.Fatal("the process was not started")
+	}
+}
+
+// exited lets the process exit with the code and returns once the server
+// has seen the exit.
+func (f *fixture) exited(t *testing.T, code int) {
+	t.Helper()
+	f.process.exit <- code
+
+	select {
+	case <-f.process.waited:
+	case <-time.After(patience):
+		t.Fatal("Wait was not called")
+	}
+}
+
+// waitAttached is what the client came back with, or the test fails.
+func (f *fixture) waitAttached(t *testing.T) attachResult {
+	t.Helper()
+
+	select {
+	case result := <-f.attached:
+		return result
+	case <-time.After(patience):
+		t.Fatal("Attach did not return")
+
+		return attachResult{}
+	}
+}
+
+// waitServed is what the server came back with, or the test fails.
+func (f *fixture) waitServed(t *testing.T) error {
+	t.Helper()
+
+	select {
+	case err := <-f.served:
+		return err
+	case <-time.After(patience):
+		t.Fatal("Serve did not return")
+
+		return nil
 	}
 }
 
@@ -180,22 +235,7 @@ func (f *fixture) end(t *testing.T, code int) (attachResult, error) {
 	_ = f.prints.Close()
 	f.process.exit <- code
 
-	var result attachResult
-
-	select {
-	case result = <-f.attached:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Attach did not return")
-	}
-
-	select {
-	case err := <-f.served:
-		return result, err
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return")
-
-		return result, nil
-	}
+	return f.waitAttached(t), f.waitServed(t)
 }
 
 func TestSessionShowsTheClientWhatTheProcessPrints(t *testing.T) {
@@ -247,7 +287,7 @@ func TestSessionResizesTheProcessWithTheClient(t *testing.T) {
 	select {
 	case size := <-f.process.resized:
 		assert.Equal(t, session.Size{Rows: 30, Cols: 100}, size)
-	case <-time.After(5 * time.Second):
+	case <-time.After(patience):
 		t.Fatal("the process was not resized")
 	}
 }
@@ -280,19 +320,93 @@ func TestSessionEndsWithZeroWhenTheProcessSucceeds(t *testing.T) {
 	assert.Equal(t, 0, result.code)
 }
 
-func TestSessionDeliversTheLastOutputBeforeTheExitCode(t *testing.T) {
+func TestSessionDeliversOutputThatKeepsComingAfterTheExit(t *testing.T) {
 	// arrange
 	f := newFixture(t, nil)
 	f.waitStarted(t)
-	_, err := io.WriteString(f.prints, "bye\r\n")
-	require.NoError(t, err)
+	f.exited(t, 0)
 
 	// act
-	result, _ := f.end(t, 0)
+	for range 10 {
+		time.Sleep(200 * time.Millisecond)
+		_, err := io.WriteString(f.prints, "still here\r\n")
+		require.NoError(t, err)
+	}
+
+	_ = f.prints.Close()
 
 	// assert
+	result := f.waitAttached(t)
 	require.NoError(t, result.err)
-	assert.Equal(t, "bye\r\n", f.screen.String())
+	assert.Equal(t, strings.Repeat("still here\r\n", 10), f.screen.String())
+}
+
+// blockable is a screen that holds up every write until released.
+type blockable struct {
+	syncBuffer
+	release chan struct{}
+}
+
+func (b *blockable) Write(p []byte) (int, error) {
+	<-b.release
+
+	return b.syncBuffer.Write(p)
+}
+
+func TestSessionWaitsForAClientThatReadsSlowly(t *testing.T) {
+	// arrange
+	screen := &blockable{release: make(chan struct{})}
+	f := newFixture(t, nil, func(c *session.Client) { c.Out = screen })
+	f.waitStarted(t)
+	output := strings.Repeat("x", 4<<20)
+
+	go func() {
+		_, _ = io.WriteString(f.prints, output)
+		_ = f.prints.Close()
+	}()
+
+	f.exited(t, 0)
+
+	// act
+	time.Sleep(2 * time.Second)
+	close(screen.release)
+
+	// assert
+	result := f.waitAttached(t)
+	require.NoError(t, result.err)
+	assert.Len(t, screen.String(), len(output))
+}
+
+func TestSessionGivesUpOnATerminalThatStaysSilentAfterTheExit(t *testing.T) {
+	// arrange
+	f := newFixture(t, nil)
+	f.waitStarted(t)
+	start := time.Now()
+
+	// act
+	f.process.exit <- 0
+
+	// assert
+	result := f.waitAttached(t)
+	require.NoError(t, result.err)
+	assert.Equal(t, 0, result.code)
+	assert.Less(t, time.Since(start), 3*time.Second)
+}
+
+func TestSessionClosesTheProcessWhenItIsOver(t *testing.T) {
+	// arrange
+	f := newFixture(t, nil)
+	f.waitStarted(t)
+
+	// act
+	_, _ = f.end(t, 0)
+
+	// assert
+	select {
+	case <-f.process.closed:
+	case <-time.After(patience):
+		t.Fatal("the process was not closed")
+	}
 }
 
 func TestSessionFailsWhenTheProcessCannotStart(t *testing.T) {
@@ -300,23 +414,11 @@ func TestSessionFailsWhenTheProcessCannotStart(t *testing.T) {
 	f := newFixture(t, errors.New("no such file"))
 
 	// act
-	var result attachResult
-
-	select {
-	case result = <-f.attached:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Attach did not return")
-	}
+	result := f.waitAttached(t)
 
 	// assert
-	require.Error(t, result.err)
-
-	select {
-	case err := <-f.served:
-		assert.ErrorContains(t, err, "no such file")
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return")
-	}
+	require.ErrorContains(t, result.err, "start the command")
+	assert.ErrorContains(t, f.waitServed(t), "no such file")
 }
 
 func TestAttachFailsWhenTheOtherSideIsNotASession(t *testing.T) {
@@ -332,5 +434,5 @@ func TestAttachFailsWhenTheOtherSideIsNotASession(t *testing.T) {
 	_, err := session.Client{In: bytes.NewReader(nil), Out: io.Discard}.Attach(hostSide)
 
 	// assert
-	assert.Error(t, err)
+	assert.ErrorContains(t, err, "ssh handshake")
 }

@@ -326,6 +326,78 @@ func TestRunRefusesToRunAsRoot(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
 }
 
+func TestRunRefusesToRunInTheRootFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.cwd = "/"
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.ErrorContains(t, err, "root of the file system")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesToRunInTheHomeFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.cwd = f.homeDir
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.ErrorContains(t, err, "home directory")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesToRunAboveTheHomeFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.homeDir = filepath.Join(f.cwd, "users", "someone")
+	require.NoError(t, os.MkdirAll(f.homeDir, 0o700))
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesToRunAboveTheAiboxFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.aiboxDir = filepath.Join(f.cwd, "state", ".aibox")
+	require.NoError(t, os.MkdirAll(f.aiboxDir, 0o700))
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.ErrorContains(t, err, ".aibox")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesToRunInTheHomeFolderBehindASymlink(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(f.homeDir, link))
+	f.cwd = link
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.False(t, f.launch.called)
+}
+
 func TestRunRefusesToRunWithoutATerminal(t *testing.T) {
 	// arrange
 	f := newFixture(t)

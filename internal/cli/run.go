@@ -28,6 +28,11 @@ var errRoot = errors.New("aibox must not run as root, start it as a normal user"
 // on stdin a run would sit there forever.
 var errNoTerminal = errors.New("aibox run needs a terminal on stdin")
 
+// The project folder is shared into the VM read-write. From the home or
+// above it the VM would get the configs and logins of every project, the
+// shell files and keys of the person, and could change its own allow list.
+var errNotAProject = errors.New("aibox run must start in a project folder")
+
 const (
 	qemuProgram      = "qemu-system-x86_64"
 	virtiofsdProgram = "/usr/libexec/virtiofsd"
@@ -85,6 +90,15 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	aibox, err := deps.aiboxDir()
 	if err != nil {
 		return fmt.Errorf("find the aibox folder: %w", err)
+	}
+
+	home, err := deps.homeDir()
+	if err != nil {
+		return fmt.Errorf("find the home directory: %w", err)
+	}
+
+	if err := refuseUnsafeFolder(cwd, home, aibox); err != nil {
+		return err
 	}
 
 	image := cmd.String("image")
@@ -243,6 +257,44 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 	}
 
 	return env, nil
+}
+
+// refuseUnsafeFolder is errNotAProject when the folder is the root, the
+// home directory or above it, or above the aibox folder. Symlinks are
+// resolved first, since the share follows them.
+func refuseUnsafeFolder(cwd, home, aibox string) error {
+	cwd = resolved(cwd)
+
+	if cwd == "/" {
+		return fmt.Errorf("%w, not the root of the file system", errNotAProject)
+	}
+
+	if holds(cwd, resolved(home)) {
+		return fmt.Errorf("%w, not one that holds the home directory %s", errNotAProject, home)
+	}
+
+	if holds(cwd, resolved(aibox)) {
+		return fmt.Errorf("%w, not one that holds %s", errNotAProject, aibox)
+	}
+
+	return nil
+}
+
+// resolved is the path with its symlinks followed, or the path as it is
+// when that fails, for example because it does not exist yet.
+func resolved(path string) string {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		return target
+	}
+
+	return filepath.Clean(path)
+}
+
+// holds tells whether path is dir or lies below it.
+func holds(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // defaultDiskGiB is the size of the state disk unless the config says

@@ -406,6 +406,17 @@ func TestCommandTurnsNonessentialTrafficOff(t *testing.T) {
 	assert.Contains(t, cmd.Env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 }
 
+func TestCommandKeepsTheGoModuleCacheOnTheStateDisk(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, session.Request{Term: "xterm"})
+
+	// assert
+	assert.Contains(t, cmd.Env, "GOMODCACHE=/home/user/.cache/go-mod")
+}
+
 func TestCommandRunsAShellWhenAsked(t *testing.T) {
 	// arrange
 	tty := newConsoleFile(t)
@@ -457,6 +468,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount /var/lib/aibox/state/cache /home/user/.cache",
 		"own /var/lib/aibox/state/containers",
 		"mount /var/lib/aibox/state/containers /home/user/.local/share/containers",
+		"own /usr/local/bin",
 		"mount shared /",
 		"mount overlay /",
 		"link /dev/fd -> /proc/self/fd",
@@ -647,7 +659,7 @@ func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 
-	last := slices.Index(sys.calls, "mount /var/lib/aibox/state/containers /home/user/.local/share/containers")
+	last := slices.Index(sys.calls, "own /usr/local/bin")
 	require.NotEqual(t, -1, last)
 
 	next := sys.calls[last+1:]

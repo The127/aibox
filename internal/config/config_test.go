@@ -327,7 +327,7 @@ func TestLoadRejectsAVariableItCannotRead(t *testing.T) {
 }
 
 func TestLoadRejectsAVariableAiboxSetsItself(t *testing.T) {
-	for _, name := range []string{"HOME", "PATH", "TERM", "HTTPS_PROXY", "no_proxy", "AIBOX", "USER"} {
+	for _, name := range []string{"HOME", "PATH", "TERM", "HTTPS_PROXY", "no_proxy", "AIBOX", "USER", "GOMODCACHE"} {
 		t.Run(name, func(t *testing.T) {
 			// arrange
 			path := write(t, "env:\n  - "+name+"=x\n")

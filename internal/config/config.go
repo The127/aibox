@@ -67,7 +67,7 @@ var ErrReservedVariable = errors.New("aibox sets this variable itself")
 var reservedVariables = []string{
 	"AIBOX", "HOME", "USER", "LOGNAME", "SHELL", "PATH", "TERM", "LANG",
 	"HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy",
-	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "GOMODCACHE",
 }
 
 var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

@@ -27,7 +27,8 @@ Files and tools:
 - /usr/local and ~/.cache are on a disk of this project that survives
   restarts. Install tools into /usr/local or your home, both stay. Caches
   belong in ~/.cache, which is a real disk, while the rest of the home is
-  shared from the host and slow for many small files.
+  shared from the host and slow for many small files. The Go module cache
+  is set to ~/.cache/go-mod for that reason.
 - /tmp, /var/tmp, /run and /dev/shm are RAM, shared with everything else
   in the VM, which has 2 GB by default. Apart from those, the home, the
   project, /usr/local, ~/.cache and ~/.local/share/containers, the file

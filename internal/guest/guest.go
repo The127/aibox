@@ -166,10 +166,16 @@ const (
 
 var gitDirs = []string{gitDir + "/hooks"}
 
+// localBin is made on the state disk, cache is where caches go.
+const (
+	localBin = "/usr/local/bin"
+	cache    = home + "/.cache"
+)
+
 // stateDirs are the folders of the state disk and where they are bound.
 var stateDirs = []struct{ dir, target string }{
 	{"local", "/usr/local"},
-	{"cache", home + "/.cache"},
+	{"cache", cache},
 	// overlayfs does not work on top of virtio-fs, so container images need
 	// a real disk
 	{"containers", home + "/.local/share/containers"},
@@ -371,6 +377,8 @@ func ownVariables(options Options, term, hostPath string) []string {
 		// image's binary comes first on PATH. Telemetry and error reports go
 		// to hosts the allow list does not have.
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		// thousands of small files, which the home share is slow for
+		"GOMODCACHE=" + cache + "/go-mod",
 	}
 
 	// the proxy speaks CONNECT only, which is how HTTPS goes through a proxy.
@@ -691,6 +699,11 @@ func mountState(sys System) error {
 		if err := sys.Mount(source, d.target, "", syscall.MS_BIND, ""); err != nil {
 			return fmt.Errorf("bind %s on %s: %w", source, d.target, err)
 		}
+	}
+
+	// it is on PATH and the prompt says to install there
+	if err := sys.Own(localBin); err != nil {
+		return fmt.Errorf("make %s: %w", localBin, err)
 	}
 
 	return nil

@@ -110,9 +110,10 @@ func TestRunGivesQEMUNoEnvironmentInTheSandbox(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 
-	for _, variable := range f.record(t, "qemu-environment") {
-		assert.True(t, strings.HasPrefix(variable, "TMPDIR=") || strings.HasPrefix(variable, "AIBOX_FAKE_"), variable)
-	}
+	environment := slices.DeleteFunc(f.record(t, "qemu-environment"), func(variable string) bool {
+		return strings.HasPrefix(variable, "AIBOX_FAKE_")
+	})
+	assert.Empty(t, environment)
 }
 
 func TestRunWithoutTheSandboxRunsQEMUAlone(t *testing.T) {

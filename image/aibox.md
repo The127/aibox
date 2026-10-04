@@ -24,8 +24,8 @@ Files and tools:
   belong in ~/.cache, which is a real disk, while the rest of the home is
   shared from the host and slow for many small files.
 - /tmp, /run and /dev/shm are RAM, shared with everything else in the VM,
-  which has 2 GB by default. Writes anywhere else are lost when the VM
-  stops.
+  which has 2 GB by default. Apart from those, the home, the project,
+  /usr/local and ~/.cache, the file system is read-only.
 - You are the user "user", without root or sudo.
 - The image has only bash, git, busybox and claude. There is no Go, Node,
   Python, make or curl unless the person mounted them and put them on PATH.

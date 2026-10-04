@@ -18,8 +18,9 @@ const (
 const GuestCID uint32 = 3
 
 // reboot=t makes the kernel reset the machine with a triple fault, which
-// -no-reboot below turns into a QEMU exit.
-const baseCmdline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
+// -no-reboot below turns into a QEMU exit. The root stays read-only, as
+// QEMU opened it: the init mounts an overlay for what it has to write.
+const baseCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk and keeps its state
 // on a second disk. Shell boots it into a shell instead of Claude Code.
@@ -113,7 +114,7 @@ func (m Machine) QEMUArgs(files Files) []string {
 		"-kernel", files.Kernel,
 		"-append", m.cmdline(),
 		"-add-fd", fdset(files.Rootfs, rootfsSet),
-		"-drive", "id=root,file=" + fdsetPath(rootfsSet) + ",format=raw,if=none,snapshot=on",
+		"-drive", "id=root,file=" + fdsetPath(rootfsSet) + ",format=raw,if=none,read-only=on",
 		"-device", "virtio-blk-device,drive=root",
 		"-add-fd", fdset(files.StateRead, stateSet),
 		"-add-fd", fdset(files.StateWrite, stateSet),

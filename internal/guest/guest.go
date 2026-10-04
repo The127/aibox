@@ -38,6 +38,14 @@ const (
 	stateDevice = "/dev/vdb"
 	stateMount  = "/var/lib/aibox/state"
 
+	// the root disk is read-only, so the mount points are made on an
+	// overlay in RAM. It is built under /run, which is empty in the image
+	// and gets a tmpfs of its own after the pivot.
+	overlayDir  = "/run"
+	overlayRoot = overlayDir + "/root"
+	overlayData = "lowerdir=/,upperdir=" + overlayDir + "/upper,workdir=" + overlayDir + "/work"
+	oldRoot     = "/mnt"
+
 	// the tags of the shares, as the host names them
 	projectShare = "project"
 	homeShare    = "home"
@@ -88,6 +96,11 @@ type Network interface {
 type System interface {
 	Network
 	Mount(source, target, fstype string, flags uintptr, data string) error
+	// Mkdir makes the folder and its parents, if missing.
+	Mkdir(path string) error
+	// PivotRoot makes newRoot the root and lets the old root go. putOld is
+	// where the old root goes meanwhile, as a path inside the new root.
+	PivotRoot(newRoot, putOld string) error
 	// Blank tells whether the disk has no ext4 file system yet.
 	Blank(device string) (bool, error)
 	// Format puts a file system on the disk.
@@ -391,6 +404,10 @@ func Run(sys System) error {
 }
 
 func setup(sys System) (*os.File, Options, error) {
+	if err := enterOverlay(sys); err != nil {
+		return nil, Options{}, err
+	}
+
 	for _, m := range earlyMounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return nil, Options{}, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
@@ -429,6 +446,10 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	if err := lockRoot(sys); err != nil {
+		return console, options, err
+	}
+
 	for _, l := range links {
 		if err := sys.Symlink(l.target, l.path); err != nil {
 			say(console, "aibox: link %s: %v\n", l.path, err)
@@ -446,6 +467,41 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	return console, options, nil
+}
+
+// enterOverlay puts an overlay in RAM over the read-only root disk and
+// makes it the root, so that the mount points of the shares can be made.
+func enterOverlay(sys System) error {
+	if err := sys.Mount("tmpfs", overlayDir, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=755,size=16m"); err != nil {
+		return fmt.Errorf("mount the overlay tmpfs: %w", err)
+	}
+
+	for _, dir := range []string{overlayDir + "/upper", overlayDir + "/work"} {
+		if err := sys.Mkdir(dir); err != nil {
+			return fmt.Errorf("make %s: %w", dir, err)
+		}
+	}
+
+	if err := sys.Mount("overlay", overlayRoot, "overlay", 0, overlayData); err != nil {
+		return fmt.Errorf("mount the overlay: %w", err)
+	}
+
+	if err := sys.PivotRoot(overlayRoot, oldRoot); err != nil {
+		return fmt.Errorf("make %s the root: %w", overlayRoot, err)
+	}
+
+	return nil
+}
+
+// lockRoot makes the root read-only. Every mount point exists by now, and
+// the folders that take writes are mounts of their own, so nothing needs
+// the root writable any more.
+func lockRoot(sys System) error {
+	if err := sys.Mount("overlay", "/", "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, ""); err != nil {
+		return fmt.Errorf("make the root read-only: %w", err)
+	}
+
+	return nil
 }
 
 // mountState mounts the state disk of the project, formatting it on the

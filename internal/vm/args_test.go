@@ -9,7 +9,7 @@ import (
 )
 
 // baseline is the kernel command line of every machine.
-const baseline = "root=/dev/vda rootfstype=ext4 rw console=hvc0 quiet panic=-1 reboot=t"
+const baseline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=-1 reboot=t"
 
 // files are the descriptors QEMU gets in the tests.
 var files = vm.Files{KVM: 3, Vhost: 4, Kernel: "/dev/fd/5", Rootfs: 6, StateRead: 7, StateWrite: 8, Shares: []int{9, 10}, Console: 11}
@@ -49,7 +49,7 @@ func TestQEMUArgs(t *testing.T) {
 		"-kernel", "/dev/fd/5",
 		"-append", baseline,
 		"-add-fd", "fd=6,set=2",
-		"-drive", "id=root,file=/dev/fdset/2,format=raw,if=none,snapshot=on",
+		"-drive", "id=root,file=/dev/fdset/2,format=raw,if=none,read-only=on",
 		"-device", "virtio-blk-device,drive=root",
 		"-add-fd", "fd=7,set=3",
 		"-add-fd", "fd=8,set=3",

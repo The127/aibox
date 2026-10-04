@@ -12,13 +12,6 @@ import (
 // bubblewrap makes from the inherited file.
 const Kernel = "/kernel"
 
-// tempDir is the folder QEMU may write in, a tmpfs of the sandbox that
-// holds the overlay of the root disk, with room for overlayBytes.
-const (
-	tempDir      = "/var/tmp"
-	overlayBytes = 256 << 20
-)
-
 // Spec is what QEMU needs inside the sandbox: the programs and files of
 // the host that are bound in, and the number of the inherited file
 // bubblewrap copies the kernel from.
@@ -43,8 +36,6 @@ func (s Spec) Command(args []string) (string, []string) {
 		"--ro-bind", s.Program, s.Program,
 		"--ro-bind", s.Firmware, s.Firmware,
 		"--ro-bind-data", strconv.Itoa(s.KernelFD), Kernel,
-		"--size", strconv.Itoa(overlayBytes), "--tmpfs", tempDir,
-		"--setenv", "TMPDIR", tempDir,
 		// QEMU probes file locking on /dev/null at start
 		"--dev-bind", "/dev/null", "/dev/null",
 		"--",

@@ -28,11 +28,15 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   size is fixed when the disk is created on the first run, 16 GiB unless
   `disk` in the config says otherwise. The init formats it on the first
   boot.
-- QEMU runs in a bubblewrap sandbox with no network and no environment. It
-  sees only its own program, libraries and firmware, a copy of the kernel
-  and a small tmpfs. Devices, the disk and the sockets reach it as open
-  files from aibox, and it filters its own syscalls. `aibox run
-  --no-sandbox` runs it without bubblewrap, for debugging.
+- QEMU runs in a bubblewrap sandbox with no network, no environment and
+  no writable file system. It sees only its own program, libraries and
+  firmware and a copy of the kernel. Devices, the disks and the sockets
+  reach it as open files from aibox, and it filters its own syscalls.
+  `aibox run --no-sandbox` runs it without bubblewrap, for debugging.
+- The root disk is read-only for QEMU and for the VM. The init puts an
+  overlay in RAM over it only to make the mount points, then makes the
+  root read-only again, so inside the VM only `/tmp`, `/run`, `/dev/shm`,
+  the home, the project and the state disk take writes.
 - Once QEMU runs, aibox restricts itself too: no new privileges, Landlock
   rules that let it read `/etc` for DNS and connect only to the ports of the
   allow list, and a seccomp filter that refuses ptrace, mount, namespace

@@ -426,7 +426,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{
+	assert.Equal(t, append(slices.Clone(overlayCalls),
 		"mount devtmpfs /dev",
 		"mount proc /proc",
 		"read cmdline",
@@ -445,6 +445,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"mount /var/lib/aibox/state/local /usr/local",
 		"own /var/lib/aibox/state/cache",
 		"mount /var/lib/aibox/state/cache /home/user/.cache",
+		"mount overlay /",
 		"link /dev/fd -> /proc/self/fd",
 		"link /dev/stdin -> /proc/self/fd/0",
 		"link /dev/stdout -> /proc/self/fd/1",
@@ -454,7 +455,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"start /usr/bin/claude",
 		"wait",
 		"halt",
-	}, sys.calls)
+	), sys.calls)
 	assert.Equal(t, 0, sys.exitCodeOnTheHost(t))
 	assert.Equal(t, mounted{"proc", "/proc", "proc", syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/proc"])
 	assert.Equal(t, mounted{"devpts", "/dev/pts", "devpts", syscall.MS_NOSUID | syscall.MS_NOEXEC, "mode=620,ptmxmode=666,gid=5"}, sys.mounts["/dev/pts"])
@@ -462,6 +463,20 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, mounted{"project", "/project", "virtiofs", 0, ""}, sys.mounts["/project"])
 	assert.Equal(t, mounted{"/dev/vdb", "/var/lib/aibox/state", "ext4", syscall.MS_NOSUID | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/state"])
 	assert.Equal(t, mounted{"/var/lib/aibox/state/local", "/usr/local", "", syscall.MS_BIND, ""}, sys.mounts["/usr/local"])
+	assert.Equal(t, mounted{"overlay", "/run/root", "overlay", 0, "lowerdir=/,upperdir=/run/upper,workdir=/run/work"}, sys.mounts["/run/root"])
+	assert.Equal(t, mounted{"overlay", "/", "", syscall.MS_REMOUNT | syscall.MS_BIND | syscall.MS_RDONLY, ""}, sys.mounts["/"])
+}
+
+func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failPivot: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	assert.ErrorContains(t, err, "make /run/root the root: invalid argument")
+	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
 }
 
 func TestRunDoesNotFormatAStateDiskThatHasAFileSystem(t *testing.T) {
@@ -505,7 +520,7 @@ func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
 	require.NotEqual(t, -1, cache)
 
 	next := sys.calls[cache+1:]
-	assert.Equal(t, []string{"mount mount0 /opt/go", "mount mount1 /opt/bin", "link /dev/fd -> /proc/self/fd"}, next[:3])
+	assert.Equal(t, []string{"mount mount0 /opt/go", "mount mount1 /opt/bin"}, next[:2])
 }
 
 func TestRunMountsTheSharesOfTheHostReadOnlyButExecutable(t *testing.T) {
@@ -570,7 +585,7 @@ func TestRunPowersOffWhenAnEarlyMountFails(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "devtmpfs")
-	assert.Equal(t, []string{"mount devtmpfs /dev", "halt"}, sys.calls)
+	assert.Equal(t, append(slices.Clone(overlayCalls), "mount devtmpfs /dev", "halt"), sys.calls)
 }
 
 func TestRunPowersOffWithoutAConsole(t *testing.T) {
@@ -721,6 +736,16 @@ type mounted struct {
 // end of the terminal port: a session client whose screen collects what the
 // command prints. realCommand, when set, runs in place of the command with
 // its terminal, so that a test can look at the terminal from inside.
+// overlayCalls is how every boot starts: the overlay over the read-only
+// root becomes the root before anything else is mounted.
+var overlayCalls = []string{
+	"mount tmpfs /run",
+	"mkdir /run/upper",
+	"mkdir /run/work",
+	"mount overlay /run/root",
+	"pivot /run/root /mnt",
+}
+
 type fakeSystem struct {
 	t           *testing.T
 	cmdline     string
@@ -744,6 +769,7 @@ type fakeSystem struct {
 	formatted    bool
 	failFormat   error
 	failMount    string
+	failPivot    bool
 	failLoopback error
 	failListen   error
 	failOpen     error
@@ -825,6 +851,22 @@ func (s *fakeSystem) Format(device string) error {
 
 func (s *fakeSystem) Own(path string) error {
 	s.record("own " + path)
+
+	return nil
+}
+
+func (s *fakeSystem) Mkdir(path string) error {
+	s.record("mkdir " + path)
+
+	return nil
+}
+
+func (s *fakeSystem) PivotRoot(newRoot, putOld string) error {
+	s.record("pivot " + newRoot + " " + putOld)
+
+	if s.failPivot {
+		return errors.New("invalid argument")
+	}
 
 	return nil
 }

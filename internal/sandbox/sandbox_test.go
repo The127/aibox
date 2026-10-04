@@ -31,8 +31,6 @@ func TestCommandRunsTheProgramInBubblewrapWithNothingButWhatItNeeds(t *testing.T
 		"--ro-bind", "/usr/bin/qemu-system-x86_64", "/usr/bin/qemu-system-x86_64",
 		"--ro-bind", "/usr/share/qemu/qboot.rom", "/usr/share/qemu/qboot.rom",
 		"--ro-bind-data", "5", "/kernel",
-		"--size", "268435456", "--tmpfs", "/var/tmp",
-		"--setenv", "TMPDIR", "/var/tmp",
 		"--dev-bind", "/dev/null", "/dev/null",
 		"--",
 		"/usr/bin/qemu-system-x86_64", "-m", "512M", "-kernel", "/kernel",

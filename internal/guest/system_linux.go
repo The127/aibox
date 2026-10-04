@@ -35,6 +35,29 @@ const (
 	mke2fs          = "/usr/sbin/mke2fs"
 )
 
+// Mkdir makes the folder and its parents, if missing.
+func (Linux) Mkdir(path string) error {
+	return os.MkdirAll(path, 0o755) //nolint:gosec // a folder everyone may enter
+}
+
+// PivotRoot makes newRoot the root, moves the old root to putOld inside
+// it, and detaches it from there.
+func (Linux) PivotRoot(newRoot, putOld string) error {
+	if err := os.MkdirAll(newRoot+putOld, 0o755); err != nil { //nolint:gosec // a mount point everyone may enter
+		return err
+	}
+
+	if err := syscall.PivotRoot(newRoot, newRoot+putOld); err != nil {
+		return err
+	}
+
+	if err := os.Chdir("/"); err != nil {
+		return err
+	}
+
+	return syscall.Unmount(putOld, syscall.MNT_DETACH)
+}
+
 // Blank tells whether the disk has no ext4 file system yet.
 func (Linux) Blank(device string) (bool, error) {
 	disk, err := os.Open(device) //nolint:gosec // the device is fixed

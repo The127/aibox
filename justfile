@@ -14,6 +14,10 @@ init:
 image: init
     miso build -o out image
 
+# build aibox and run it on this repo with the image from out/
+aibox *args: build
+    ./bin/aibox run --image out {{args}}
+
 # copy the VM image to where aibox run looks for it
 install-image: image
     mkdir -p ~/.aibox/image

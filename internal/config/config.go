@@ -10,9 +10,11 @@ import (
 	"maps"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -25,6 +27,34 @@ var ErrNotPositive = errors.New("must be at least 1")
 
 // ErrUnknownPreset is a preset entry that names no known preset.
 var ErrUnknownPreset = errors.New("unknown preset")
+
+// ErrBadMount is a mounts entry that is not host:guest with two absolute
+// paths, or whose guest path the kernel command line cannot carry.
+var ErrBadMount = errors.New("must be host:guest with two absolute paths")
+
+// ErrReservedMount is a mounts entry whose guest path is one the VM needs
+// for itself.
+var ErrReservedMount = errors.New("the VM needs this path")
+
+// ErrMountOverlap is a mounts entry whose guest path is inside, or
+// contains, that of another entry.
+var ErrMountOverlap = errors.New("mounts overlap")
+
+// ErrMountsTooLong are mounts whose guest paths together do not fit on the
+// kernel command line.
+var ErrMountsTooLong = errors.New("the guest paths of the mounts are too long together")
+
+// reservedPaths are what the VM mounts itself, the two shares and the
+// kernel file systems, and the folders its programs live in. A mount on,
+// above or inside one of them hides something the VM needs.
+var reservedPaths = []string{
+	"/project", "/home/user", "/dev", "/proc", "/sys", "/run", "/tmp",
+	"/etc", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/root",
+}
+
+// maxMountBytes is what the guest paths of all mounts may take up together.
+// The kernel command line holds 2048 bytes, and the rest of it needs room.
+const maxMountBytes = 1024
 
 // presets maps a preset name to the hosts it allows. An allow entry of the
 // form preset:name stands for them.
@@ -49,6 +79,108 @@ type Config struct {
 	Memory *int `yaml:"memory"`
 	// CPUs is the number of CPUs of the VM.
 	CPUs *int `yaml:"cpus"`
+	// Mounts are folders of the host the VM sees read-only.
+	Mounts []Mount `yaml:"mounts"`
+}
+
+// Mount is a folder of the host that the VM sees read-only at Guest. In the
+// file it is written as host:guest.
+type Mount struct {
+	Host  string
+	Guest string
+}
+
+// UnmarshalYAML reads a mount from its host:guest form.
+func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
+	var text string
+	if err := value.Decode(&text); err != nil {
+		return err
+	}
+
+	mount, err := parseMount(text)
+	if err != nil {
+		return err
+	}
+
+	*m = mount
+
+	return nil
+}
+
+func parseMount(text string) (Mount, error) {
+	host, guest, ok := strings.Cut(text, ":")
+	if !ok || strings.Contains(guest, ":") || !cmdlineSafe(guest) {
+		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrBadMount)
+	}
+
+	host, err := expandHome(host)
+	if err != nil {
+		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, err)
+	}
+
+	if !filepath.IsAbs(host) || !filepath.IsAbs(guest) {
+		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrBadMount)
+	}
+
+	mount := Mount{Host: filepath.Clean(host), Guest: filepath.Clean(guest)}
+	if slices.ContainsFunc(reservedPaths, mount.touches) {
+		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrReservedMount)
+	}
+
+	return mount, nil
+}
+
+// cmdlineSafe tells whether the kernel command line carries the text as one
+// word: it is split at whitespace and quoted with double quotes.
+func cmdlineSafe(text string) bool {
+	return !strings.ContainsFunc(text, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '"'
+	})
+}
+
+func expandHome(path string) (string, error) {
+	rest, ok := strings.CutPrefix(path, "~/")
+	if !ok {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(home, rest), nil
+}
+
+// touches tells whether the mount is on the path, above it or inside it.
+func (m Mount) touches(path string) bool {
+	return m.Guest == path || isBelow(path, m.Guest) || isBelow(m.Guest, path)
+}
+
+func isBelow(path, folder string) bool {
+	return strings.HasPrefix(path, strings.TrimSuffix(folder, "/")+"/")
+}
+
+// checkMounts fails when two mounts are on the same path or one is inside
+// the other, and when the guest paths do not fit on the kernel command line.
+func checkMounts(mounts []Mount) error {
+	total := 0
+
+	for i, a := range mounts {
+		total += len(a.Guest)
+
+		for _, b := range mounts[:i] {
+			if a.touches(b.Guest) {
+				return fmt.Errorf("mounts %s and %s: %w", b.Guest, a.Guest, ErrMountOverlap)
+			}
+		}
+	}
+
+	if total > maxMountBytes {
+		return fmt.Errorf("%d mounts: %w", len(mounts), ErrMountsTooLong)
+	}
+
+	return nil
 }
 
 // Hosts are host names, each with an optional port. An entry without a port
@@ -75,6 +207,10 @@ allow:
 # The size of the VM, for example:
 # memory: 4096   # MiB
 # cpus: 4
+
+# Folders of the host the VM sees read-only, written host:guest, for example:
+# mounts:
+#   - ~/sdk/go:/opt/go
 `
 
 // Default is the config of a project that has no config file yet.
@@ -156,6 +292,10 @@ func parse(content []byte) (Config, error) {
 	}
 
 	if err := atLeastOne("cpus", cfg.CPUs); err != nil {
+		return Config{}, err
+	}
+
+	if err := checkMounts(cfg.Mounts); err != nil {
 		return Config{}, err
 	}
 

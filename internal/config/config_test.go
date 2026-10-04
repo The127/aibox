@@ -1,8 +1,10 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +33,180 @@ func TestLoadReadsTheAllowList(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, config.Hosts{"example.com", "*.github.com"}, cfg.Allow)
+}
+
+func TestLoadReadsTheMounts(t *testing.T) {
+	// arrange
+	path := write(t, "mounts:\n  - /opt/sdk/go:/opt/go\n  - /home/someone/bin:/opt/bin\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Mount{{Host: "/opt/sdk/go", Guest: "/opt/go"}, {Host: "/home/someone/bin", Guest: "/opt/bin"}}, cfg.Mounts)
+}
+
+func TestLoadCleansThePathsOfAMount(t *testing.T) {
+	// arrange
+	path := write(t, "mounts:\n  - /opt/sdk//go/:/opt/go/\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Mount{{Host: "/opt/sdk/go", Guest: "/opt/go"}}, cfg.Mounts)
+}
+
+func TestLoadExpandsTheHomeInAMount(t *testing.T) {
+	// arrange
+	t.Setenv("HOME", "/home/someone")
+	path := write(t, "mounts:\n  - ~/sdk/go:/opt/go\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Mount{{Host: "/home/someone/sdk/go", Guest: "/opt/go"}}, cfg.Mounts)
+}
+
+func TestLoadAcceptsASpaceInTheHostFolderOfAMount(t *testing.T) {
+	// arrange
+	path := write(t, "mounts:\n  - /opt/my sdk:/opt/go\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Mount{{Host: "/opt/my sdk", Guest: "/opt/go"}}, cfg.Mounts)
+}
+
+func TestLoadRejectsAMountItCannotRead(t *testing.T) {
+	tests := map[string]string{
+		"no colon":                   "/opt/go",
+		"empty host":                 ":/opt/go",
+		"empty guest":                "/opt/go:",
+		"relative host":              "sdk/go:/opt/go",
+		"relative guest":             "/opt/go:opt/go",
+		"two colons":                 "/opt/go:/opt/go:x",
+		"space in guest":             "/opt/go:/opt/my go",
+		"quote in guest":             "/opt/go:/opt/\\\"go",
+		"control character in guest": "/opt/go:/opt/go\\u0001",
+	}
+
+	for name, entry := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, "mounts:\n  - \""+entry+"\"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrBadMount)
+		})
+	}
+}
+
+func TestLoadNamesTheMountItRejects(t *testing.T) {
+	// arrange
+	path := write(t, "mounts:\n  - /opt/go\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorContains(t, err, "/opt/go")
+}
+
+func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
+	tests := map[string]string{
+		"the root":             "/",
+		"the project":          "/project",
+		"inside the project":   "/project/vendor",
+		"the home":             "/home/user",
+		"inside the home":      "/home/user/go",
+		"above the home":       "/home",
+		"a kernel file system": "/dev",
+		"inside one":           "/dev/shm",
+		"the programs":         "/usr",
+		"inside the programs":  "/usr/local/bin",
+		"the certificates":     "/etc/ssl",
+		"the root user's home": "/root",
+	}
+
+	for name, guest := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, "mounts:\n  - /opt/sdk:"+guest+"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrReservedMount)
+			assert.ErrorContains(t, err, guest)
+		})
+	}
+}
+
+func TestLoadRejectsMountsTheKernelCommandLineCannotCarry(t *testing.T) {
+	// arrange
+	var content strings.Builder
+
+	content.WriteString("mounts:\n")
+
+	for i := range 12 {
+		fmt.Fprintf(&content, "  - /opt/sdk%d:/opt/%s%d\n", i, strings.Repeat("x", 100), i)
+	}
+
+	path := write(t, content.String())
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrMountsTooLong)
+}
+
+func TestLoadRejectsMountsThatOverlap(t *testing.T) {
+	tests := map[string]string{
+		"the same path twice":    "mounts:\n  - /opt/a:/opt/go\n  - /opt/b:/opt/go\n",
+		"one inside the other":   "mounts:\n  - /opt/a:/opt\n  - /opt/b:/opt/go\n",
+		"one containing another": "mounts:\n  - /opt/b:/opt/go\n  - /opt/a:/opt\n",
+	}
+
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrMountOverlap)
+			assert.ErrorContains(t, err, "/opt/go")
+		})
+	}
+}
+
+func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# mounts:\n#   - ")
 }
 
 func TestDefaultHasNoHostForUpdates(t *testing.T) {

@@ -175,6 +175,48 @@ func TestQEMUArgsWithProxyPort(t *testing.T) {
 	assert.Contains(t, args, baseline+" aibox.shell aibox.proxy=4321")
 }
 
+func TestQEMUArgsTellTheVMWhereToMountAShare(t *testing.T) {
+	// arrange
+	machine := vm.Machine{
+		Kernel:    "/images/vmlinuz",
+		Rootfs:    "/images/os.ext4",
+		MemoryMiB: 512,
+		CPUs:      1,
+		GuestCID:  3,
+		Shares: []vm.Share{
+			{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"},
+			{Tag: "mount0", Dir: "/opt/sdk/go", Socket: "/run/aibox/mount0.sock", Guest: "/opt/go"},
+			{Tag: "mount1", Dir: "/home/someone/bin", Socket: "/run/aibox/mount1.sock", Guest: "/opt/bin"},
+		},
+	}
+
+	// act
+	args := machine.QEMUArgs()
+
+	// assert
+	assert.Contains(t, args, baseline+" aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin")
+}
+
+func TestVirtiofsdArgsServeAShareWithAGuestPathReadOnly(t *testing.T) {
+	// arrange
+	share := vm.Share{Tag: "mount0", Dir: "/opt/sdk/go", Socket: "/run/aibox/mount0.sock", Guest: "/opt/go"}
+
+	// act
+	args := share.VirtiofsdArgs(&vm.Owner{UID: 1234, GID: 100})
+
+	// assert
+	assert.Equal(t, []string{
+		"--socket-path=/run/aibox/mount0.sock",
+		"--shared-dir=/opt/sdk/go",
+		"--readonly",
+		"--cache=always",
+		"--translate-uid=guest:1000:1234:1",
+		"--translate-uid=host:1234:1000:1",
+		"--translate-gid=guest:1000:100:1",
+		"--translate-gid=host:100:1000:1",
+	}, args)
+}
+
 func TestVirtiofsdArgs(t *testing.T) {
 	// arrange
 	share := vm.Share{Tag: "project", Dir: "/home/someone/project", Socket: "/run/aibox/project.sock"}

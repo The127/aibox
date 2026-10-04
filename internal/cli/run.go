@@ -21,6 +21,9 @@ import (
 const (
 	qemuProgram      = "qemu-system-x86_64"
 	virtiofsdProgram = "/usr/libexec/virtiofsd"
+	// the tags of the shares for the mounts of the config, followed by their
+	// position
+	mountTagPrefix = "mount"
 )
 
 func runCommand(deps dependencies) *cli.Command {
@@ -76,6 +79,11 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
+	mounts, err := mountShares(cfg.Mounts)
+	if err != nil {
+		return err
+	}
+
 	// the VM has a home of its own, so git there knows nothing of the person
 	if identity := deps.gitIdentity(cwd); identity != (gitconfig.Identity{}) {
 		if err := gitconfig.Write(p.Home, identity); err != nil {
@@ -97,10 +105,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		Rootfs:    rootfs,
 		MemoryMiB: flagOrConfig(cmd, "memory", cfg.Memory),
 		CPUs:      flagOrConfig(cmd, "cpus", cfg.CPUs),
-		Shares: []vm.Share{
+		Shares: append([]vm.Share{
 			{Tag: "project", Dir: cwd},
 			{Tag: "home", Dir: p.Home},
-		},
+		}, mounts...),
 		Owner:      &owner,
 		GuestCID:   randomCID(),
 		Shell:      cmd.Bool("shell"),
@@ -108,6 +116,27 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	}
 
 	return deps.run(ctx, machine, launchOptions(cfg, p, log))
+}
+
+// mountShares returns a share for each mount of the config, once the host
+// folders are known to exist.
+func mountShares(mounts []config.Mount) ([]vm.Share, error) {
+	shares := make([]vm.Share, 0, len(mounts))
+
+	for i, mount := range mounts {
+		info, err := os.Stat(mount.Host)
+		if err != nil {
+			return nil, fmt.Errorf("mount %s: %w", mount.Guest, err)
+		}
+
+		if !info.IsDir() {
+			return nil, fmt.Errorf("mount %s: %s is not a folder", mount.Guest, mount.Host)
+		}
+
+		shares = append(shares, vm.Share{Tag: fmt.Sprintf("%s%d", mountTagPrefix, i), Dir: mount.Host, Guest: mount.Guest})
+	}
+
+	return shares, nil
 }
 
 func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.Options {

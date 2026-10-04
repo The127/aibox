@@ -290,6 +290,62 @@ func TestRunWhenTheCurrentFolderIsUnknown(t *testing.T) {
 	assert.False(t, f.launch.called)
 }
 
+func TestRunSharesTheMountsOfTheConfigReadOnly(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	sdk, bin := t.TempDir(), t.TempDir()
+	f.writeConfig(t, "mounts:\n  - "+sdk+":/opt/go\n  - "+bin+":/opt/bin\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []vm.Share{
+		{Tag: "project", Dir: f.cwd},
+		{Tag: "home", Dir: f.project(t).Home},
+		{Tag: "mount0", Dir: sdk, Guest: "/opt/go"},
+		{Tag: "mount1", Dir: bin, Guest: "/opt/bin"},
+	}, f.launch.machine.Shares)
+}
+
+func TestRunWhenAMountedFolderIsMissing(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.gitIdentity = func(string) gitconfig.Identity {
+		return gitconfig.Identity{Name: "Someone", Email: "someone@example.com"}
+	}
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	missing := filepath.Join(t.TempDir(), "gone")
+	f.writeConfig(t, "mounts:\n  - "+missing+":/opt/go\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorContains(t, err, missing)
+	assert.False(t, f.launch.called)
+	assert.NoFileExists(t, filepath.Join(f.project(t).Home, ".config", "git", "config"))
+}
+
+func TestRunWhenAMountedPathIsAFile(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	file := filepath.Join(t.TempDir(), "tool")
+	require.NoError(t, os.WriteFile(file, nil, 0o600))
+	f.writeConfig(t, "mounts:\n  - "+file+":/opt/go\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorContains(t, err, "not a folder")
+	assert.ErrorContains(t, err, file)
+	assert.False(t, f.launch.called)
+}
+
 func TestRunPassesTheAllowListToTheProxy(t *testing.T) {
 	// arrange
 	f := newFixture(t)

@@ -45,11 +45,13 @@ type Owner struct {
 }
 
 // Share is a host folder that virtiofsd serves to the VM. The guest mounts it
-// by its tag.
+// by its tag. Guest is set for a share beyond the project and the home: the
+// path the guest mounts it on, read-only.
 type Share struct {
 	Tag    string
 	Dir    string
 	Socket string
+	Guest  string
 }
 
 // QEMUArgs returns the arguments for qemu-system-x86_64.
@@ -109,6 +111,12 @@ func (m Machine) cmdline() string {
 		words = append(words, "aibox.terminal="+strconv.FormatUint(uint64(m.TerminalPort), 10))
 	}
 
+	for _, share := range m.Shares {
+		if share.Guest != "" {
+			words = append(words, "aibox.mount="+share.Tag+":"+share.Guest)
+		}
+	}
+
 	return strings.Join(words, " ")
 }
 
@@ -118,6 +126,12 @@ func (s Share) VirtiofsdArgs(owner *Owner) []string {
 	args := []string{
 		"--socket-path=" + s.Socket,
 		"--shared-dir=" + s.Dir,
+	}
+
+	// the VM cannot change the folder, and a change on the host may wait for
+	// the next run, so names and attributes are cached for the whole run
+	if s.Guest != "" {
+		args = append(args, "--readonly", "--cache=always")
 	}
 
 	if owner == nil {

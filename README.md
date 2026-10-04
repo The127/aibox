@@ -46,6 +46,11 @@ well, unless the allowlist lists that address. The file can also set `memory` (i
 for the VM. The flags `--memory` and `--cpus` of `aibox run` take precedence
 over the file. Without either, the VM gets 2048 MiB and 2 CPUs.
 
+`aibox config edit` opens the file in the editor git would use, `$VISUAL`,
+then `$EDITOR`, then `vi`, or in the one given with `--editor`. Afterwards
+it checks the file and reports a mistake. An editor that returns at once,
+such as `code` without `--wait`, is checked before you have edited.
+
 `mounts` lists folders of the host the VM sees read-only, written
 `host:guest` with guest the path in the VM, for example
 `~/sdk/go1.26.8:/opt/go`. The guest path must stay clear of the folders the

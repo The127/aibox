@@ -56,14 +56,16 @@ type fixture struct {
 	aiboxDir string
 	homeDir  string
 	launch   *fakeLaunch
+	editor   *fakeEditor
 	deps     dependencies
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 
-	f := &fixture{cwd: t.TempDir(), aiboxDir: t.TempDir(), homeDir: t.TempDir(), launch: &fakeLaunch{}}
+	f := &fixture{cwd: t.TempDir(), aiboxDir: t.TempDir(), homeDir: t.TempDir(), launch: &fakeLaunch{}, editor: &fakeEditor{}}
 	f.deps = dependencies{
+		edit:        f.editor.edit,
 		getwd:       func() (string, error) { return f.cwd, nil },
 		aiboxDir:    func() (string, error) { return f.aiboxDir, nil },
 		homeDir:     func() (string, error) { return f.homeDir, nil },

@@ -320,8 +320,8 @@ func Default() Config {
 // Load returns the config in the file at path. When there is no file, it
 // writes the default one first.
 func Load(path string) (Config, error) {
-	if err := writeDefault(path); err != nil {
-		return Config{}, fmt.Errorf("write %s: %w", path, err)
+	if err := EnsureDefault(path); err != nil {
+		return Config{}, err
 	}
 
 	content, err := os.ReadFile(path) //nolint:gosec // the path is the project's config file
@@ -337,16 +337,16 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// writeDefault creates the default file unless one exists. Two aibox started
-// at once for a new project then both read the same file.
-func writeDefault(path string) error {
+// EnsureDefault creates the default file at path unless one exists. Two
+// aibox started at once for a new project then both read the same file.
+func EnsureDefault(path string) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the path is the project's config file
 	if errors.Is(err, fs.ErrExist) {
 		return nil
 	}
 
 	if err != nil {
-		return err
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 
 	text := strings.Replace(defaultFile, "PRESETS", strings.Join(presetNames(), ", "), 1)
@@ -354,7 +354,7 @@ func writeDefault(path string) error {
 		_ = file.Close()
 		_ = os.Remove(path)
 
-		return err
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 
 	return file.Close()

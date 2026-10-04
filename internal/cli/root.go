@@ -23,6 +23,7 @@ type dependencies struct {
 	lookupEnv   func(name string) (string, bool)
 	gitIdentity func(dir string) gitconfig.Identity
 	run         func(ctx context.Context, machine vm.Machine, options launch.Options) error
+	edit        func(editor, path string) error
 }
 
 // NewRootCommand returns the top-level aibox command.
@@ -35,6 +36,7 @@ func NewRootCommand() *cli.Command {
 		lookupEnv:   os.LookupEnv,
 		gitIdentity: gitconfig.Read,
 		run:         launch.Run,
+		edit:        runEditor,
 	})
 }
 
@@ -43,7 +45,7 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
-		Commands: []*cli.Command{runCommand(deps)},
+		Commands: []*cli.Command{runCommand(deps), configCommand(deps)},
 	}
 }
 

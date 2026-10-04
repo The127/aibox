@@ -22,16 +22,16 @@ import (
 
 // QEMU, virtiofsd and the proxy would run with root rights on the host, and
 // nothing here needs them.
-var errRoot = errors.New("aibox must not run as root, start it as a normal user")
+var errRoot = errors.New("do not run aibox as root, start it as a normal user")
 
 // Claude Code and the shell in the VM wait for keys, so without a terminal
 // on stdin a run would sit there forever.
-var errNoTerminal = errors.New("aibox run needs a terminal on stdin")
+var errNoTerminal = errors.New("run needs a terminal on stdin")
 
 // The project folder is shared into the VM read-write. From the home or
 // above it the VM would get the configs and logins of every project, the
 // shell files and keys of the person, and could change its own allow list.
-var errNotAProject = errors.New("aibox run must start in a project folder")
+var errNotAProject = errors.New("run must start in a project folder")
 
 const (
 	qemuProgram      = "qemu-system-x86_64"

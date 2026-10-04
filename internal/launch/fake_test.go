@@ -350,6 +350,7 @@ func fakeQEMU(args []string) int {
 		_ = file.Close()
 	}
 
+	record("qemu-pid", []string{strconv.Itoa(os.Getpid())})
 	record("qemu", args)
 	record("qemu-program", []string{os.Args[0]})
 	record("qemu-environment", os.Environ())

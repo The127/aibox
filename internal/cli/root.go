@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -27,6 +28,21 @@ type dependencies struct {
 	gitIdentity     func(dir string) gitconfig.Identity
 	run             func(ctx context.Context, machine vm.Machine, options launch.Options) error
 	edit            func(editor, path string) error
+}
+
+// ExitCode is the code aibox ends with after the error: the code of the
+// command in the VM when that failed, 1 for anything else, 0 for nil.
+func ExitCode(err error) int {
+	var exit *launch.ExitError
+	if errors.As(err, &exit) {
+		return exit.Code
+	}
+
+	if err != nil {
+		return 1
+	}
+
+	return 0
 }
 
 // NewRootCommand returns the top-level aibox command.

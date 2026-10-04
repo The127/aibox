@@ -29,10 +29,8 @@ func run() int {
 	}
 
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-
-		return 1
+		fmt.Fprintln(os.Stderr, "aibox:", err)
 	}
 
-	return 0
+	return cli.ExitCode(err)
 }

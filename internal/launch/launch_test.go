@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -58,7 +59,7 @@ func TestRunStartsVirtiofsdForEachShareBeforeQEMU(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), options)
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.Contains(t, stderr.String(), "fake qemu ran")
 }
 
@@ -82,7 +83,7 @@ func TestRunWrapsQEMUInBubblewrap(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.Contains(t, f.record(t, "bwrap"), "--unshare-all")
 	assert.Equal(t, []string{f.qemu}, f.record(t, "qemu-program"))
 	assert.Equal(t, sandbox.Kernel, argAfter(t, f.record(t, "qemu"), "-kernel"))
@@ -96,7 +97,7 @@ func TestRunGivesBubblewrapTheKernelToCopy(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.Equal(t, []string{"file ro"}, f.record(t, "bwrap-kernel-kind"))
 }
 
@@ -108,7 +109,7 @@ func TestRunGivesQEMUNoEnvironmentInTheSandbox(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 
 	environment := slices.DeleteFunc(f.record(t, "qemu-environment"), func(variable string) bool {
 		return strings.HasPrefix(variable, "AIBOX_FAKE_")
@@ -126,7 +127,7 @@ func TestRunWithoutTheSandboxRunsQEMUAlone(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), options)
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.NoFileExists(t, filepath.Join(f.records, "bwrap"))
 	assert.True(t, strings.HasPrefix(argAfter(t, f.record(t, "qemu"), "-kernel"), "/dev/fd/"))
 }
@@ -154,7 +155,7 @@ func TestRunConfinesItselfWithThePortsOfTheAllowListOnceQEMURuns(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.FileExists(t, filepath.Join(f.records, "qemu"))
 	assert.Equal(t, 1, f.confineCalls)
 	assert.Equal(t, []uint16{443, 8443}, f.confinedWith)
@@ -182,7 +183,7 @@ func TestRunGivesQEMUTheRightFileInEachSlot(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 
 	// the KVM device, the console, the root disk, the state disk twice as
 	// vm.Files says, two shares and the vhost device, in the order QEMU's
@@ -200,7 +201,7 @@ func TestRunStopsVirtiofsdAndRemovesTheSockets(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.FileExists(t, filepath.Join(f.records, "virtiofsd-project.sock-stopped"))
 	assert.FileExists(t, filepath.Join(f.records, "virtiofsd-home.sock-stopped"))
 	assert.NoDirExists(t, socketDir(t, f.record(t, "virtiofsd-project.sock")))
@@ -214,7 +215,7 @@ func TestRunWritesTheConsoleOfTheVMIntoTheLog(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 
 	content, err := os.ReadFile(f.consoleLog)
 	require.NoError(t, err)
@@ -407,7 +408,7 @@ func TestRunTellsTheVMTheTerminalPort(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.Equal(t, strconv.Itoa(f.terminal(t).Addr().(*net.TCPAddr).Port), cmdlinePort(t, f, "aibox.terminal"))
 }
 
@@ -506,7 +507,6 @@ func TestRunAttachesTheTerminalToTheSessionOfTheVM(t *testing.T) {
 	// assert
 	// the host may still be copying when the guest side is done
 	assert.Eventually(t, func() bool { return stdout.String() == "hello from the VM\r\n" }, 5*time.Second, 10*time.Millisecond, "stdout was %q", stdout.String())
-	assert.Eventually(t, func() bool { return strings.Contains(stderr.String(), "exit code 3") }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestRunSaysNothingWhenTheCommandInTheVMSucceeds(t *testing.T) {
@@ -587,18 +587,62 @@ func TestRunEndsASessionStillRunningWhenItIsStoppedAndSaysNothing(t *testing.T) 
 	}
 }
 
-func TestRunPointsAtTheConsoleLogWhenTheVMEndsWithoutATerminal(t *testing.T) {
+func TestRunFailsAndPointsAtTheConsoleLogWhenTheVMEndsWithoutATerminal(t *testing.T) {
 	// arrange
 	f := fakes(t)
-	stderr := &syncBuffer{}
-	f.stderr = stderr
 
 	// act
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.ErrorContains(t, err, f.consoleLog)
+}
+
+func TestRunEndsWithTheExitCodeOfTheCommandInTheVM(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	done := runningUntilQEMUEnds(t, f)
+
+	// act
+	sessionOver(t, guestServes(t, f.terminal(t), "", 3))
+	err := done()
+
+	// assert
+	var exit *launch.ExitError
+	require.ErrorAs(t, err, &exit)
+	assert.Equal(t, 3, exit.Code)
+}
+
+func TestRunFailsWhenTheSessionBreaksOff(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	done := runningUntilQEMUEnds(t, f)
+
+	// act
+	conn, err := net.Dial("tcp", f.terminal(t).Addr().String())
 	require.NoError(t, err)
-	assert.Contains(t, stderr.String(), f.consoleLog)
+	require.NoError(t, conn.Close())
+
+	err = done()
+
+	// assert
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, launch.ErrNoTerminal)
+	assert.NotErrorAs(t, err, new(*launch.ExitError))
+}
+
+func TestRunSucceedsWhenTheCommandInTheVMSucceeds(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	done := runningUntilQEMUEnds(t, f)
+
+	// act
+	sessionOver(t, guestServes(t, f.terminal(t), "", 0))
+	err := done()
+
+	// assert
+	require.NoError(t, err)
 }
 
 func TestRunTellsTheVMTheProxyPort(t *testing.T) {
@@ -609,13 +653,43 @@ func TestRunTellsTheVMTheProxyPort(t *testing.T) {
 	err := launch.Run(context.Background(), machine(t), f.options())
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.Equal(t, strconv.Itoa(f.listener(t).Addr().(*net.TCPAddr).Port), cmdlinePort(t, f, "aibox.proxy"))
 }
 
 // running starts Run with a QEMU that waits to be stopped, and returns the
 // proxy listener and a function that stops the VM and returns Run's error.
 func running(t *testing.T, f *fakeProcesses) (net.Listener, func() error) {
+	t.Helper()
+
+	listener, cancel, done := start(t, f)
+
+	return listener, func() error {
+		cancel()
+
+		return <-done
+	}
+}
+
+// runningUntilQEMUEnds is like running, but the returned function ends
+// QEMU the way a VM that powers off does, without cancelling the run.
+func runningUntilQEMUEnds(t *testing.T, f *fakeProcesses) func() error {
+	t.Helper()
+
+	_, cancel, done := start(t, f)
+	t.Cleanup(cancel)
+
+	return func() error {
+		pid, err := strconv.Atoi(f.record(t, "qemu-pid")[0])
+		require.NoError(t, err)
+		require.NoError(t, syscall.Kill(pid, syscall.SIGTERM))
+
+		return <-done
+	}
+}
+
+// start runs aibox with a QEMU that waits for SIGTERM, until QEMU started.
+func start(t *testing.T, f *fakeProcesses) (net.Listener, context.CancelFunc, <-chan error) {
 	t.Helper()
 	t.Setenv("AIBOX_FAKE_QEMU", "wait")
 
@@ -634,11 +708,7 @@ func running(t *testing.T, f *fakeProcesses) (net.Listener, func() error) {
 		return err == nil
 	}, 5*time.Second, 10*time.Millisecond, "QEMU did not start")
 
-	return listener, func() error {
-		cancel()
-
-		return <-done
-	}
+	return listener, cancel, done
 }
 
 func TestRunAnswersTheProxyRequestsOfTheVMWhileQEMURuns(t *testing.T) {
@@ -715,7 +785,7 @@ func TestRunReturnsWhileStdinStaysOpen(t *testing.T) {
 	// assert
 	select {
 	case err := <-done:
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, launch.ErrNoTerminal)
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after QEMU exited")
 	}

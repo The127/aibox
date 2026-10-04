@@ -1,6 +1,6 @@
 module github.com/the127/aibox
 
-go 1.26.8
+go 1.27
 
 require (
 	github.com/mdlayher/vsock v1.3.0

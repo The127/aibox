@@ -60,6 +60,7 @@ COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group /etc/
+COPY aibox.md /etc/aibox/prompt.md
 COPY aibox-init /sbin/init
 
 OUTPUT rootfs os.ext4

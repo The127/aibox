@@ -292,13 +292,18 @@ func TestServeRefusesANameThatResolvesToTheHostItself(t *testing.T) {
 	address := serve(t, proxy.Options{
 		Resolve:   resolveTo("127.0.0.1"),
 		OnRefused: func(host string) { refused <- host },
+		Hint:      "Add it to /somewhere/config.yaml to allow it.",
 	})
 
 	// act
-	status, _ := connect(t, address, "evil.example:443")
+	r, _ := connectResponse(t, address, "evil.example:443")
 
 	// assert
-	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", r.status)
+
+	body := r.body(t)
+	assert.Contains(t, body, "evil.example:443 resolves only to addresses inside the host's own networks")
+	assert.NotContains(t, body, "config.yaml", "allowing the host would not help")
 
 	select {
 	case target := <-refused:

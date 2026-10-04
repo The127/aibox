@@ -25,6 +25,7 @@ const (
 	project  = "/project"
 	home     = "/home/user"
 	claude   = "/usr/local/bin/claude"
+	prompt   = "/etc/aibox/prompt.md"
 	bash     = "/usr/bin/bash"
 	userName = "user"
 
@@ -146,13 +147,14 @@ func parsePort(value string) (uint32, error) {
 // Command is Claude Code, or a shell when the options ask for one, set up to
 // run as the user on the console.
 func Command(options Options, console *os.File) *exec.Cmd {
-	cmd := exec.Command(claude)
+	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
 	if options.Shell {
 		cmd = exec.Command(bash, "-l")
 	}
 
 	cmd.Dir = project
 	cmd.Env = []string{
+		"AIBOX=1",
 		"HOME=" + home,
 		"USER=" + userName,
 		"LOGNAME=" + userName,

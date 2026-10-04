@@ -144,10 +144,11 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port
 }
 
 // refuse answers with a 403 that says why, so that the program inside the
-// VM can report it.
+// VM can report it. The hint says where to allow the host, which only helps
+// when the host is missing from the list.
 func refuse(conn net.Conn, target, reason string, options Options) {
 	body := "aibox: " + target + " " + reason + "\n"
-	if options.Hint != "" {
+	if reason == reasonNotAllowed && options.Hint != "" {
 		body += options.Hint + "\n"
 	}
 

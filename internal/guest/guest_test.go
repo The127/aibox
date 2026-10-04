@@ -69,8 +69,9 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty)
 
 	// assert
-	assert.Equal(t, []string{"/usr/local/bin/claude"}, cmd.Args)
+	assert.Equal(t, []string{"/usr/local/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md"}, cmd.Args)
 	assert.Equal(t, "/project", cmd.Dir)
+	assert.Contains(t, cmd.Env, "AIBOX=1")
 	assert.Contains(t, cmd.Env, "HOME=/home/user")
 	assert.Contains(t, cmd.Env, "USER=user")
 	assert.Contains(t, cmd.Env, "TERM=xterm-256color")

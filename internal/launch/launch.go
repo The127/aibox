@@ -32,16 +32,13 @@ import (
 var ErrSocketTimeout = errors.New("virtiofsd did not create its socket in time")
 
 const (
-	defaultSocketTimeout = 10 * time.Second
-	defaultKVMDevice     = "/dev/kvm"
-	defaultBubblewrap    = "bwrap"
-	// what QEMU is made of on the host, bound into its sandbox
-	libraries = "/usr/lib64"
-	firmware  = "/usr/share/qemu/qboot.rom"
-	stopDelay = time.Second
-	// sessionEndDelay is how long the session may go on after QEMU has
-	// exited, to show the last output of the VM.
-	sessionEndDelay = 3 * time.Second
+	defaultSocketTimeout   = 10 * time.Second
+	defaultKVMDevice       = "/dev/kvm"
+	defaultBubblewrap      = "bwrap"
+	defaultLibraries       = "/usr/lib64"
+	defaultFirmware        = "/usr/share/qemu/qboot.rom"
+	defaultStopDelay       = time.Second
+	defaultSessionEndDelay = 3 * time.Second
 )
 
 // Options are the programs Run starts, the terminal of the person on Stdin
@@ -77,6 +74,16 @@ type Options struct {
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string
+	// Libraries and Firmware are what QEMU is made of on the host, bound
+	// into its sandbox. Empty means /usr/lib64 and qboot.rom of QEMU.
+	Libraries string
+	Firmware  string
+	// StopDelay is how long a stopped program may take before it is
+	// killed, and SessionEndDelay how long the session may go on after
+	// QEMU exited, to show the last output of the VM. Zero means the
+	// default.
+	StopDelay       time.Duration
+	SessionEndDelay time.Duration
 }
 
 // Run boots the machine with the proxy and the terminal listening for it
@@ -106,6 +113,22 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	if options.Confine == nil {
 		options.Confine = confine.Apply
+	}
+
+	if options.Libraries == "" {
+		options.Libraries = defaultLibraries
+	}
+
+	if options.Firmware == "" {
+		options.Firmware = defaultFirmware
+	}
+
+	if options.StopDelay == 0 {
+		options.StopDelay = defaultStopDelay
+	}
+
+	if options.SessionEndDelay == 0 {
+		options.SessionEndDelay = defaultSessionEndDelay
 	}
 
 	if err := findPrograms(&options); err != nil {
@@ -397,7 +420,7 @@ func startDaemons(shares []vm.Share, owner *vm.Owner, options Options) (<-chan e
 	died := make(chan error, len(shares))
 
 	for _, share := range shares {
-		daemon := command(ctx, options.Virtiofsd, share.VirtiofsdArgs(owner))
+		daemon := command(ctx, options.Virtiofsd, share.VirtiofsdArgs(owner), options.StopDelay)
 		daemon.Stderr = options.Stderr
 		// a Ctrl-C from the terminal reaches QEMU alone
 		daemon.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -450,7 +473,7 @@ func serveTerminal(ctx context.Context, listener net.Listener, options Options) 
 		select {
 		case ended := <-done:
 			return ended
-		case <-time.After(sessionEndDelay):
+		case <-time.After(options.SessionEndDelay):
 			cancel()
 
 			return <-done
@@ -496,7 +519,7 @@ func attach(ctx context.Context, listener net.Listener, options Options) outcome
 func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options Options) error {
 	program, args := qemuCommand(machine, files, options)
 
-	qemu := command(ctx, program, args)
+	qemu := command(ctx, program, args, options.StopDelay)
 	// through pipes, so that QEMU never holds the terminal
 	qemu.Stdout = notAFile{options.Stderr}
 	qemu.Stderr = notAFile{options.Stderr}
@@ -550,7 +573,7 @@ func findPrograms(options *Options) error {
 		return fmt.Errorf("find bubblewrap for the sandbox of QEMU, or run with --no-sandbox: %w", err)
 	}
 
-	for _, path := range []string{libraries, firmware} {
+	for _, path := range []string{options.Libraries, options.Firmware} {
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", path, err)
 		}
@@ -575,8 +598,8 @@ func qemuCommand(machine vm.Machine, files *qemuFiles, options Options) (string,
 	spec := sandbox.Spec{
 		Bubblewrap: options.Bubblewrap,
 		Program:    options.QEMU,
-		Libraries:  libraries,
-		Firmware:   firmware,
+		Libraries:  options.Libraries,
+		Firmware:   options.Firmware,
 		KernelFD:   files.kernelFD,
 	}
 
@@ -589,11 +612,11 @@ type notAFile struct {
 }
 
 // command stops the program with SIGTERM when the context ends and kills it
-// when it has not exited after stopDelay.
-func command(ctx context.Context, program string, args []string) *exec.Cmd {
+// when it has not exited after the delay.
+func command(ctx context.Context, program string, args []string, delay time.Duration) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, program, args...) //nolint:gosec // the caller chooses the program
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = stopDelay
+	cmd.WaitDelay = delay
 
 	return cmd
 }

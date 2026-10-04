@@ -262,6 +262,33 @@ func TestRunFailsBeforeQEMUWhenAnotherRunHasTheStateDisk(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 
+func TestRunBindsTheLibrariesAndFirmwareOfTheOptionsIntoTheSandbox(t *testing.T) {
+	// arrange
+	f := fakes(t)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.Contains(t, f.record(t, "bwrap"), f.libraries)
+	assert.Contains(t, f.record(t, "bwrap"), f.firmware)
+}
+
+func TestRunFailsBeforeQEMUWithoutTheFirmwareForTheSandbox(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.Firmware = filepath.Join(t.TempDir(), "gone.rom")
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.ErrorContains(t, err, options.Firmware)
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
+}
+
 func TestRunFailsBeforeQEMUWhenTheKernelCannotBeOpened(t *testing.T) {
 	// arrange
 	f := fakes(t)

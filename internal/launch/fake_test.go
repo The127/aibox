@@ -80,6 +80,8 @@ type fakeProcesses struct {
 	stderr           io.Writer
 	env              []string
 	consoleLog       string
+	libraries        string
+	firmware         string
 	ports            []uint16
 	confinedWith     []uint16
 	confineCalls     int
@@ -99,6 +101,8 @@ func fakes(t *testing.T) *fakeProcesses {
 		virtiofsd:        filepath.Join(dir, "virtiofsd"),
 		records:          filepath.Join(dir, "records"),
 		consoleLog:       filepath.Join(dir, "console.log"),
+		libraries:        filepath.Join(dir, "lib64"),
+		firmware:         filepath.Join(dir, "qboot.rom"),
 		proxyListener:    make(chan net.Listener, 1),
 		terminalListener: make(chan net.Listener, 1),
 	}
@@ -107,6 +111,8 @@ func fakes(t *testing.T) *fakeProcesses {
 	require.NoError(t, os.Symlink(self, f.bwrap))
 	require.NoError(t, os.Symlink(self, f.virtiofsd))
 	require.NoError(t, os.Mkdir(f.records, 0o700))
+	require.NoError(t, os.Mkdir(f.libraries, 0o700))
+	require.NoError(t, os.WriteFile(f.firmware, nil, 0o600))
 	t.Setenv("AIBOX_FAKE_RECORDS", f.records)
 
 	return f
@@ -129,6 +135,12 @@ func (f *fakeProcesses) options() launch.Options {
 		Env:           f.env,
 		KVMDevice:     os.DevNull,
 		ConsoleLog:    f.consoleLog,
+		Libraries:     f.libraries,
+		Firmware:      f.firmware,
+		// the real waits are for a VM, the fakes end at once. The session
+		// still needs longer than a stop, as in a real run
+		StopDelay:       100 * time.Millisecond,
+		SessionEndDelay: 300 * time.Millisecond,
 	}
 
 	if f.stdout != nil {

@@ -105,6 +105,8 @@ var presets = map[string][]string{
 	"pypi":   {"pypi.org", "files.pythonhosted.org"},
 	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"},
 	"github": {"github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"},
+	// the layers of an image come from production.cloudfront.docker.com
+	"docker": {"registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudfront.docker.com"},
 }
 
 func presetNames() []string {

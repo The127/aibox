@@ -586,6 +586,18 @@ func TestLoadExpandsAPreset(t *testing.T) {
 	assert.True(t, cfg.Allow.Allows("proxy.golang.org", "443"))
 }
 
+func TestLoadExpandsTheDockerPreset(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - preset:docker\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.ElementsMatch(t, config.Hosts{"registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudfront.docker.com"}, cfg.Allow)
+}
+
 func TestLoadRejectsAnUnknownPreset(t *testing.T) {
 	// arrange
 	path := write(t, "allow:\n  - preset:rust\n")
@@ -596,7 +608,7 @@ func TestLoadRejectsAnUnknownPreset(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, config.ErrUnknownPreset)
 	assert.ErrorContains(t, err, "rust")
-	assert.ErrorContains(t, err, "cargo, github, go, npm, pypi")
+	assert.ErrorContains(t, err, "cargo, docker, github, go, npm, pypi")
 }
 
 func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {

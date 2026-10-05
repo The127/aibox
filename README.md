@@ -20,7 +20,8 @@ It runs on Linux and on macOS. What follows describes Linux, and
   that gets its `.git` only inside the VM; a config that includes a file
   from the working tree; `.git/config.worktree`; and a git dir placed inside
   the project with `--separate-git-dir`. A symlink in place of one of the
-  protected paths stops the VM from starting.
+  protected paths stops the VM from starting. Do not rely on it.
+  [What the VM writes](#what-the-vm-writes) says why.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
   host, which only lets through hosts on an allowlist. Each VM gets a vsock
   namespace of its own, which aibox creates inside an unprivileged user
@@ -88,11 +89,14 @@ without asking. lefthook runs the commands of `lefthook.yml`, direnv runs
 `package.json`, and an IDE starts the run configurations under `.idea/`, all
 from the working tree.
 
-The read-only `.git/config` and `.git/hooks` guard against the quietest of
-these ways, a key or a hook that runs the next time you use git while
-`git diff` shows nothing. They are a seatbelt, not a boundary. Everything
-above stays writable, and the mounts that protect `.git` are made by the
-init of the VM, so a process that gained root in the VM could undo them.
+The read-only `.git/config` and `.git/hooks` make the quietest of these
+ways harder: a key or a hook that runs the next time you use git while
+`git diff` shows nothing. Do not rely on them. Everything above stays
+writable, and the protection of `.git/config` ends as soon as git or your
+IDE on the host rewrites the file, for example with `git push -u` or
+`git config`. git replaces the file when it writes it, and the mount on
+the old file goes with it. A process that gained root in the VM could also
+undo the mounts.
 
 So:
 

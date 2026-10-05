@@ -38,7 +38,7 @@ cover:
 # lint all code for Linux, and for macOS the host side, which is all that builds there
 lint:
     GOOS=linux GOARCH=amd64 golangci-lint run ./...
-    GOOS=darwin GOARCH=arm64 golangci-lint run $(GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}{{{{.Dir}}{{{{end}}' ./cmd/aibox)
+    GOOS=darwin GOARCH=arm64 golangci-lint run $(GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox)
 
 # format
 fmt:

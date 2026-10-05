@@ -175,3 +175,18 @@ func TestTheProxyRefusesAHostThatIsNotAllowed(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, []string{"evil.example:443"}, refused)
 }
+
+func TestAProxyWhoseVMWentAwayIsNotReportedAsBroken(t *testing.T) {
+	// arrange
+	listener := listen(t)
+	stderr := &syncBuffer{}
+	stop := host.ServeProxy(context.Background(), listener, proxy.Options{}, stderr)
+
+	// act
+	require.NoError(t, listener.Close())
+	time.Sleep(50 * time.Millisecond)
+	stop()
+
+	// assert
+	assert.Empty(t, stderr.String())
+}

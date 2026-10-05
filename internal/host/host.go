@@ -41,7 +41,8 @@ type Outcome struct {
 
 // ServeProxy serves the proxy to the VM on the listener until the returned
 // function is called, which also waits for the proxy to stop. A proxy that
-// stops by itself is reported on stderr.
+// breaks is reported on stderr. A closed listener is not: it means the end
+// of the VM went away, as when the VM stops before the proxy does.
 func ServeProxy(ctx context.Context, listener net.Listener, options proxy.Options, stderr io.Writer) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -51,7 +52,7 @@ func ServeProxy(ctx context.Context, listener net.Listener, options proxy.Option
 	return func() {
 		cancel()
 
-		if err := <-done; err != nil {
+		if err := <-done; err != nil && !errors.Is(err, net.ErrClosed) {
 			_, _ = fmt.Fprintf(stderr, "aibox: the proxy stopped: %v\n", err)
 		}
 	}

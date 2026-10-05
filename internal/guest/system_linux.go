@@ -264,11 +264,10 @@ func (Linux) Wait() (int, int, error) {
 // Stderr is the standard error of the init.
 func (Linux) Stderr() io.Writer { return os.Stderr }
 
-// Halt writes the file systems out and resets the machine, which ends the
-// VM because QEMU runs with -no-reboot.
+// Halt writes the file systems out and ends the machine, the way that ends
+// the VM on this architecture.
 func (Linux) Halt() error {
 	syscall.Sync()
 
-	// the kernel has no ACPI, so it cannot power off
-	return syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
+	return syscall.Reboot(haltCommand)
 }

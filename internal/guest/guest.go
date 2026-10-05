@@ -580,11 +580,15 @@ func protectGit(sys System) error {
 			return fmt.Errorf("protect %s: %w", gitDir, err)
 		}
 
-		return nil
+		return protectOtherNames(sys, gitDir)
 	}
 
 	if err != nil {
 		return fmt.Errorf("protect %s: %w", gitConfig, err)
+	}
+
+	if err := protectOtherNames(sys, gitConfig); err != nil {
+		return err
 	}
 
 	for _, dir := range gitDirs {
@@ -594,6 +598,73 @@ func protectGit(sys System) error {
 	}
 
 	return nil
+}
+
+// protectOtherNames makes the file read-only under the other names the host
+// may find it under. The APFS of a Mac tells no case apart and reads the
+// ligature ﬁ as fi, so .git/CONFIG and .git/conﬁg are the host's
+// .git/config, while the guest takes each name for a file of its own, which
+// the mount on the one name leaves writable. Folders need none of this, the
+// guest finds a folder under one name only. A host that has no file under
+// the name in upper case tells case apart, and has none of the others.
+func protectOtherNames(sys System, path string) error {
+	dir, name := filepath.Split(path)
+
+	for i, other := range otherNames(name) {
+		err := sys.Protect(dir + other)
+		if errors.Is(err, fs.ErrNotExist) {
+			if i == 0 {
+				return nil
+			}
+
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf("protect %s: %w", dir+other, err)
+		}
+	}
+
+	return nil
+}
+
+// otherNames are the names APFS reads as the name, but the name itself: every
+// mix of cases, with ﬁ for fi. The first is the name in upper case.
+func otherNames(name string) []string {
+	var names []string
+
+	for _, other := range spellings(name) {
+		if other != name {
+			names = append(names, other)
+		}
+	}
+
+	return names
+}
+
+// spellings are the names APFS reads as the name, upper case first.
+func spellings(name string) []string {
+	if name == "" {
+		return []string{""}
+	}
+
+	rest := spellings(name[1:])
+
+	var names []string
+
+	for _, first := range slices.Compact([]string{strings.ToUpper(name[:1]), strings.ToLower(name[:1])}) {
+		for _, r := range rest {
+			names = append(names, first+r)
+		}
+	}
+
+	if strings.EqualFold(name[:min(2, len(name))], "fi") {
+		for _, r := range spellings(name[2:]) {
+			names = append(names, "\ufb01"+r)
+		}
+	}
+
+	return names
 }
 
 // protectOrMake makes the folder read-only, making it first if missing.

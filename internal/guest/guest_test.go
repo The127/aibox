@@ -583,6 +583,7 @@ func TestRunProtectsTheGitConfigAndHooksOfTheProject(t *testing.T) {
 	assert.Equal(t, []string{
 		"pin /project/.git",
 		"protect /project/.git/config",
+		"protect /project/.git/CONFIG",
 		"protect /project/.git/hooks",
 	}, sys.gitCalls())
 }
@@ -600,7 +601,39 @@ func TestRunProtectsTheGitFileOfAWorktree(t *testing.T) {
 		"pin /project/.git",
 		"protect /project/.git/config",
 		"protect /project/.git",
+		"protect /project/.GIT",
 	}, sys.gitCalls())
+}
+
+func TestRunProtectsEveryOtherNameOfTheGitConfigOnAHostThatFoldsCase(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/hooks"}, foldsCase: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	protected := sys.protectedNamesOf("/project/.git/config")
+	assert.Len(t, protected, 80, "every mix of cases, and the ligature fi")
+	assert.Contains(t, protected, "/project/.git/CONFIG")
+	assert.Contains(t, protected, "/project/.git/cOnFiG")
+	assert.Contains(t, protected, "/project/.git/Con\ufb01g")
+}
+
+func TestRunProtectsEveryOtherNameOfTheGitFileOfAWorktreeOnAHostThatFoldsCase(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git"}, gitIsFile: true, foldsCase: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	protected := sys.protectedNamesOf("/project/.git")
+	assert.Len(t, protected, 8)
+	assert.Contains(t, protected, "/project/.GIT")
+	assert.Contains(t, protected, "/project/.gIt")
 }
 
 func TestRunMakesTheGitHooksFolderWhenItIsMissing(t *testing.T) {
@@ -615,6 +648,7 @@ func TestRunMakesTheGitHooksFolderWhenItIsMissing(t *testing.T) {
 	assert.Equal(t, []string{
 		"pin /project/.git",
 		"protect /project/.git/config",
+		"protect /project/.git/CONFIG",
 		"protect /project/.git/hooks",
 		"mkdir /project/.git/hooks",
 		"protect /project/.git/hooks",
@@ -946,10 +980,12 @@ type fakeSystem struct {
 	// the command was started in
 	failDelegate error
 	startedIn    string
-	// files are the paths of the project that exist, and gitIsFile makes
-	// .git a file instead of a folder
+	// files are the paths of the project that exist, gitIsFile makes .git a
+	// file instead of a folder, and foldsCase finds them under every other
+	// name the APFS of a Mac finds them under
 	files        []string
 	gitIsFile    bool
+	foldsCase    bool
 	failLoopback error
 	failListen   error
 	failOpen     error
@@ -1044,12 +1080,31 @@ func (s *fakeSystem) gitCalls() []string {
 	var calls []string
 
 	for _, call := range s.calls {
-		if strings.Contains(call, "/project/.git") {
+		if strings.Contains(strings.ToLower(call), "/project/.git") {
 			calls = append(calls, call)
 		}
 	}
 
 	return calls
+}
+
+// protectedNamesOf are the names of the file that Protect made read-only.
+func (s *fakeSystem) protectedNamesOf(path string) []string {
+	var names []string
+
+	for _, call := range s.calls {
+		name, ok := strings.CutPrefix(call, "protect ")
+		if ok && s.foldsCase && folded(name) == path {
+			names = append(names, name)
+		}
+	}
+
+	return names
+}
+
+// folded is the path as the APFS of a Mac compares it.
+func folded(path string) string {
+	return strings.ToLower(strings.ReplaceAll(path, "\ufb01", "fi"))
 }
 
 func (s *fakeSystem) Chmod(path string, mode os.FileMode) error {
@@ -1084,7 +1139,9 @@ func (s *fakeSystem) exists(path string) error {
 		return syscall.ENOTDIR
 	}
 
-	if !slices.Contains(s.files, path) {
+	if !slices.ContainsFunc(s.files, func(file string) bool {
+		return file == path || s.foldsCase && folded(file) == folded(path)
+	}) {
 		return fs.ErrNotExist
 	}
 

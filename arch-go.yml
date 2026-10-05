@@ -198,6 +198,7 @@ dependenciesRules:
         - '**.internal.project$'
         - '**.internal.backend$'
         - '**.internal.launch$'
+        - '**.internal.applelaunch$'
         - '**.internal.config$'
         - '**.internal.proxy$'
         - '**.internal.gitconfig$'

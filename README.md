@@ -136,6 +136,34 @@ secret gets in without being written into the file. They travel over the
 terminal session, not over the kernel command line. A variable aibox sets
 itself, such as `HOME`, `PATH` or the proxy variables, is refused.
 
+## macOS
+
+On macOS aibox runs the VM with Apple's
+[container](https://github.com/apple/container) tool, where each container is
+a VM of its own, instead of QEMU. The commands, the config and the guest are
+the same. What differs:
+
+- The image is an OCI image built from `image/Containerfile` for arm64, with
+  the kernel of the tool. `just install-container-image` builds it into the
+  store of the tool as `aibox:latest` and names it in
+  `~/.aibox/image/container-image`. The builder of the tool needs
+  `rosetta = false` under `[build]` in `~/.config/container/config.toml`
+  when Rosetta is not installed.
+- The tool mounts the project, the home and the `mounts` of the config
+  itself, and keeps the state of a project in a volume named after it.
+- The container has no network. The tool publishes a socket of the guest on
+  the host, and the terminal and the proxy share that one connection.
+- The init runs as root of its own VM with every capability, as it does under
+  QEMU. Claude Code runs as the user without them.
+- aibox on the host is not sandboxed or confined. The VM of the tool is the
+  boundary, and `--no-sandbox` changes nothing.
+
+```
+just install-container-image
+go install ./cmd/aibox
+aibox run
+```
+
 
 ## Contributing
 

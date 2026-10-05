@@ -132,13 +132,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer func() { _ = log.Close() }()
 
-	if err := project.CreateState(p.State, stateBytes(cfg)); err != nil {
-		return err
-	}
-
 	return deps.backend.Run(ctx, backend.Spec{
 		Image:       image,
 		State:       p.State,
+		StateBytes:  stateBytes(cfg),
 		MemoryMiB:   flagOrConfig(cmd, "memory", cfg.Memory),
 		CPUs:        flagOrConfig(cmd, "cpus", cfg.CPUs),
 		Project:     cwd,

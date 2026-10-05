@@ -278,7 +278,7 @@ func TestRunLeavesTheSandboxOffWhenAsked(t *testing.T) {
 	assert.True(t, f.launch.spec.Unsandboxed)
 }
 
-func TestRunCreatesTheStateDiskOfTheProjectWith16GiB(t *testing.T) {
+func TestRunAsksForAStateDiskOfTheProjectWith16GiB(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
@@ -289,7 +289,7 @@ func TestRunCreatesTheStateDiskOfTheProjectWith16GiB(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, f.project(t).State, f.launch.spec.State)
-	assert.Equal(t, int64(16<<30), f.stateSize(t))
+	assert.Equal(t, int64(16<<30), f.launch.spec.StateBytes)
 }
 
 func TestRunSizesTheStateDiskFromTheConfig(t *testing.T) {
@@ -303,17 +303,7 @@ func TestRunSizesTheStateDiskFromTheConfig(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, int64(2<<30), f.stateSize(t))
-}
-
-// stateSize is the size of the state disk the run created.
-func (f *fixture) stateSize(t *testing.T) int64 {
-	t.Helper()
-
-	info, err := os.Stat(f.project(t).State)
-	require.NoError(t, err)
-
-	return info.Size()
+	assert.Equal(t, int64(2<<30), f.launch.spec.StateBytes)
 }
 
 func TestRunRefusesToRunAsRoot(t *testing.T) {

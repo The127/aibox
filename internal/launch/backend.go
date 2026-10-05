@@ -43,7 +43,7 @@ func (b Backend) CheckImage(dir string) error {
 
 // Run boots the VM of the spec, see the function Run.
 func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
-	machine, options, err := b.plan(spec)
+	machine, options, err := b.prepare(spec)
 	if err != nil {
 		return err
 	}
@@ -51,9 +51,15 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	return Run(ctx, machine, options)
 }
 
-func (b Backend) plan(spec backend.Spec) (vm.Machine, Options, error) {
+// prepare creates the state disk once the image is known to be complete,
+// and turns the spec into the machine and the options of Run.
+func (b Backend) prepare(spec backend.Spec) (vm.Machine, Options, error) {
 	kernel, rootfs, err := imageFiles(spec.Image)
 	if err != nil {
+		return vm.Machine{}, Options{}, err
+	}
+
+	if err := createState(spec.State, spec.StateBytes); err != nil {
 		return vm.Machine{}, Options{}, err
 	}
 
@@ -106,4 +112,32 @@ func imageFiles(dir string) (kernel, rootfs string, err error) {
 	}
 
 	return kernel, rootfs, nil
+}
+
+// createState makes the state disk at path with the size, as a sparse file
+// that takes up space only as the VM writes to it. An existing disk keeps
+// its size, so the size counts on the first run only. An empty file is
+// sized again, since a run stopped between creating and sizing leaves one.
+func createState(path string, size int64) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600) //nolint:gosec // the path is the project's state disk
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+
+	defer func() { _ = file.Close() }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("look at %s: %w", path, err)
+	}
+
+	if info.Size() != 0 {
+		return nil
+	}
+
+	if err := file.Truncate(size); err != nil {
+		return fmt.Errorf("size %s: %w", path, err)
+	}
+
+	return nil
 }

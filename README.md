@@ -102,8 +102,20 @@ brew install --cask the127/tap/aibox
 
 On Linux, each [release](https://github.com/The127/aibox/releases) has a
 `deb` and an `rpm` for amd64, which depend on QEMU, virtiofsd and
-bubblewrap, and a `tar.gz` with only the binary. `checksums.txt` lists
-their checksums, and cosign signed it without a key.
+bubblewrap, and a `tar.gz` with the binary. aibox needs Linux 6.7 or newer
+and virtiofsd at `/usr/libexec/virtiofsd`, as Debian 13, Ubuntu 24.04 and
+Fedora have it.
+
+`checksums.txt` lists the checksums of all files of a release, and cosign
+signed it without a key. To check it:
+
+```
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/The127/aibox/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+```
 
 The releases do not hold the VM image yet. Build it from a checkout with
 `just install-image`, which puts it into `~/.aibox/image`.

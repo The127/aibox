@@ -41,7 +41,9 @@ so the workflow uses a GitHub App:
 
 1. Create a GitHub App with read and write access to contents and pull
    requests.
-2. Create the repository `The127/homebrew-tap`, with a `main` branch.
+2. Create the repository `The127/homebrew-tap` with a first commit on
+   `main`, for example a README. goreleaser cannot push to an empty
+   repository.
 3. Install the app on this repository and on `homebrew-tap`.
 4. Add its ID as the repository variable `RELEASE_APP_ID`.
 5. Add its private key as the repository secret `RELEASE_APP_PRIVATE_KEY`.

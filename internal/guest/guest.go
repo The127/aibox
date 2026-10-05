@@ -70,11 +70,13 @@ var (
 // sends goes in front of it.
 const imagePath = "/usr/local/bin:/usr/bin:/bin"
 
-// Options come from the kernel command line. Mounts are the shares of the
-// host that are mounted read-only where the host says.
+// Options come from the kernel command line. Proxy says the host serves a
+// proxy, at ProxyPort when it is reached over vsock. Mounts are the shares
+// of the host that are mounted read-only where the host says.
 type Options struct {
 	Console      string
 	Shell        bool
+	Proxy        bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
@@ -212,8 +214,6 @@ var (
 		{source: "tmpfs", target: "/tmp", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
 		{source: "tmpfs", target: "/var/tmp", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
 		{source: "tmpfs", target: "/run", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=755"},
-		{source: projectShare, target: project, fstype: "virtiofs"},
-		{source: homeShare, target: home, fstype: "virtiofs"},
 	}
 
 	// devtmpfs does not create these
@@ -265,6 +265,7 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.Shell = true
 		case "aibox.proxy":
 			options.ProxyPort = port(key, value)
+			options.Proxy = options.ProxyPort != 0
 		case "aibox.terminal":
 			options.TerminalPort = port(key, value)
 		case "aibox.mount":
@@ -383,7 +384,7 @@ func ownVariables(options Options, term, hostPath string) []string {
 
 	// the proxy speaks CONNECT only, which is how HTTPS goes through a proxy.
 	// Tools like curl read the lower case names.
-	if options.ProxyPort != 0 {
+	if options.Proxy {
 		env = append(env,
 			"HTTPS_PROXY=http://"+guestProxyAddress,
 			"https_proxy=http://"+guestProxyAddress,
@@ -444,13 +445,13 @@ func Forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, 
 	})
 }
 
-// Run sets the VM up, serves the terminal session to the host until the
-// command exits and halts the VM. The error says what went wrong before the
-// halt.
-func Run(sys System) error {
-	console, options, err := setup(sys)
+// Run sets the VM up on the platform, serves the terminal session to the
+// host until the command exits and halts the VM. The error says what went
+// wrong before the halt.
+func Run(sys System, platform Platform) error {
+	console, options, transport, err := setup(sys, platform)
 	if err == nil {
-		err = serve(sys, options, console)
+		err = serve(sys, options, transport, console)
 	}
 
 	if err != nil && console != nil {
@@ -464,27 +465,27 @@ func Run(sys System) error {
 	return err
 }
 
-func setup(sys System) (*os.File, Options, error) {
-	if err := enterOverlay(sys); err != nil {
-		return nil, Options{}, err
+func setup(sys System, platform Platform) (*os.File, Options, Transport, error) {
+	if err := platform.Prepare(sys); err != nil {
+		return nil, Options{}, nil, err
 	}
 
 	for _, m := range earlyMounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
-			return nil, Options{}, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
+			return nil, Options{}, nil, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
 		}
 	}
 
 	cmdline, err := sys.ReadCmdline()
 	if err != nil {
-		return nil, Options{}, fmt.Errorf("read the kernel command line: %w", err)
+		return nil, Options{}, nil, fmt.Errorf("read the kernel command line: %w", err)
 	}
 
 	options, badWord := ParseCmdline(cmdline)
 
-	console, err := sys.OpenConsole(options.Console)
+	console, err := platform.Console(sys, options)
 	if err != nil {
-		return nil, options, fmt.Errorf("open the console %s: %w", options.Console, err)
+		return nil, options, nil, fmt.Errorf("open the console %s: %w", options.Console, err)
 	}
 
 	if badWord != nil {
@@ -493,40 +494,50 @@ func setup(sys System) (*os.File, Options, error) {
 
 	for _, m := range mounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
-			return console, options, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
+			return console, options, nil, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
 		}
 	}
 
+	if err := platform.Shares(sys); err != nil {
+		return console, options, nil, err
+	}
+
+	if err := platform.Cgroups(sys); err != nil {
+		return console, options, nil, err
+	}
+
 	if err := delegateCgroups(sys); err != nil {
-		return console, options, err
+		return console, options, nil, err
 	}
 
 	for _, device := range devices {
 		if err := sys.Chmod(device, 0o666); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return console, options, fmt.Errorf("open %s to everyone: %w", device, err)
+			return console, options, nil, fmt.Errorf("open %s to everyone: %w", device, err)
 		}
 	}
 
 	if err := protectGit(sys); err != nil {
-		return console, options, err
+		return console, options, nil, err
 	}
 
-	if err := mountState(sys); err != nil {
-		return console, options, err
+	if err := platform.State(sys); err != nil {
+		return console, options, nil, err
 	}
 
-	for _, m := range options.Mounts {
-		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
-			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
-		}
+	if err := bindState(sys); err != nil {
+		return console, options, nil, err
+	}
+
+	if err := platform.Folders(sys, options); err != nil {
+		return console, options, nil, err
 	}
 
 	if err := shareMounts(sys); err != nil {
-		return console, options, err
+		return console, options, nil, err
 	}
 
 	if err := lockRoot(sys); err != nil {
-		return console, options, err
+		return console, options, nil, err
 	}
 
 	for _, l := range links {
@@ -539,13 +550,18 @@ func setup(sys System) (*os.File, Options, error) {
 		say(console, "aibox: set the hostname: %v\n", err)
 	}
 
-	if options.ProxyPort != 0 {
-		if err := startProxy(sys, options.ProxyPort, console); err != nil {
-			return console, options, err
+	transport, err := platform.Connect(sys, options)
+	if err != nil {
+		return console, options, nil, err
+	}
+
+	if options.Proxy {
+		if err := startProxy(sys, transport.DialProxy, console); err != nil {
+			return console, options, nil, err
 		}
 	}
 
-	return console, options, nil
+	return console, options, transport, nil
 }
 
 // protectGit makes the config and hooks of the project's .git read-only,
@@ -606,30 +622,6 @@ func protectOrMake(sys System, dir string) error {
 	return nil
 }
 
-// enterOverlay puts an overlay in RAM over the read-only root disk and
-// makes it the root, so that the mount points of the shares can be made.
-func enterOverlay(sys System) error {
-	if err := sys.Mount("tmpfs", overlayDir, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=755,size=16m"); err != nil {
-		return fmt.Errorf("mount the overlay tmpfs: %w", err)
-	}
-
-	for _, dir := range []string{overlayDir + "/upper", overlayDir + "/work"} {
-		if err := sys.Mkdir(dir); err != nil {
-			return fmt.Errorf("make %s: %w", dir, err)
-		}
-	}
-
-	if err := sys.Mount("overlay", overlayRoot, "overlay", 0, overlayData); err != nil {
-		return fmt.Errorf("mount the overlay: %w", err)
-	}
-
-	if err := sys.PivotRoot(overlayRoot, oldRoot); err != nil {
-		return fmt.Errorf("make %s the root: %w", overlayRoot, err)
-	}
-
-	return nil
-}
-
 // delegateCgroups gives the user a cgroup with every controller and puts
 // the cgroup of the command below it.
 func delegateCgroups(sys System) error {
@@ -671,24 +663,8 @@ func lockRoot(sys System) error {
 	return nil
 }
 
-// mountState mounts the state disk of the project, formatting it on the
-// first boot, and binds its folders where tools and caches land.
-func mountState(sys System) error {
-	blank, err := sys.Blank(stateDevice)
-	if err != nil {
-		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
-	}
-
-	if blank {
-		if err := sys.Format(stateDevice); err != nil {
-			return fmt.Errorf("format the state disk: %w", err)
-		}
-	}
-
-	if err := sys.Mount(stateDevice, stateMount, "ext4", stateFlags, ""); err != nil {
-		return fmt.Errorf("mount the state disk: %w", err)
-	}
-
+// bindState binds the folders of the state disk where tools and caches land.
+func bindState(sys System) error {
 	for _, d := range stateDirs {
 		source := stateMount + "/" + d.dir
 
@@ -710,8 +686,8 @@ func mountState(sys System) error {
 }
 
 // startProxy listens on the proxy address of the VM and forwards each
-// connection to the proxy on the host over vsock.
-func startProxy(network Network, port uint32, console io.Writer) error {
+// connection to the proxy on the host.
+func startProxy(network Network, dial func() (net.Conn, error), console io.Writer) error {
 	if err := network.BringLoopbackUp(); err != nil {
 		return fmt.Errorf("bring the loopback interface up: %w", err)
 	}
@@ -720,8 +696,6 @@ func startProxy(network Network, port uint32, console io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listen for the proxy on %s: %w", guestProxyAddress, err)
 	}
-
-	dial := func() (net.Conn, error) { return network.DialHost(port) }
 
 	// the forwarder lives as long as the VM
 	go func() {
@@ -734,14 +708,10 @@ func startProxy(network Network, port uint32, console io.Writer) error {
 }
 
 // serve connects to the terminal on the host and serves the session on it.
-func serve(sys System, options Options, console io.Writer) error {
-	if options.TerminalPort == 0 {
-		return ErrNoTerminal
-	}
-
-	conn, err := sys.DialHost(options.TerminalPort)
+func serve(sys System, options Options, transport Transport, console io.Writer) error {
+	conn, err := transport.DialTerminal()
 	if err != nil {
-		return fmt.Errorf("connect to the terminal on the host: %w", err)
+		return err
 	}
 
 	defer func() { _ = conn.Close() }()

@@ -42,7 +42,7 @@ func TestParseCmdline(t *testing.T) {
 		"console=ttyS0 aibox.shell=1 panic=-1": {Console: "/dev/ttyS0", Shell: true},
 		"console=tty0 console=ttyS0,115200n8":  {Console: "/dev/ttyS0"},
 		"console= quiet":                       {Console: "/dev/console"},
-		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
+		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", Proxy: true, ProxyPort: 4321},
 		"console=hvc0 aibox.terminal=5432":     {Console: "/dev/hvc0", TerminalPort: 5432},
 		"console=hvc0 aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin": {
 			Console: "/dev/hvc0",
@@ -121,7 +121,7 @@ func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {
 	tty := newConsoleFile(t)
 
 	// act
-	cmd := guest.Command(guest.Options{Console: tty.Name(), ProxyPort: 4321}, tty, session.Request{Term: "xterm"})
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Proxy: true}, tty, session.Request{Term: "xterm"})
 
 	// assert
 	assert.Contains(t, cmd.Env, "HTTPS_PROXY=http://127.0.0.1:3128")
@@ -172,7 +172,7 @@ func TestRunKeepsItsOwnVariablesOverThoseOfTheHost(t *testing.T) {
 	sys := &fakeSystem{t: t, clientEnv: []string{"HOME=/elsewhere", "TERM=vt100", "PATH=/opt/bin", "GOFLAGS=-mod=mod"}}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestRunTellsTheConsoleAboutVariablesItDropped(t *testing.T) {
 	sys := &fakeSystem{t: t, clientEnv: []string{"HOME=/elsewhere", "TERM=vt100", "PATH=/opt/bin", "GOFLAGS=-mod=mod"}}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321", failLoopback: errors.New("not permitted")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "loopback")
@@ -360,7 +360,7 @@ func TestRunReportsABadProxyPortAndGoesOnWithoutAProxy(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=x"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -374,7 +374,7 @@ func TestRunWithoutAProxy(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -387,7 +387,7 @@ func TestRunPowersOffWhenTheProxyCannotListen(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321", failListen: errors.New("address in use")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "address in use")
@@ -434,7 +434,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: "root=/dev/vda " + withTerminal}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -500,7 +500,7 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	sys := &fakeSystem{t: t, failPivot: true}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "make /run/root the root: invalid argument")
@@ -512,7 +512,7 @@ func TestRunPowersOffWhenTheCgroupOfTheUserCannotBeMade(t *testing.T) {
 	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "/sys/fs/cgroup/user")
@@ -525,7 +525,7 @@ func TestRunSkipsADeviceTheKernelDidNotMake(t *testing.T) {
 	sys := &fakeSystem{t: t, files: []string{"/dev/fuse"}}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -538,7 +538,7 @@ func TestRunPowersOffWhenADeviceCannotBeOpenedToEveryone(t *testing.T) {
 	sys := &fakeSystem{t: t, files: []string{"/dev/kvm"}, failChmod: errors.New("read-only file system")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "/dev/kvm")
@@ -551,7 +551,7 @@ func TestRunProtectsTheGitConfigAndHooksOfTheProject(t *testing.T) {
 	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/hooks", "/project/.git/info"}}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -567,7 +567,7 @@ func TestRunProtectsTheGitFileOfAWorktree(t *testing.T) {
 	sys := &fakeSystem{t: t, files: []string{"/project/.git"}, gitIsFile: true}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -583,7 +583,7 @@ func TestRunMakesTheGitHooksFolderWhenItIsMissing(t *testing.T) {
 	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -601,7 +601,7 @@ func TestRunLeavesAProjectWithoutGitAlone(t *testing.T) {
 	sys := &fakeSystem{t: t}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -613,7 +613,7 @@ func TestRunPowersOffWhenTheGitConfigCannotBeProtected(t *testing.T) {
 	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}, failProtect: errors.New("device busy")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "device busy")
@@ -627,7 +627,7 @@ func TestRunDoesNotFormatAStateDiskThatHasAFileSystem(t *testing.T) {
 	sys := &fakeSystem{t: t, formatted: true}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -640,7 +640,7 @@ func TestRunPowersOffWhenTheStateDiskCannotBeFormatted(t *testing.T) {
 	sys := &fakeSystem{t: t, failFormat: errors.New("no mke2fs")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "no mke2fs")
@@ -654,7 +654,7 @@ func TestRunMountsTheSharesOfTheHostAfterItsOwn(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -671,7 +671,7 @@ func TestRunMountsTheSharesOfTheHostReadOnlyButExecutable(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/opt/go"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -683,7 +683,7 @@ func TestRunPowersOffWhenAMountOfTheHostFails(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/opt/go", failMount: "mount0"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "/opt/go")
@@ -697,7 +697,7 @@ func TestRunReapsOtherChildrenUntilClaudeCodeExits(t *testing.T) {
 	sys := &fakeSystem{t: t, orphans: 2}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -710,7 +710,7 @@ func TestRunPowersOffWhenAShareIsMissing(t *testing.T) {
 	sys := &fakeSystem{t: t, failMount: "home"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "home")
@@ -724,7 +724,7 @@ func TestRunPowersOffWhenAnEarlyMountFails(t *testing.T) {
 	sys := &fakeSystem{t: t, failMount: "devtmpfs"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "devtmpfs")
@@ -736,7 +736,7 @@ func TestRunPowersOffWithoutAConsole(t *testing.T) {
 	sys := &fakeSystem{t: t, failOpen: errors.New("no such device")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "no such device")
@@ -749,7 +749,7 @@ func TestRunKeepsGoingWhenTheHostnameFails(t *testing.T) {
 	sys := &fakeSystem{t: t, failHostname: errors.New("not permitted")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -762,7 +762,7 @@ func TestRunHandsTheExitCodeToTheHostAndPowersOff(t *testing.T) {
 	sys := &fakeSystem{t: t, exitCode: 7}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -775,7 +775,7 @@ func TestRunGivesTheCommandTheTerminalOfTheHost(t *testing.T) {
 	sys := &fakeSystem{t: t, realCommand: "stty size; echo TERM=$TERM; tty"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.NoError(t, err)
@@ -790,7 +790,7 @@ func TestRunPowersOffWithoutATerminalPort(t *testing.T) {
 	sys := &fakeSystem{t: t, cmdline: "console=hvc0"}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	require.ErrorIs(t, err, guest.ErrNoTerminal)
@@ -804,7 +804,7 @@ func TestRunPowersOffWhenTheHostDoesNotAnswer(t *testing.T) {
 	sys := &fakeSystem{t: t, failDial: errors.New("connection reset")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "connection reset")
@@ -818,7 +818,7 @@ func TestRunPowersOffWhenClaudeCodeCannotStart(t *testing.T) {
 	sys := &fakeSystem{t: t, failStart: errors.New("no such file")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "no such file")
@@ -832,7 +832,7 @@ func TestRunPowersOffWhenWaitFails(t *testing.T) {
 	sys := &fakeSystem{t: t, failWait: errors.New("no child processes")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "no child processes")
@@ -844,7 +844,7 @@ func TestRunReportsAFailedHalt(t *testing.T) {
 	sys := &fakeSystem{t: t, failHalt: errors.New("not permitted")}
 
 	// act
-	err := guest.Run(sys)
+	err := guest.Run(sys, guest.QEMU{})
 
 	// assert
 	assert.ErrorContains(t, err, "halt")

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
@@ -95,7 +96,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return err
 	}
 
-	defer func() { _ = console.Close() }()
+	defer console.close()
 
 	// the guest reads nothing from its console, and vz takes only the
 	// number of the file, so the file stays open until the VM is gone
@@ -106,7 +107,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer func() { _ = devNull.Close() }()
 
-	config, err := configure(m, devNull, console)
+	config, err := configure(m, devNull, console.File)
 	if err != nil {
 		return err
 	}
@@ -150,6 +151,10 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	// which keeps a second run of the project off
 	if err := v.Start(); err != nil {
 		return host.Result(startError(err, m.State), stopTerminal(), spec.ConsoleLog)
+	}
+
+	if err := console.keep(); err != nil {
+		_, _ = fmt.Fprintf(spec.Stderr, "aibox: %v\n", err)
 	}
 
 	// aibox needs nothing else of the machine once the VM runs, as on Linux
@@ -419,15 +424,57 @@ func addShares(config *vz.VirtualMachineConfiguration, shares []vm.Share) error 
 	return nil
 }
 
-func openConsole(path string) (*os.File, error) {
+// consoleLog is where the console of the VM goes. It is a file of its own
+// next to the log until the VM started, and only then takes the place of
+// the log, since a run that the lock of another refuses must leave the log
+// of the running VM alone.
+type consoleLog struct {
+	*os.File
+	path string
+	kept bool
+}
+
+// openConsole opens the console log at path, or nowhere if path is empty.
+func openConsole(path string) (*consoleLog, error) {
 	if path == "" {
-		path = os.DevNull
+		nowhere, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err != nil {
+			return nil, fmt.Errorf("open the console log: %w", err)
+		}
+
+		return &consoleLog{File: nowhere, kept: true}, nil
 	}
 
-	console, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // the console log of the project
+	// CreateTemp makes the file 0600, the console log is the project's
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return nil, fmt.Errorf("open the console log: %w", err)
 	}
 
-	return console, nil
+	return &consoleLog{File: file, path: path}, nil
+}
+
+// keep puts the log in place of the one before, once the VM started. The
+// VM goes on writing to it there.
+func (c *consoleLog) keep() error {
+	if c.kept {
+		return nil
+	}
+
+	if err := os.Rename(c.Name(), c.path); err != nil {
+		return fmt.Errorf("keep the console log: %w", err)
+	}
+
+	c.kept = true
+
+	return nil
+}
+
+// close closes the log, and removes it if it was not kept.
+func (c *consoleLog) close() {
+	_ = c.Close()
+
+	if !c.kept {
+		_ = os.Remove(c.Name())
+	}
 }

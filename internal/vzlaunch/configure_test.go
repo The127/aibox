@@ -137,25 +137,53 @@ func TestAStartThatFailedOtherwiseKeepsItsError(t *testing.T) {
 func TestTheConsoleGoesToTheLogOrNowhere(t *testing.T) {
 	// arrange
 	log := filepath.Join(t.TempDir(), "console.log")
+	require.NoError(t, os.WriteFile(log, []byte("the run before"), 0o600))
 
 	// act
 	toLog, err := openConsole(log)
 	require.NoError(t, err)
-	_, err = toLog.WriteString("booted")
+	_, err = toLog.WriteString("boo")
 	require.NoError(t, err)
-	require.NoError(t, toLog.Close())
+	require.NoError(t, toLog.keep())
+	_, err = toLog.WriteString("ted")
+	require.NoError(t, err)
+	toLog.close()
 
 	nowhere, err := openConsole("")
 	require.NoError(t, err)
-	require.NoError(t, nowhere.Close())
+	require.NoError(t, nowhere.keep())
+	nowhere.close()
 
 	// assert
 	content, err := os.ReadFile(log) //nolint:gosec // a file of the test
 	require.NoError(t, err)
-	assert.Equal(t, "booted", string(content))
+	assert.Equal(t, "booted", string(content), "what the VM wrote before and after the log took the place of the old one")
 	assert.Equal(t, os.DevNull, nowhere.Name())
 
 	info, err := os.Stat(log)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the console log is the project's, as on Linux")
+}
+
+func TestARunWhoseVMDidNotStartLeavesTheConsoleLogAlone(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	log := filepath.Join(dir, "console.log")
+	require.NoError(t, os.WriteFile(log, []byte("the running VM"), 0o600))
+
+	// act
+	refused, err := openConsole(log)
+	require.NoError(t, err)
+	_, err = refused.WriteString("refused")
+	require.NoError(t, err)
+	refused.close()
+
+	// assert
+	content, err := os.ReadFile(log) //nolint:gosec // a file of the test
+	require.NoError(t, err)
+	assert.Equal(t, "the running VM", string(content))
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "the log of the refused run is gone")
 }

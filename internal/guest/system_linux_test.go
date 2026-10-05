@@ -122,3 +122,34 @@ func TestBlankFailsForAMissingDisk(t *testing.T) {
 	// assert
 	require.Error(t, err)
 }
+
+func TestListenSocketLetsOnlyTheOwnerConnect(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "link.sock")
+	old := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	// act
+	listener, err := guest.Linux{}.ListenSocket(path)
+
+	// assert
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestListenSocketReplacesASocketLeftFromAnEarlierStart(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "link.sock")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+
+	// act
+	listener, err := guest.Linux{}.ListenSocket(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.NoError(t, listener.Close())
+}

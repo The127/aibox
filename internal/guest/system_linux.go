@@ -186,9 +186,27 @@ func (Linux) Listen(address string) (net.Listener, error) {
 	return net.Listen("tcp", address)
 }
 
-// ListenSocket listens on a unix socket at the path.
+// ListenSocket listens on a unix socket at the path, which only root may
+// connect to. Whoever connects first gets the terminal and the proxy of the
+// host, and the user in the VM must not be able to. A socket left from an
+// earlier start of the same root is replaced, since its listener is gone.
 func (Linux) ListenSocket(path string) (net.Listener, error) {
-	return net.Listen("unix", path)
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+
+		return nil, err
+	}
+
+	return listener, nil
 }
 
 // DialHost connects to the host over vsock.

@@ -187,3 +187,28 @@ func TestARunWhoseVMDidNotStartLeavesTheConsoleLogAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "the log of the refused run is gone")
 }
+
+func TestTheConsoleLogOfAStartedVMStaysWhenItCannotTakeThePlaceOfTheLog(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	log := filepath.Join(dir, "console.log")
+	// a folder that is not empty is no place a file can be renamed to
+	require.NoError(t, os.MkdirAll(filepath.Join(log, "in the way"), 0o700))
+
+	console, err := openConsole(log)
+	require.NoError(t, err)
+	_, err = console.WriteString("booted")
+	require.NoError(t, err)
+
+	// act
+	err = console.keep()
+	console.close()
+
+	// assert
+	require.Error(t, err)
+	assert.ErrorContains(t, err, console.Name(), "says where the log is")
+
+	content, err := os.ReadFile(console.Name())
+	require.NoError(t, err)
+	assert.Equal(t, "booted", string(content))
+}

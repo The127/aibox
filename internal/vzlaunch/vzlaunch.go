@@ -455,17 +455,18 @@ func openConsole(path string) (*consoleLog, error) {
 }
 
 // keep puts the log in place of the one before, once the VM started. The
-// VM goes on writing to it there.
+// VM goes on writing to it there. The file holds the console of the VM from
+// then on, so it stays where it is if it cannot take that place.
 func (c *consoleLog) keep() error {
 	if c.kept {
 		return nil
 	}
 
-	if err := os.Rename(c.Name(), c.path); err != nil {
-		return fmt.Errorf("keep the console log: %w", err)
-	}
-
 	c.kept = true
+
+	if err := os.Rename(c.Name(), c.path); err != nil {
+		return fmt.Errorf("the console log stays at %s: %w", c.Name(), err)
+	}
 
 	return nil
 }

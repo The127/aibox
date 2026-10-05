@@ -77,6 +77,31 @@ It runs on Linux and on macOS. What follows describes Linux, and
   configuration for QEMU's microvm board, and `image/kernel.config` holds
   what aibox changes about it. `just image` rebuilds the image.
 
+## What the VM writes
+
+The project folder is shared writable on purpose: you open the project in
+your editor, start aibox in it and watch Claude Code work. So whatever the
+VM writes into the project is untrusted until you have read it, like a pull
+request from a stranger. That includes files that tools on the host run
+without asking. lefthook runs the commands of `lefthook.yml`, direnv runs
+`.envrc`, just reads the `justfile`, npm runs the scripts of
+`package.json`, and an IDE starts the run configurations under `.idea/`, all
+from the working tree.
+
+The read-only `.git/config` and `.git/hooks` guard against the quietest of
+these ways, a key or a hook that runs the next time you use git while
+`git diff` shows nothing. They are a seatbelt, not a boundary. Everything
+above stays writable, and the mounts that protect `.git` are made by the
+init of the VM, so a process that gained root in the VM could undo them.
+
+So:
+
+- Trust a project in your IDE, which GoLand asks about when you first open
+  it, only when the project is your own.
+- Read the diff of what the VM changed before you run a build, a test, a
+  script or a run configuration of the project on the host, and before you
+  commit with hooks the project defines.
+
 ## Status
 
 The first version works: `aibox run` in a project folder boots the VM in
@@ -154,6 +179,13 @@ Linux. What is different:
   a tool from the Mac, such as a Go SDK or `/nix/store`, gives the VM files
   it cannot run. Tools for the VM come from a folder of arm64 Linux
   programs, or are installed into `/usr/local` in the VM, which keeps them.
+- APFS, the file system of the Mac, tells no case apart unless it was made
+  case-sensitive, and reads the ligature `ﬁ` as `fi`. The VM finds
+  `.git/config` also as `.git/CONFIG` or `.git/conﬁg`, so the init makes all
+  80 names of it read-only, and all 8 names of a `.git` file. Folders need
+  none of this. aibox refuses to start in your home folder by comparing
+  folders rather than paths, since `/users/YOU` and
+  `/System/Volumes/Data/Users/you` are your home folder too.
 - The state disk is the same sparse file. Virtualization.framework locks it
   for as long as the VM runs, which keeps a second run of the project off.
 - Once the VM runs, aibox confines itself with Seatbelt, the sandbox of

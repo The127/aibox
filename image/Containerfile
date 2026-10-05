@@ -1,0 +1,58 @@
+# The image aibox runs Claude Code in under Apple's container tool, where
+# each container is a VM of its own with the kernel of the tool. It holds
+# what the root disk of the Imagefile holds, for arm64, and starts the init
+# for a container.
+#
+#   just container-image
+#
+# builds the init of the VM into image/aibox-init first, so that the image
+# needs no Go toolchain.
+
+# The programs of the VM, each collected with the libraries it loads into a
+# tree of its own under /out.
+FROM debian:sid AS tools
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap
+# The installer puts Claude Code in the home directory. It goes to /usr/bin
+# because the disk of a project is mounted over /usr/local.
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/bin/claude
+
+RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
+RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
+RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
+RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
+# rootless containers map their users through these two setuid programs
+RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
+
+FROM scratch
+
+# busybox gives the stage a shell, so the RUN steps below work, and the VM
+# its basic tools. The builder leaves the sh link of the Imagefile out of
+# the context, since it points at nothing there, so busybox makes it, in
+# the exec form that needs no shell yet.
+COPY --from=tools /bin/busybox /bin/busybox
+RUN ["/bin/busybox", "--install", "-s", "/bin"]
+# /var/lib/aibox holds the socket the host connects to and the mount point
+# of the state volume
+RUN mkdir -p /run /tmp /root /project /home/user /usr/local /var/lib/aibox/state
+
+COPY --from=tools /out/bash/ /
+COPY --from=tools /out/git/ /
+COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
+COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
+COPY --from=tools /out/claude/ /
+COPY --from=tools /out/mke2fs/ /
+COPY --from=tools /etc/mke2fs.conf /etc/
+# lddtree drops the setuid bit, which the two need to map the subuid
+# range of "user", the user of the passwd file
+COPY --from=tools /out/uidmap/ /
+RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
+COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY passwd group subuid subgid /etc/
+COPY containers/ /etc/containers/
+COPY aibox.md /etc/aibox/prompt.md
+COPY aibox-init /sbin/init
+
+ENTRYPOINT ["/sbin/init", "container"]

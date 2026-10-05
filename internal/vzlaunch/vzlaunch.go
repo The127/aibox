@@ -112,6 +112,10 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return err
 	}
 
+	if ok, err := config.Validate(); !ok {
+		return fmt.Errorf("the configuration of the VM is not valid: %w", err)
+	}
+
 	v, err := vz.NewVirtualMachine(config)
 	if err != nil {
 		return fmt.Errorf("create the VM: %w", err)
@@ -304,10 +308,6 @@ func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfi
 
 	config.SetEntropyDevicesVirtualMachineConfiguration([]*vz.VirtioEntropyDeviceConfiguration{entropy})
 
-	if ok, err := config.Validate(); !ok {
-		return nil, fmt.Errorf("the configuration of the VM is not valid: %w", err)
-	}
-
 	return config, nil
 }
 
@@ -332,15 +332,22 @@ func addConsole(config *vz.VirtualMachineConfiguration, devNull, console *os.Fil
 	return nil
 }
 
-// addDisks adds the root disk, read-only, as /dev/vda and the state disk as
+// disk is a disk image of the VM and whether the guest may write to it.
+type disk struct {
+	path     string
+	readOnly bool
+}
+
+// disksOf are the root disk, read-only, as /dev/vda and the state disk as
 // /dev/vdb, the order the guest expects them in.
+func disksOf(m vm.Machine) []disk {
+	return []disk{{path: m.Rootfs, readOnly: true}, {path: m.State, readOnly: false}}
+}
+
 func addDisks(config *vz.VirtualMachineConfiguration, m vm.Machine) error {
 	var disks []vz.StorageDeviceConfiguration
 
-	for _, disk := range []struct {
-		path     string
-		readOnly bool
-	}{{m.Rootfs, true}, {m.State, false}} {
+	for _, disk := range disksOf(m) {
 		attachment, err := vz.NewDiskImageStorageDeviceAttachment(disk.path, disk.readOnly)
 		if err != nil {
 			return fmt.Errorf("attach the disk %s: %w", disk.path, err)
@@ -359,14 +366,19 @@ func addDisks(config *vz.VirtualMachineConfiguration, m vm.Machine) error {
 	return nil
 }
 
-// addShares shares each folder by its tag. A share the guest mounts at a
-// path of its own is read-only, which Virtualization.framework enforces on
-// the host, as virtiofsd does on Linux.
+// readOnly says whether the guest may only read the share: the guest mounts
+// it at a path of its own. Virtualization.framework enforces that on the
+// host, as virtiofsd does on Linux.
+func readOnly(share vm.Share) bool {
+	return share.Guest != ""
+}
+
+// addShares shares each folder by its tag.
 func addShares(config *vz.VirtualMachineConfiguration, shares []vm.Share) error {
 	devices := make([]vz.DirectorySharingDeviceConfiguration, 0, len(shares))
 
 	for _, share := range shares {
-		dir, err := vz.NewSharedDirectory(share.Dir, share.Guest != "")
+		dir, err := vz.NewSharedDirectory(share.Dir, readOnly(share))
 		if err != nil {
 			return fmt.Errorf("share %s: %w", share.Dir, err)
 		}

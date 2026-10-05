@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs a binary go built, a test binary through `go test -exec`, signed with
+# the entitlement Virtualization.framework asks of a process that uses it.
+set -e
+codesign --force --sign - --entitlements "$(dirname "$0")/../cmd/aibox/aibox.entitlements" "$1" 2>/dev/null
+exec "$@"

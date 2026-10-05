@@ -35,9 +35,14 @@ func Profile(ports []uint16) string {
 
 	b.WriteString("(version 1)\n(deny default)\n")
 
-	// what the runtime and the system libraries look up of the process and
-	// the machine
-	b.WriteString("(allow sysctl-read)\n(allow file-read-metadata)\n")
+	// deny default lets a process read what macOS says of other processes,
+	// their arguments and environment among it, for any process of the user
+	b.WriteString("(deny process-info*)\n(allow process-info* (target self))\n")
+
+	// what the system libraries look up of files. sysctl stays closed: it
+	// hands out the arguments and the environment of every process of the
+	// user, and aibox runs without it once the VM runs.
+	b.WriteString("(allow file-read-metadata)\n")
 
 	// the name service: the files of the resolver, and the daemon that
 	// resolves for the system. resolv.conf links to a file under /var/run,
@@ -47,8 +52,9 @@ func Profile(ports []uint16) string {
 	b.WriteString(`(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))` + "\n")
 
 	// the terminal of the person, which the session puts into raw mode and
-	// asks for its size
-	b.WriteString(`(allow file-ioctl (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))` + "\n")
+	// asks for its size, under whatever name it has. The sandbox lets
+	// aibox open no file, so only the terminal it has open is reached.
+	b.WriteString(`(allow file-ioctl (regex #"^/dev/tty"))` + "\n")
 
 	for _, port := range ports {
 		fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"*:%d\"))\n", port)
@@ -57,8 +63,9 @@ func Profile(ports []uint16) string {
 	return b.String()
 }
 
-// Apply confines the process for good. It must run after every child of the
-// process has started, because children inherit it.
+// Apply confines the whole process for good, every thread of it. It must
+// run after every child of the process has started, because children
+// inherit it.
 func Apply(ports []uint16) error {
 	profile := C.CString(Profile(ports))
 	defer C.free(unsafe.Pointer(profile))

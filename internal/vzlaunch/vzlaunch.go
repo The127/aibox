@@ -165,9 +165,9 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	// once QEMU runs. The VM lives in a process of Virtualization.framework,
 	// which aibox already reaches.
 	if err := b.Confine(spec.Ports); err != nil {
-		_ = stop(v, v.StateChangedNotify())
+		err = errors.Join(fmt.Errorf("confine aibox: %w", err), stop(v, v.StateChangedNotify()))
 
-		return host.Result(fmt.Errorf("confine aibox: %w", err), stopTerminal(), spec.ConsoleLog)
+		return host.Result(err, stopTerminal(), spec.ConsoleLog)
 	}
 
 	vmErr := b.wait(ctx, v, terminal)

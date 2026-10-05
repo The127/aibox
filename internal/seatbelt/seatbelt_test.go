@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/seatbelt"
 )
@@ -61,12 +63,41 @@ func probe(port string, tries []string) int {
 			}
 		case "exec":
 			err = exec.Command(arg).Run() //nolint:gosec // a program of the test
+		case "procargs":
+			err = procargs(arg)
+		case "kill":
+			err = signal(arg)
+		case "lookup":
+			_, err = net.LookupHost(arg) //nolint:gosec // a name of the test
 		}
 
 		fmt.Printf("%s %s\n", what, outcome(err))
 	}
 
 	return 0
+}
+
+// procargs reads the arguments and the environment of the process, which
+// macOS hands out through sysctl.
+func procargs(pid string) error {
+	p, err := strconv.Atoi(pid)
+	if err != nil {
+		return err
+	}
+
+	_, err = unix.SysctlRaw("kern.procargs2", p)
+
+	return err
+}
+
+// signal asks whether the process may be signalled, without signalling it.
+func signal(pid string) error {
+	p, err := strconv.Atoi(pid)
+	if err != nil {
+		return err
+	}
+
+	return syscall.Kill(p, 0)
 }
 
 func outcome(err error) string {
@@ -179,4 +210,39 @@ func TestTheProfileAllowsEachPortOfTheAllowList(t *testing.T) {
 	assert.Contains(t, profile, `(remote tcp "*:443")`)
 	assert.Contains(t, profile, `(remote tcp "*:8443")`)
 	assert.True(t, strings.HasPrefix(profile, "(version 1)\n(deny default)"), profile)
+}
+
+func TestAConfinedProcessReadsNotTheArgumentsAndEnvironmentOfAnother(t *testing.T) {
+	// arrange
+	_, port := listen(t)
+	parent := strconv.Itoa(os.Getpid())
+
+	// act
+	got := confined(t, port, "procargs="+parent)
+
+	// assert
+	assert.Equal(t, "refused", got["procargs"])
+}
+
+func TestAConfinedProcessSignalsNoOtherProcess(t *testing.T) {
+	// arrange
+	_, port := listen(t)
+	parent := strconv.Itoa(os.Getpid())
+
+	// act
+	got := confined(t, port, "kill="+parent)
+
+	// assert
+	assert.Equal(t, "refused", got["kill"])
+}
+
+func TestAConfinedProcessStillResolvesNames(t *testing.T) {
+	// arrange
+	_, port := listen(t)
+
+	// act
+	got := confined(t, port, "lookup=localhost")
+
+	// assert
+	assert.Equal(t, "allowed", got["lookup"])
 }

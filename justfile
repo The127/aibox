@@ -108,6 +108,14 @@ arch:
 arch-describe:
     go tool -modfile=hack/tools/go.mod arch-go describe
 
+# validate the goreleaser config
+release-check:
+    go run github.com/goreleaser/goreleaser/v2@latest check
+
+# build the release artifacts into dist/ without publishing or signing, which needs a Mac for the macOS binary
+release-snapshot:
+    HOMEBREW_TAP_TOKEN=none go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=sign
+
 # check for known vulnerabilities in reachable code
 vuln:
     go tool -modfile=hack/tools/go.mod govulncheck ./...

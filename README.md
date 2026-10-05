@@ -92,6 +92,22 @@ So:
   commit with hooks the project defines.
 - Check `.git/config` and `.git/hooks` for changes you did not make.
 
+## Installing
+
+On macOS, with [Homebrew](https://brew.sh):
+
+```
+brew install --cask the127/tap/aibox
+```
+
+On Linux, each [release](https://github.com/The127/aibox/releases) has a
+`deb` and an `rpm` for amd64, which depend on QEMU, virtiofsd and
+bubblewrap, and a `tar.gz` with only the binary. `checksums.txt` lists
+their checksums, and cosign signed it without a key.
+
+The releases do not hold the VM image yet. Build it from a checkout with
+`just install-image`, which puts it into `~/.aibox/image`.
+
 ## Status
 
 The first version works: `aibox run` in a project folder boots the VM in

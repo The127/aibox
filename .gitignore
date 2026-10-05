@@ -7,3 +7,6 @@ coverage.out
 /.devenv/
 /.devenv.flake.nix
 /.direnv/
+
+# goreleaser output
+/dist/

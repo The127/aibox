@@ -37,6 +37,7 @@ const (
 
 	defaultBootTimeout     = time.Minute
 	defaultSessionEndDelay = 3 * time.Second
+	defaultPowerOffWait    = 10 * time.Second
 	// stopTimeout is how long a VM may take to stop once told to.
 	stopTimeout = 10 * time.Second
 )
@@ -46,18 +47,19 @@ var ErrNoBoot = errors.New("the VM did not come up")
 
 // Backend runs the VM with Virtualization.framework. BootTimeout is how long
 // the guest may take to connect, SessionEndDelay how long the session may go
-// on after the VM stopped, and how long the VM may stay up after the session
-// before it is stopped.
+// on after the VM stopped and PowerOffWait how long the VM may take to power
+// off after the session before it is stopped.
 type Backend struct {
 	BootTimeout     time.Duration
 	SessionEndDelay time.Duration
+	PowerOffWait    time.Duration
 }
 
 var _ backend.Backend = Backend{}
 
 // NewBackend returns the Backend with its default timeouts.
 func NewBackend() Backend {
-	return Backend{BootTimeout: defaultBootTimeout, SessionEndDelay: defaultSessionEndDelay}
+	return Backend{BootTimeout: defaultBootTimeout, SessionEndDelay: defaultSessionEndDelay, PowerOffWait: defaultPowerOffWait}
 }
 
 // CheckImage says whether the folder holds the kernel and the root disk.
@@ -91,7 +93,16 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer func() { _ = console.Close() }()
 
-	config, err := configure(m, console)
+	// the guest reads nothing from its console, and vz takes only the
+	// number of the file, so the file stays open until the VM is gone
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = devNull.Close() }()
+
+	config, err := configure(m, devNull, console)
 	if err != nil {
 		return err
 	}
@@ -110,6 +121,8 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	proxyListener, err := socket.Listen(proxyPort)
 	if err != nil {
+		_ = newListener(terminalListener).Close()
+
 		return fmt.Errorf("listen for the proxy: %w", err)
 	}
 
@@ -156,10 +169,18 @@ func startError(err error, state string) error {
 	return fmt.Errorf("start the VM: %w", err)
 }
 
+// runningVM is what wait needs of a VM of vz.
+type runningVM interface {
+	State() vz.VirtualMachineState
+	CanStop() bool
+	Stop() error
+	StateChangedNotify() <-chan vz.VirtualMachineState
+}
+
 // wait waits for the VM to stop by itself, and stops it when the context
 // ends, the guest does not connect in time or the VM stays up after the
 // session.
-func (b Backend) wait(ctx context.Context, v *vz.VirtualMachine, terminal *watched) error {
+func (b Backend) wait(ctx context.Context, v runningVM, terminal *watched) error {
 	states := v.StateChangedNotify()
 	boot := time.NewTimer(b.BootTimeout)
 
@@ -183,7 +204,7 @@ func (b Backend) wait(ctx context.Context, v *vz.VirtualMachine, terminal *watch
 
 			connected = nil
 		case <-ended:
-			afterSession = time.After(b.SessionEndDelay)
+			afterSession = time.After(b.PowerOffWait)
 			ended = nil
 		case <-afterSession:
 			return stop(v, states)
@@ -203,10 +224,15 @@ func (b Backend) wait(ctx context.Context, v *vz.VirtualMachine, terminal *watch
 	}
 }
 
-// stop stops the VM at once and waits for it, for a while.
-func stop(v *vz.VirtualMachine, states <-chan vz.VirtualMachineState) error {
+// stop stops the VM at once and waits for it, for a while. A VM that
+// stopped by itself meanwhile is stopped, its state may still be on its way.
+func stop(v runningVM, states <-chan vz.VirtualMachineState) error {
+	if v.State() == vz.VirtualMachineStateStopped {
+		return nil
+	}
+
 	if !v.CanStop() {
-		return errors.New("the VM cannot be stopped")
+		return fmt.Errorf("the VM cannot be stopped in the state %v", v.State())
 	}
 
 	if err := v.Stop(); err != nil {
@@ -230,7 +256,7 @@ func stop(v *vz.VirtualMachine, states <-chan vz.VirtualMachineState) error {
 // configure describes the machine to Virtualization.framework: the kernel
 // with the words of the guest, the root disk read-only and the state disk,
 // the shares, the console, vsock and entropy, and no network device.
-func configure(m vm.Machine, console *os.File) (*vz.VirtualMachineConfiguration, error) {
+func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfiguration, error) {
 	cmdline := strings.Join(append([]string{baseCmdline}, m.GuestWords()...), " ")
 
 	boot, err := vz.NewLinuxBootLoader(m.Kernel, vz.WithCommandLine(cmdline))
@@ -243,7 +269,7 @@ func configure(m vm.Machine, console *os.File) (*vz.VirtualMachineConfiguration,
 		return nil, fmt.Errorf("configure the VM: %w", err)
 	}
 
-	if err := addConsole(config, console); err != nil {
+	if err := addConsole(config, devNull, console); err != nil {
 		return nil, err
 	}
 
@@ -276,13 +302,7 @@ func configure(m vm.Machine, console *os.File) (*vz.VirtualMachineConfiguration,
 	return config, nil
 }
 
-func addConsole(config *vz.VirtualMachineConfiguration, console *os.File) error {
-	// the guest reads nothing from its console
-	devNull, err := os.Open(os.DevNull)
-	if err != nil {
-		return err
-	}
-
+func addConsole(config *vz.VirtualMachineConfiguration, devNull, console *os.File) error {
 	attachment, err := vz.NewFileHandleSerialPortAttachment(devNull, console)
 	if err != nil {
 		return fmt.Errorf("attach the console: %w", err)

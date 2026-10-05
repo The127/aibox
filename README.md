@@ -187,6 +187,11 @@ Linux. What is different:
   comparing folders rather than paths, since `/users/YOU` and
   `/System/Volumes/Data/Users/you` are your home folder too, and
   `/System/Volumes/Data` holds it.
+- The VM can set and remove the extended attributes of files in the project,
+  `com.apple.quarantine` among them, and the files it makes carry none, so
+  Gatekeeper never checks a program that comes out of the VM.
+  Virtualization.framework has no option against it. Like everything the VM
+  writes, such a program is untrusted until you have read it.
 - The state disk is the same sparse file. Virtualization.framework locks it
   for as long as the VM runs, which keeps a second run of the project off.
 - Once the VM runs, aibox confines itself with Seatbelt, the sandbox of

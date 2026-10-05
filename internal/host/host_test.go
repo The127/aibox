@@ -180,11 +180,10 @@ func TestAProxyWhoseVMWentAwayIsNotReportedAsBroken(t *testing.T) {
 	// arrange
 	listener := listen(t)
 	stderr := &syncBuffer{}
-	stop := host.ServeProxy(context.Background(), listener, proxy.Options{}, stderr)
+	require.NoError(t, listener.Close())
 
 	// act
-	require.NoError(t, listener.Close())
-	time.Sleep(50 * time.Millisecond)
+	stop := host.ServeProxy(context.Background(), listener, proxy.Options{}, stderr)
 	stop()
 
 	// assert

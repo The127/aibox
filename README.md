@@ -150,7 +150,10 @@ the same. What differs:
   `rosetta = false` under `[build]` in `~/.config/container/config.toml`
   when Rosetta is not installed.
 - The tool mounts the project, the home and the `mounts` of the config
-  itself, and keeps the state of a project in a volume named after it.
+  itself. The state of a project is a volume of the tool, named
+  `aibox-state-` and a hash of the path of the project. It keeps its size
+  and stays when the project goes, `container volume rm` removes it. A
+  second run of a project is refused while the first runs, as on Linux.
 - The container has no network. The tool publishes a socket of the guest on
   the host, and the terminal and the proxy share that one connection.
 - The init runs as root of its own VM with every capability, as it does under

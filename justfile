@@ -14,8 +14,7 @@ init:
 image: init
     miso build -o out image
 
-# the arm64 init is a file of its own, so that it never ends up in the image of QEMU
-# build the image for Apple's container tool into its image store
+# build the image for Apple's container tool, with an arm64 init apart from the one of QEMU
 container-image:
     GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o image/aibox-init-arm64 ./cmd/aibox-init
     container build --file image/Containerfile --tag aibox:latest image

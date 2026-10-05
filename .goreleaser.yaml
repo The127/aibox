@@ -1,0 +1,129 @@
+version: 2
+
+# goreleaser runs on a Mac: the macOS binary needs cgo for
+# Virtualization.framework, and the Linux one is static
+builds:
+  - id: linux
+    main: ./cmd/aibox
+    binary: aibox
+    env:
+      - CGO_ENABLED=0
+    # the SHA-256 of the images of the release, which aibox downloads
+    ldflags:
+      - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+  - id: darwin
+    main: ./cmd/aibox
+    binary: aibox
+    env:
+      - CGO_ENABLED=1
+    # the SHA-256 of the images of the release, which aibox downloads
+    ldflags:
+      - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    # Virtualization.framework runs only a program signed with its
+    # entitlement. An ad hoc signature is enough for that.
+    hooks:
+      post:
+        - codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements {{ .Path }}
+
+archives:
+  - id: linux
+    ids:
+      - linux
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+  - id: darwin
+    ids:
+      - darwin
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+# the VM image is not in the packages
+nfpms:
+  - package_name: aibox
+    ids:
+      - linux
+    formats:
+      - deb
+      - rpm
+    maintainer: karo <karolinkostial@gmail.com>
+    description: Run Claude Code inside a microVM, with your project folder mounted into it.
+    homepage: https://github.com/The127/aibox
+    license: Apache-2.0
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/aibox/LICENSE
+    overrides:
+      deb:
+        dependencies:
+          - qemu-system-x86
+          - virtiofsd
+          - bubblewrap
+      rpm:
+        dependencies:
+          - qemu-system-x86-core
+          - virtiofsd
+          - bubblewrap
+
+# the cask takes the quarantine off aibox: macOS refuses to start a
+# downloaded program that is signed ad hoc and not notarized
+homebrew_casks:
+  - name: aibox
+    ids:
+      - darwin
+    binaries:
+      - aibox
+    description: Run Claude Code inside a microVM, with your project folder mounted into it.
+    homepage: https://github.com/The127/aibox
+    license: Apache-2.0
+    repository:
+      owner: The127
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/aibox"]
+          end
+
+# the VM images, which the release workflow builds into images/ before
+# goreleaser runs, and which aibox downloads on its first run
+checksum:
+  name_template: checksums.txt
+  extra_files:
+    - glob: ./images/aibox-image_*.tar.gz
+
+# keyless: the workflow's own identity signs, there is no key to keep
+signs:
+  - cmd: cosign
+    signature: ${artifact}.sigstore.json
+    args:
+      - sign-blob
+      - --bundle=${signature}
+      - --yes
+      - ${artifact}
+    artifacts: checksum
+
+# release-please writes the notes
+changelog:
+  disable: true
+
+release:
+  prerelease: auto
+  extra_files:
+    - glob: ./images/aibox-image_*.tar.gz

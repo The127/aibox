@@ -7,3 +7,8 @@ coverage.out
 /.devenv/
 /.devenv.flake.nix
 /.direnv/
+
+# goreleaser output
+/dist/
+# the VM images the release workflow hands to goreleaser
+/images/

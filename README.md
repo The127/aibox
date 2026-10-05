@@ -92,6 +92,39 @@ So:
   commit with hooks the project defines.
 - Check `.git/config` and `.git/hooks` for changes you did not make.
 
+## Installing
+
+On macOS, with [Homebrew](https://brew.sh):
+
+```
+brew install --cask the127/tap/aibox
+```
+
+On Linux, each [release](https://github.com/The127/aibox/releases) has a
+`deb` and an `rpm` for amd64, which depend on QEMU, virtiofsd and
+bubblewrap, and a `tar.gz` with the binary. aibox needs Linux 6.7 or newer
+and virtiofsd at `/usr/libexec/virtiofsd`, as Debian 13, Ubuntu 24.04 and
+Fedora have it.
+
+`checksums.txt` lists the checksums of all files of a release, and cosign
+signed it without a key. To check it:
+
+```
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/The127/aibox/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+```
+
+The packages do not hold the VM image. The first `aibox run` downloads the
+image of its release, about 150 MB, and keeps it in
+`~/.aibox/image/<version>`. It takes only the image whose SHA-256 the
+release built into it. After an upgrade it downloads the new image and
+removes the old one. Without network, `--image` runs with an image of your
+own. aibox built from a checkout has no release, so it uses the image
+`just install-image` puts into `~/.aibox/image`.
+
 ## Status
 
 The first version works: `aibox run` in a project folder boots the VM in

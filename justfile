@@ -23,15 +23,12 @@ sign path:
 macos-packages:
     @GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox
 
-# build the init of the VM, which the image copies in
-[linux]
-init:
-    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
+# the architecture of the VM: QEMU on Linux runs amd64, Virtualization.framework on macOS arm64
+vm-arch := if os() == "macos" { "arm64" } else { "amd64" }
 
-# build the init of the VM for arm64, which the image copies in
-[macos]
-init:
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
+# build the init of the VM, which the image copies in
+init arch=vm-arch:
+    GOOS=linux GOARCH={{arch}} CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
 
 # build the VM image into out/
 [linux]
@@ -50,6 +47,15 @@ image: init
       mv "$found" out/; \
     done
     rm -rf out/build
+
+# build the VM image for arm64 into out/ with docker, as the release does on an arm64 Linux runner
+image-docker-arm64: (init "arm64")
+    docker build --file image/Containerfile --target out --output type=local,dest=out image
+
+# pack the VM image in out/ into the archive a release carries for the architecture
+# with only the two files: tar of macOS would add the extended attributes as ._ files
+image-archive arch:
+    COPYFILE_DISABLE=1 tar -czf out/aibox-image_{{arch}}.tar.gz -C out vmlinuz os.ext4
 
 # build aibox and run it on this repo with the image from out/
 aibox *args: build
@@ -107,6 +113,14 @@ arch:
 # describe the package dependency rules in prose
 arch-describe:
     go tool -modfile=hack/tools/go.mod arch-go describe
+
+# validate the goreleaser config
+release-check:
+    go run github.com/goreleaser/goreleaser/v2@latest check
+
+# build the release artifacts into dist/ without publishing or signing, which needs a Mac for the macOS binary
+release-snapshot:
+    HOMEBREW_TAP_TOKEN=none go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=sign
 
 # check for known vulnerabilities in reachable code
 vuln:

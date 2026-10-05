@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
+	"github.com/the127/aibox/internal/image"
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
@@ -44,7 +46,7 @@ func runCommand(deps dependencies) *cli.Command {
 		Name:  "run",
 		Usage: "boot the VM with the current folder shared into it",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "~/.aibox/image"},
+			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "the image of this release, or ~/.aibox/image for a build from a checkout"},
 			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
@@ -90,12 +92,14 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	image := cmd.String("image")
-	if image == "" {
-		image = filepath.Join(aibox, "image")
+	vmImage := cmd.String("image")
+	if vmImage == "" {
+		if vmImage, err = defaultImage(ctx, deps, filepath.Join(aibox, "image")); err != nil {
+			return err
+		}
 	}
 
-	if _, _, err := machine.Image(image); err != nil {
+	if _, _, err := machine.Image(vmImage); err != nil {
 		return err
 	}
 
@@ -134,7 +138,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	defer func() { _ = log.Close() }()
 
 	return deps.backend.Run(ctx, backend.Spec{
-		Image:       image,
+		Image:       vmImage,
 		State:       p.State,
 		StateBytes:  stateBytes(cfg),
 		MemoryMiB:   flagOrConfig(cmd, "memory", cfg.Memory),
@@ -306,6 +310,36 @@ func resolved(path string) string {
 	}
 
 	return filepath.Clean(path)
+}
+
+// defaultImage is the folder of the image in parent that this aibox uses.
+// A release uses the image it was released with, which it downloads the
+// first time and which replaces the images of the releases before. A build
+// from a checkout uses the one just install-image puts right into parent.
+func defaultImage(ctx context.Context, deps dependencies, parent string) (string, error) {
+	version := deps.version()
+	digest, ok := deps.imageDigest(runtime.GOARCH)
+
+	if !image.Released(version) || !ok {
+		return parent, nil
+	}
+
+	dir := filepath.Join(parent, version)
+	if _, _, err := machine.Image(dir); err == nil {
+		return dir, nil
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "aibox: downloading the VM image of %s\n", version)
+
+	if err := deps.fetchImage(ctx, version, runtime.GOARCH, digest, dir); err != nil {
+		return "", fmt.Errorf("download the VM image of %s: %w. --image runs with an image of your own instead", version, err)
+	}
+
+	if err := image.Prune(parent, version); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "aibox: remove the images of older releases: %v\n", err)
+	}
+
+	return dir, nil
 }
 
 // defaultDiskGiB is the size of the state disk unless the config says

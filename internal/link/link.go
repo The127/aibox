@@ -5,6 +5,8 @@
 package link
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -16,6 +18,24 @@ import (
 const (
 	kindTerminal byte = 't'
 	kindProxy    byte = 'p'
+)
+
+// greeting is the first line the guest end sends. A runtime may take the
+// connection of the host before the guest listens and close it without a
+// word, so the host end waits for this line to know a guest answered.
+const greeting = "aibox-link 1\n"
+
+// greetingTimeout is how long the host end waits for the greeting.
+const greetingTimeout = 10 * time.Second
+
+var (
+	// ErrNoGuest is a connection that closed before the guest greeted, as
+	// one the runtime took while the guest did not listen yet. The host may
+	// connect again.
+	ErrNoGuest = errors.New("no guest answered on the connection")
+	// ErrNotAGuest is a connection whose other end greeted with something
+	// else than an aibox guest does.
+	ErrNotAGuest = errors.New("the other end is not an aibox guest")
 )
 
 // kindTimeout is how long a new stream may take to name its kind, and
@@ -56,6 +76,12 @@ func Host(conn net.Conn) (*HostEnd, error) {
 }
 
 func host(conn net.Conn, kind, wait time.Duration) (*HostEnd, error) {
+	if err := awaitGreeting(conn); err != nil {
+		_ = conn.Close()
+
+		return nil, err
+	}
+
 	session, err := yamux.Server(conn, config())
 	if err != nil {
 		return nil, err
@@ -73,6 +99,24 @@ func host(conn net.Conn, kind, wait time.Duration) (*HostEnd, error) {
 	go h.route()
 
 	return h, nil
+}
+
+func awaitGreeting(conn net.Conn) error {
+	_ = conn.SetReadDeadline(time.Now().Add(greetingTimeout))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	got := make([]byte, len(greeting))
+
+	n, err := io.ReadFull(conn, got)
+	if n == 0 && err != nil {
+		return fmt.Errorf("%w: %w", ErrNoGuest, err)
+	}
+
+	if err != nil || string(got) != greeting {
+		return fmt.Errorf("%w: it began with %q", ErrNotAGuest, got[:n])
+	}
+
+	return nil
 }
 
 // Terminal accepts the terminal streams of the guest. Accept fails with
@@ -186,6 +230,10 @@ type GuestEnd struct {
 
 // Guest starts the guest end of a link over the connection.
 func Guest(conn net.Conn) (*GuestEnd, error) {
+	if _, err := io.WriteString(conn, greeting); err != nil {
+		return nil, fmt.Errorf("greet the host: %w", err)
+	}
+
 	session, err := yamux.Client(conn, config())
 	if err != nil {
 		return nil, err

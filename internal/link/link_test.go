@@ -1,10 +1,12 @@
 package link_test
 
 import (
+	"errors"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -15,19 +17,40 @@ import (
 	"github.com/the127/aibox/internal/link"
 )
 
-// ends are the two ends of a link over an in-memory connection.
+// pair is two connected sockets. Unlike net.Pipe they buffer, so that one
+// end can write its greeting before the other reads it.
+func pair(t *testing.T) (net.Conn, net.Conn) {
+	t.Helper()
+
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	require.NoError(t, err)
+
+	conns := make([]net.Conn, 2)
+
+	for i, fd := range fds {
+		file := os.NewFile(uintptr(fd), "pair")
+		conns[i], err = net.FileConn(file)
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+		t.Cleanup(func() { _ = conns[i].Close() })
+	}
+
+	return conns[0], conns[1]
+}
+
+// ends are the two ends of a link over a pair of sockets.
 func ends(t *testing.T) (*link.HostEnd, *link.GuestEnd) {
 	t.Helper()
 
-	hostConn, guestConn := net.Pipe()
-
-	host, err := link.Host(hostConn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = host.Close() })
+	hostConn, guestConn := pair(t)
 
 	guest, err := link.Guest(guestConn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = guest.Close() })
+
+	host, err := link.Host(hostConn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = host.Close() })
 
 	return host, guest
 }
@@ -147,14 +170,11 @@ func TestAStreamReachesOnlyTheListenerOfItsKind(t *testing.T) {
 
 func TestAStreamOfAnUnknownKindIsTurnedAway(t *testing.T) {
 	// arrange
-	hostConn, guestConn := net.Pipe()
+	hostConn, guestConn := pair(t)
+	session := rawGuest(t, guestConn)
 	host, err := link.Host(hostConn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = host.Close() })
-
-	session, err := yamux.Client(guestConn, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = session.Close() })
 
 	stream, err := session.Open()
 	require.NoError(t, err)
@@ -341,6 +361,12 @@ func TestAStreamOfTheHostCanStopSendingToo(t *testing.T) {
 	assert.Equal(t, "done", string(got))
 }
 
+func isTimeout(err error) bool {
+	var timeout net.Error
+
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
 // readEnds reads from the conn in the background and reports when the read
 // ends, with its error.
 func readEnds(conn net.Conn) <-chan error {
@@ -410,6 +436,9 @@ func rawGuest(t *testing.T, conn net.Conn) *yamux.Session {
 	config.AcceptBacklog = 1000
 	config.LogOutput = io.Discard
 
+	_, err := io.WriteString(conn, link.Greeting)
+	require.NoError(t, err)
+
 	session, err := yamux.Client(conn, config)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
@@ -419,12 +448,13 @@ func rawGuest(t *testing.T, conn net.Conn) *yamux.Session {
 
 func TestAStreamThatNeverNamesItsKindIsClosed(t *testing.T) {
 	// arrange
-	hostConn, guestConn := net.Pipe()
+	hostConn, guestConn := pair(t)
+	guest := rawGuest(t, guestConn)
 	host, err := link.HostWithTimeouts(hostConn, 50*time.Millisecond, time.Minute)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = host.Close() })
 
-	stream, err := rawGuest(t, guestConn).OpenStream()
+	stream, err := guest.OpenStream()
 	require.NoError(t, err)
 
 	// act
@@ -436,14 +466,14 @@ func TestAStreamThatNeverNamesItsKindIsClosed(t *testing.T) {
 
 func TestAStreamNobodyAcceptsIsClosedAfterAWhile(t *testing.T) {
 	// arrange
-	hostConn, guestConn := net.Pipe()
-	host, err := link.HostWithTimeouts(hostConn, time.Minute, 50*time.Millisecond)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = host.Close() })
-
+	hostConn, guestConn := pair(t)
 	guest, err := link.Guest(guestConn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = guest.Close() })
+
+	host, err := link.HostWithTimeouts(hostConn, time.Minute, 50*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = host.Close() })
 
 	conn, err := guest.DialTerminal()
 	require.NoError(t, err)
@@ -457,23 +487,21 @@ func TestAStreamNobodyAcceptsIsClosedAfterAWhile(t *testing.T) {
 
 func TestTheGuestCannotMakeTheHostHoldManyStreams(t *testing.T) {
 	// arrange
-	hostConn, guestConn := net.Pipe()
+	hostConn, guestConn := pair(t)
+	guest := rawGuest(t, guestConn)
 	host, err := link.HostWithTimeouts(hostConn, time.Minute, time.Minute)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = host.Close() })
 
-	guest := rawGuest(t, guestConn)
-
 	// act
-	turnedAway := 0
+	streams := make([]*yamux.Stream, 0, 300)
 
 	for range 300 {
 		stream, err := guest.OpenStream()
 		require.NoError(t, err)
 
-		if _, err := stream.Write([]byte{'t'}); err != nil {
-			turnedAway++
-		}
+		_, _ = stream.Write([]byte{'t'})
+		streams = append(streams, stream)
 	}
 
 	// assert
@@ -484,6 +512,44 @@ func TestTheGuestCannotMakeTheHostHoldManyStreams(t *testing.T) {
 		held = host.Streams()
 	}
 
+	// a stream the host turned away was reset, one it holds just has nothing
+	// to read yet
+	turnedAway := 0
+
+	for _, stream := range streams {
+		require.NoError(t, stream.SetReadDeadline(time.Now().Add(10*time.Millisecond)))
+
+		if _, err := stream.Read(make([]byte, 1)); err != nil && !isTimeout(err) {
+			turnedAway++
+		}
+	}
+
 	assert.LessOrEqual(t, held, 40, "the host holds every stream the guest opened")
 	assert.Positive(t, turnedAway, "no stream was turned away")
+}
+
+func TestTheHostTellsAConnectionClosedBeforeTheGreetingFromAGuest(t *testing.T) {
+	// arrange
+	hostConn, guestConn := pair(t)
+	require.NoError(t, guestConn.Close())
+
+	// act
+	_, err := link.Host(hostConn)
+
+	// assert
+	assert.ErrorIs(t, err, link.ErrNoGuest)
+}
+
+func TestTheHostRefusesAConnectionThatIsNoGuest(t *testing.T) {
+	// arrange
+	hostConn, guestConn := pair(t)
+	_, err := io.WriteString(guestConn, "HTTP/1.1 400 Bad Request\r\n")
+	require.NoError(t, err)
+
+	// act
+	_, err = link.Host(hostConn)
+
+	// assert
+	assert.ErrorIs(t, err, link.ErrNotAGuest)
+	assert.NotErrorIs(t, err, link.ErrNoGuest)
 }

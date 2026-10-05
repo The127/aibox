@@ -6,16 +6,18 @@ default:
 build:
     CGO_ENABLED=0 go build -o bin/aibox ./cmd/aibox
 
-# build the init of the VM for the architecture, which the image copies in
-init arch="amd64":
-    GOOS=linux GOARCH={{arch}} CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
+# build the init of the VM, which the image copies in
+init:
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
 
 # build the VM image into out/
 image: init
     miso build -o out image
 
-# build the image for Apple's container tool into its image store
-container-image: (init "arm64")
+# build the image for Apple's container tool into its image store, with an
+# arm64 init of its own so that it never ends up in the image of QEMU
+container-image:
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o image/aibox-init-arm64 ./cmd/aibox-init
     container build --file image/Containerfile --tag aibox:latest image
 
 # build aibox and run it on this repo with the image from out/

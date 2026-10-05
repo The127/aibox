@@ -4,6 +4,7 @@ CLAUDE.local.md
 coverage.out
 /out/
 /image/aibox-init
+/image/aibox-init-arm64
 /.devenv/
 /.devenv.flake.nix
 /.direnv/

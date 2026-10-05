@@ -5,8 +5,9 @@
 #
 #   just container-image
 #
-# builds the init of the VM into image/aibox-init first, so that the image
-# needs no Go toolchain.
+# builds the init of the VM for arm64 into image/aibox-init-arm64 first, so
+# that the image needs no Go toolchain. The runtime formats the state
+# volume, so unlike the Imagefile the image has no mke2fs.
 
 # The programs of the VM, each collected with the libraries it loads into a
 # tree of its own under /out.
@@ -22,7 +23,6 @@ RUN curl -fsSL https://claude.ai/install.sh | bash && \
 RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
 RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
 RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
-RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
 # rootless containers map their users through these two setuid programs
 RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
 
@@ -43,16 +43,17 @@ COPY --from=tools /out/git/ /
 COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
 COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
-COPY --from=tools /out/mke2fs/ /
-COPY --from=tools /etc/mke2fs.conf /etc/
 # lddtree drops the setuid bit, which the two need to map the subuid
 # range of "user", the user of the passwd file
 COPY --from=tools /out/uidmap/ /
 RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group subuid subgid /etc/
+# podman's defaults: a container shares the network of the VM, and images
+# are not checked for signatures, since the allow list of the proxy already
+# says where they may come from
 COPY containers/ /etc/containers/
 COPY aibox.md /etc/aibox/prompt.md
-COPY aibox-init /sbin/init
+COPY aibox-init-arm64 /sbin/init
 
 ENTRYPOINT ["/sbin/init", "container"]

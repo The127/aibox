@@ -37,8 +37,21 @@ func TestRunArgs(t *testing.T) {
 		"--mount", "type=bind,source=/Users/someone/.aibox/projects/p/home,target=/home/user",
 		"--volume", "aibox-state-home-someone-project:/var/lib/aibox/state",
 		"--publish-socket", "/tmp/aibox-1234/terminal.sock:/run/aibox/terminal.sock",
-		"aibox:1",
+		"--", "aibox:1",
 	}, args)
+}
+
+// values are the values of every occurrence of the flag, in order.
+func values(args []string, flag string) []string {
+	var result []string
+
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			result = append(result, args[i+1])
+		}
+	}
+
+	return result
 }
 
 func TestRunArgsMountTheFurtherFoldersReadOnlyAfterTheHome(t *testing.T) {
@@ -52,11 +65,11 @@ func TestRunArgsMountTheFurtherFoldersReadOnlyAfterTheHome(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, []string{
-		"--mount", "type=bind,source=/Users/someone/.aibox/projects/p/home,target=/home/user",
-		"--mount", "type=bind,source=/sdk/go,target=/opt/go,readonly",
-		"--mount", "type=bind,source=/opt/homebrew/bin,target=/opt/bin,readonly",
-		"--volume",
-	}, args[12:19])
+		"type=bind,source=/Users/someone/project,target=/project",
+		"type=bind,source=/Users/someone/.aibox/projects/p/home,target=/home/user",
+		"type=bind,source=/sdk/go,target=/opt/go,readonly",
+		"type=bind,source=/opt/homebrew/bin,target=/opt/bin,readonly",
+	}, values(args, "--mount"))
 }
 
 func TestRunArgsTellTheGuestToOpenAShell(t *testing.T) {
@@ -69,7 +82,16 @@ func TestRunArgsTellTheGuestToOpenAShell(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--kernel-arg", "aibox.shell", "aibox:1"}, args[len(args)-3:])
+	assert.Equal(t, []string{"aibox.shell"}, values(args, "--kernel-arg"))
+}
+
+func TestRunArgsPassNoSettingsWithoutAShell(t *testing.T) {
+	// act
+	args, err := machine().RunArgs()
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, values(args, "--kernel-arg"))
 }
 
 func TestRunArgsRefuseAFolderWithACommaInItsPath(t *testing.T) {
@@ -81,30 +103,110 @@ func TestRunArgsRefuseAFolderWithACommaInItsPath(t *testing.T) {
 	_, err := m.RunArgs()
 
 	// assert
-	require.ErrorIs(t, err, apple.ErrComma)
+	require.ErrorIs(t, err, apple.ErrMountPath)
 	assert.ErrorContains(t, err, "/sdk/go,readonly=false")
 }
 
-func TestRunArgsRefuseAProjectWithACommaInItsPath(t *testing.T) {
+func TestRunArgsRefuseAFolderWithAnEqualsSignInItsPath(t *testing.T) {
 	// arrange
 	m := machine()
-	m.Project = "/Users/someone/a,b"
+	m.Mounts = []apple.Mount{{Host: "/sdk/a=b", Guest: "/opt/go"}}
 
 	// act
 	_, err := m.RunArgs()
 
 	// assert
-	require.ErrorIs(t, err, apple.ErrComma)
+	require.ErrorIs(t, err, apple.ErrMountPath)
 }
 
-func TestRunArgsRefuseASocketWithAColonInItsPath(t *testing.T) {
+func TestRunArgsRefuseAGuestPathWithAComma(t *testing.T) {
 	// arrange
 	m := machine()
-	m.TerminalSocket = "/tmp/a:b/terminal.sock"
+	m.Mounts = []apple.Mount{{Host: "/sdk/go", Guest: "/opt/go,x"}}
 
 	// act
 	_, err := m.RunArgs()
 
 	// assert
-	require.ErrorIs(t, err, apple.ErrColon)
+	require.ErrorIs(t, err, apple.ErrMountPath)
+}
+
+func TestRunArgsRefuseAProjectOrHomeThatCannotBeMounted(t *testing.T) {
+	// arrange
+	project, home, empty := machine(), machine(), machine()
+	project.Project = "/Users/someone/a,b"
+	home.Home = "/Users/someone/a=b"
+	empty.Home = ""
+
+	// act
+	_, projectErr := project.RunArgs()
+	_, homeErr := home.RunArgs()
+	_, emptyErr := empty.RunArgs()
+
+	// assert
+	require.ErrorIs(t, projectErr, apple.ErrMountPath)
+	require.ErrorIs(t, homeErr, apple.ErrMountPath)
+	require.ErrorIs(t, emptyErr, apple.ErrMountPath)
+}
+
+func TestRunArgsRefuseASocketPathWithAColonOrNone(t *testing.T) {
+	// arrange
+	colon, empty := machine(), machine()
+	colon.TerminalSocket = "/tmp/a:b/terminal.sock"
+	empty.TerminalSocket = ""
+
+	// act
+	_, colonErr := colon.RunArgs()
+	_, emptyErr := empty.RunArgs()
+
+	// assert
+	require.ErrorIs(t, colonErr, apple.ErrSocketPath)
+	require.ErrorIs(t, emptyErr, apple.ErrSocketPath)
+}
+
+func TestRunArgsRefuseNamesTheToolWouldMisread(t *testing.T) {
+	// arrange
+	dash, colon, noImage := machine(), machine(), machine()
+	dash.Name = "-x"
+	colon.State = "state:ro"
+	noImage.Image = ""
+
+	// act
+	_, dashErr := dash.RunArgs()
+	_, colonErr := colon.RunArgs()
+	_, noImageErr := noImage.RunArgs()
+
+	// assert
+	require.ErrorIs(t, dashErr, apple.ErrName)
+	assert.ErrorContains(t, dashErr, "-x")
+	require.ErrorIs(t, colonErr, apple.ErrName)
+	require.ErrorIs(t, noImageErr, apple.ErrName)
+}
+
+func TestRunArgsTakeAnImageWithATag(t *testing.T) {
+	// arrange
+	m := machine()
+	m.Image = "ghcr.io/someone/aibox:1.2"
+
+	// act
+	args, err := m.RunArgs()
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--", "ghcr.io/someone/aibox:1.2"}, args[len(args)-2:])
+}
+
+func TestRunArgsRefuseAVMWithoutCPUsOrMemory(t *testing.T) {
+	// arrange
+	cpus, memory := machine(), machine()
+	cpus.CPUs = 0
+	memory.MemoryMiB = -1
+
+	// act
+	_, cpusErr := cpus.RunArgs()
+	_, memoryErr := memory.RunArgs()
+
+	// assert
+	require.ErrorIs(t, cpusErr, apple.ErrSize)
+	require.ErrorIs(t, memoryErr, apple.ErrSize)
 }

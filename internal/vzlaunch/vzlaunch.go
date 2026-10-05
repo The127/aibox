@@ -20,6 +20,7 @@ import (
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/machine"
+	"github.com/the127/aibox/internal/seatbelt"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -53,18 +54,25 @@ var (
 // Backend runs the VM with Virtualization.framework. BootTimeout is how long
 // the guest may take to connect, SessionEndDelay how long the session may go
 // on after the VM stopped and PowerOffWait how long the VM may take to power
-// off after the session before it is stopped.
+// off after the session before it is stopped. Confine is called once the VM
+// runs, with the TCP ports the proxy may still connect to.
 type Backend struct {
 	BootTimeout     time.Duration
 	SessionEndDelay time.Duration
 	PowerOffWait    time.Duration
+	Confine         func(ports []uint16) error
 }
 
 var _ backend.Backend = Backend{}
 
 // NewBackend returns the Backend with its default timeouts.
 func NewBackend() Backend {
-	return Backend{BootTimeout: defaultBootTimeout, SessionEndDelay: defaultSessionEndDelay, PowerOffWait: defaultPowerOffWait}
+	return Backend{
+		BootTimeout:     defaultBootTimeout,
+		SessionEndDelay: defaultSessionEndDelay,
+		PowerOffWait:    defaultPowerOffWait,
+		Confine:         seatbelt.Apply,
+	}
 }
 
 // CheckImage says whether the folder holds the kernel and the root disk.
@@ -151,6 +159,15 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	// which keeps a second run of the project off
 	if err := v.Start(); err != nil {
 		return host.Result(startError(err, m.State), stopTerminal(), spec.ConsoleLog)
+	}
+
+	// aibox needs nothing else of the machine once the VM runs, as on Linux
+	// once QEMU runs. The VM lives in a process of Virtualization.framework,
+	// which aibox already reaches.
+	if err := b.Confine(spec.Ports); err != nil {
+		_ = stop(v, v.StateChangedNotify())
+
+		return host.Result(fmt.Errorf("confine aibox: %w", err), stopTerminal(), spec.ConsoleLog)
 	}
 
 	vmErr := b.wait(ctx, v, terminal)

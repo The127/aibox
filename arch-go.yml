@@ -65,7 +65,17 @@ dependenciesRules:
         - '**.internal.host$'
         - '**.internal.machine$'
         - '**.internal.vm$'
+        - '**.internal.seatbelt$'
     shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # seatbelt confines aibox on macOS with the sandbox of the system and
+  # knows nothing of aibox
+  - package: '**.internal.seatbelt$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host

@@ -57,10 +57,8 @@ type Spec struct {
 	Stderr io.Writer
 }
 
-// Mount is a host folder that appears read-only at Guest in the VM. Tag
-// names it for the guest.
+// Mount is a host folder that appears read-only at Guest in the VM.
 type Mount struct {
-	Tag   string
 	Host  string
 	Guest string
 }

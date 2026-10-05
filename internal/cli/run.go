@@ -31,13 +31,9 @@ var errNoTerminal = errors.New("run needs a terminal on stdin")
 // shell files and keys of the person, and could change its own allow list.
 var errNotAProject = errors.New("run must start in a project folder")
 
-// the tags of the mounts of the config, followed by their position
-const mountTagPrefix = "mount"
-
 // The skills of the person are shared from their home on the host into the
 // home of the VM.
 const (
-	skillsTag      = "skills"
 	hostSkillsDir  = ".claude/skills"
 	guestSkillsDir = "/home/user/.claude/skills"
 )
@@ -112,7 +108,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	mounts, err := mountShares(deps.homeDir, cfg.Mounts)
+	mounts, err := mountFolders(deps.homeDir, cfg.Mounts)
 	if err != nil {
 		return err
 	}
@@ -304,10 +300,10 @@ func stateBytes(cfg config.Config) int64 {
 	return int64(gib) << 30
 }
 
-// mountShares returns the mount of the skills of the person, when the host
+// mountFolders returns the mount of the skills of the person, when the host
 // has any and no mount of the config takes their place, and a mount for
 // each mount of the config, once the host folders are known to exist.
-func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]backend.Mount, error) {
+func mountFolders(homeDir func() (string, error), mounts []config.Mount) ([]backend.Mount, error) {
 	home, err := homeDir()
 	if err != nil {
 		return nil, fmt.Errorf("find the home folder: %w", err)
@@ -319,10 +315,10 @@ func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]backe
 	// nothing to report
 	skills := filepath.Join(home, hostSkillsDir)
 	if isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
-		folders = append(folders, backend.Mount{Tag: skillsTag, Host: skills, Guest: guestSkillsDir})
+		folders = append(folders, backend.Mount{Host: skills, Guest: guestSkillsDir})
 	}
 
-	for i, mount := range mounts {
+	for _, mount := range mounts {
 		info, err := os.Stat(mount.Host)
 		if err != nil {
 			return nil, fmt.Errorf("mount %s: %w", mount.Guest, err)
@@ -332,7 +328,7 @@ func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]backe
 			return nil, fmt.Errorf("mount %s: %s is not a folder", mount.Guest, mount.Host)
 		}
 
-		folders = append(folders, backend.Mount{Tag: fmt.Sprintf("%s%d", mountTagPrefix, i), Host: mount.Host, Guest: mount.Guest})
+		folders = append(folders, backend.Mount{Host: mount.Host, Guest: mount.Guest})
 	}
 
 	return folders, nil

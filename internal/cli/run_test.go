@@ -475,8 +475,8 @@ func TestRunSharesTheMountsOfTheConfigReadOnly(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, []backend.Mount{
-		{Tag: "mount0", Host: sdk, Guest: "/opt/go"},
-		{Tag: "mount1", Host: bin, Guest: "/opt/bin"},
+		{Host: sdk, Guest: "/opt/go"},
+		{Host: bin, Guest: "/opt/bin"},
 	}, f.launch.spec.Mounts)
 }
 
@@ -622,10 +622,10 @@ func (f *fixture) skillsFolder(t *testing.T) string {
 	return skills
 }
 
-func tags(mounts []backend.Mount) []string {
+func guests(mounts []backend.Mount) []string {
 	result := make([]string, 0, len(mounts))
 	for _, mount := range mounts {
-		result = append(result, mount.Tag)
+		result = append(result, mount.Guest)
 	}
 
 	return result
@@ -643,8 +643,8 @@ func TestRunSharesTheSkillsOfThePersonBeforeTheMounts(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"skills", "mount0"}, tags(f.launch.spec.Mounts))
-	assert.Equal(t, backend.Mount{Tag: "skills", Host: skills, Guest: "/home/user/.claude/skills"}, f.launch.spec.Mounts[0])
+	assert.Equal(t, []string{"/home/user/.claude/skills", "/opt/go"}, guests(f.launch.spec.Mounts))
+	assert.Equal(t, backend.Mount{Host: skills, Guest: "/home/user/.claude/skills"}, f.launch.spec.Mounts[0])
 }
 
 func TestRunSharesNoSkillsWhenThePersonHasNone(t *testing.T) {
@@ -689,7 +689,7 @@ func TestRunLetsAMountOfTheConfigTakeThePlaceOfTheSkills(t *testing.T) {
 
 			// assert
 			require.NoError(t, err)
-			assert.Equal(t, []string{"mount0"}, tags(f.launch.spec.Mounts))
+			assert.Equal(t, []string{guest}, guests(f.launch.spec.Mounts))
 		})
 	}
 }

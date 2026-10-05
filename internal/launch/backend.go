@@ -62,8 +62,10 @@ func (b Backend) plan(spec backend.Spec) (vm.Machine, Options, error) {
 		{Tag: "home", Dir: spec.Home},
 	}
 
-	for _, mount := range spec.Mounts {
-		shares = append(shares, vm.Share{Tag: mount.Tag, Dir: mount.Host, Guest: mount.Guest})
+	// the guest learns the path of a mount from the kernel command line, so
+	// the tag only has to be unique
+	for i, mount := range spec.Mounts {
+		shares = append(shares, vm.Share{Tag: fmt.Sprintf("mount%d", i), Dir: mount.Host, Guest: mount.Guest})
 	}
 
 	machine := vm.Machine{

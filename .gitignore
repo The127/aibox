@@ -10,3 +10,5 @@ coverage.out
 
 # goreleaser output
 /dist/
+# the VM images the release workflow hands to goreleaser
+/images/

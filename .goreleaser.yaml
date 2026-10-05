@@ -95,8 +95,12 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/aibox"]
           end
 
+# the VM images, which the release workflow builds into images/ before
+# goreleaser runs, and which aibox downloads on its first run
 checksum:
   name_template: checksums.txt
+  extra_files:
+    - glob: ./images/aibox-image_*.tar.gz
 
 # keyless: the workflow's own identity signs, there is no key to keep
 signs:
@@ -115,3 +119,5 @@ changelog:
 
 release:
   prerelease: auto
+  extra_files:
+    - glob: ./images/aibox-image_*.tar.gz

@@ -1,0 +1,65 @@
+name: images
+
+# the VM images a release carries, one for each architecture: amd64 for
+# QEMU on Linux, arm64 for Virtualization.framework on macOS
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: extractions/setup-just@v4
+      - uses: sigstore/cosign-installer@v4.1.2
+      # miso builds the image in a VM of its own
+      - name: open KVM to the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: install miso, checked against its signed checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP"
+          gh release download --repo The127/miso --pattern 'miso_*_linux_amd64.deb' --pattern 'checksums.txt*'
+          cosign verify-blob checksums.txt \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity-regexp '^https://github.com/The127/miso/' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          sha256sum --ignore-missing -c checksums.txt
+          sudo apt-get update
+          sudo apt-get install -y ./miso_*_linux_amd64.deb
+      - run: just image
+      - run: just image-archive amd64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aibox-image_amd64
+          path: out/aibox-image_amd64.tar.gz
+          compression-level: 0
+
+  # docker builds image/Containerfile, as Apple's container tool does on a
+  # Mac, where the runners of GitHub cannot start VMs
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: extractions/setup-just@v4
+      - run: just image-docker-arm64
+      - run: just image-archive arm64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aibox-image_arm64
+          path: out/aibox-image_arm64.tar.gz
+          compression-level: 0

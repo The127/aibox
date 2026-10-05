@@ -29,9 +29,14 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  images:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/images.yml
+
   # on a Mac, since the macOS binary needs cgo and codesign
   goreleaser:
-    needs: release-please
+    needs: [release-please, images]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: macos-latest
     permissions:
@@ -54,6 +59,17 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # goreleaser attaches the images and lists them in checksums.txt
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: aibox-image_*
+          path: images
+          merge-multiple: true
+
+      # goreleaser would release without a missing image and say nothing
+      - name: check that both images are there
+        run: test -f images/aibox-image_amd64.tar.gz && test -f images/aibox-image_arm64.tar.gz
 
       - uses: sigstore/cosign-installer@v4.1.2
 

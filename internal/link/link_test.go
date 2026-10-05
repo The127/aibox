@@ -145,7 +145,7 @@ func TestAStreamReachesOnlyTheListenerOfItsKind(t *testing.T) {
 	assert.Equal(t, "proxy", receive(t, accept(t, host.Proxy()), 5))
 }
 
-func TestAStreamOfAnUnknownKindIsClosed(t *testing.T) {
+func TestAStreamOfAnUnknownKindIsTurnedAway(t *testing.T) {
 	// arrange
 	hostConn, guestConn := net.Pipe()
 	host, err := link.Host(hostConn)
@@ -339,4 +339,151 @@ func TestAStreamOfTheHostCanStopSendingToo(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, "done", string(got))
+}
+
+// readEnds reads from the conn in the background and reports when the read
+// ends, with its error.
+func readEnds(conn net.Conn) <-chan error {
+	ended := make(chan error, 1)
+
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		ended <- err
+	}()
+
+	return ended
+}
+
+// within waits for the channel, failing the test after a while.
+func within(t *testing.T, ended <-chan error, what string) error {
+	t.Helper()
+
+	select {
+	case err := <-ended:
+		return err
+	case <-time.After(3 * time.Second):
+		t.Fatal(what)
+
+		return nil
+	}
+}
+
+func TestClosingAStreamOnTheHostEndsAReadThatIsWaiting(t *testing.T) {
+	// arrange
+	host, guest := ends(t)
+	conn, err := guest.DialTerminal()
+	require.NoError(t, err)
+	send(t, conn, "x")
+	accepted := accept(t, host.Terminal())
+	receive(t, accepted, 1)
+	reading := readEnds(accepted)
+
+	// act
+	require.NoError(t, accepted.Close())
+
+	// assert
+	assert.Error(t, within(t, reading, "the read on the host went on after Close"))
+}
+
+func TestClosingAStreamOnTheGuestEndsAReadThatIsWaiting(t *testing.T) {
+	// arrange
+	host, guest := ends(t)
+	conn, err := guest.DialTerminal()
+	require.NoError(t, err)
+	send(t, conn, "x")
+	accept(t, host.Terminal())
+	reading := readEnds(conn)
+
+	// act
+	require.NoError(t, conn.Close())
+
+	// assert
+	assert.Error(t, within(t, reading, "the read in the guest went on after Close"))
+}
+
+// rawGuest is a guest that opens streams without the link, as a guest that
+// does not keep to it would.
+func rawGuest(t *testing.T, conn net.Conn) *yamux.Session {
+	t.Helper()
+
+	config := yamux.DefaultConfig()
+	config.AcceptBacklog = 1000
+	config.LogOutput = io.Discard
+
+	session, err := yamux.Client(conn, config)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	return session
+}
+
+func TestAStreamThatNeverNamesItsKindIsClosed(t *testing.T) {
+	// arrange
+	hostConn, guestConn := net.Pipe()
+	host, err := link.HostWithTimeouts(hostConn, 50*time.Millisecond, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = host.Close() })
+
+	stream, err := rawGuest(t, guestConn).OpenStream()
+	require.NoError(t, err)
+
+	// act
+	reading := readEnds(stream)
+
+	// assert
+	assert.ErrorIs(t, within(t, reading, "a stream without a kind stayed open"), io.EOF)
+}
+
+func TestAStreamNobodyAcceptsIsClosedAfterAWhile(t *testing.T) {
+	// arrange
+	hostConn, guestConn := net.Pipe()
+	host, err := link.HostWithTimeouts(hostConn, time.Minute, 50*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = host.Close() })
+
+	guest, err := link.Guest(guestConn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = guest.Close() })
+
+	conn, err := guest.DialTerminal()
+	require.NoError(t, err)
+
+	// act
+	reading := readEnds(conn)
+
+	// assert
+	assert.ErrorIs(t, within(t, reading, "a stream nobody accepted stayed open"), io.EOF)
+}
+
+func TestTheGuestCannotMakeTheHostHoldManyStreams(t *testing.T) {
+	// arrange
+	hostConn, guestConn := net.Pipe()
+	host, err := link.HostWithTimeouts(hostConn, time.Minute, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = host.Close() })
+
+	guest := rawGuest(t, guestConn)
+
+	// act
+	turnedAway := 0
+
+	for range 300 {
+		stream, err := guest.OpenStream()
+		require.NoError(t, err)
+
+		if _, err := stream.Write([]byte{'t'}); err != nil {
+			turnedAway++
+		}
+	}
+
+	// assert
+	held := 0
+	for range 20 {
+		time.Sleep(50 * time.Millisecond)
+
+		held = host.Streams()
+	}
+
+	assert.LessOrEqual(t, held, 40, "the host holds every stream the guest opened")
+	assert.Positive(t, turnedAway, "no stream was turned away")
 }

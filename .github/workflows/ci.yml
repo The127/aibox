@@ -32,8 +32,9 @@ jobs:
         with:
           version: v2.13.2
           install-only: true
-      # `just reuse` runs reuse, which the devenv has locally
-      - run: pipx install reuse==6.2.0
+      # `just reuse` runs reuse, which the devenv has locally. It needs a
+      # module to detect the encoding of files, which macOS lacks
+      - run: pipx install "reuse[charset-normalizer]==6.2.0"
       # tests that need vsock namespaces, Landlock network rules, KVM or the
       # entitlement of Virtualization.framework skip themselves where the
       # runner lacks them

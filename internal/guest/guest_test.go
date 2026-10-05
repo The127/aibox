@@ -507,6 +507,31 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
 }
 
+func TestRunReportsAnErrorBeforeTheConsoleOnStandardError(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failPivot: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, sys.stderr.String(), "aibox: make /run/root the root: invalid argument")
+}
+
+func TestRunReportsAnErrorOnTheConsoleOnlyOnceItIsOpen(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, sys.consoleOutput(), "no such file or directory")
+	assert.Empty(t, sys.stderr.String())
+}
+
 func TestRunPowersOffWhenTheCgroupOfTheUserCannotBeMade(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
@@ -933,6 +958,8 @@ type fakeSystem struct {
 	failStart    error
 	failWait     error
 	failHalt     error
+	// stderr is what the init wrote to its standard error
+	stderr syncBuffer
 }
 
 type attachResult struct {
@@ -1261,6 +1288,8 @@ func (s *fakeSystem) Wait() (int, int, error) {
 
 	return s.child, s.exitCode, nil
 }
+
+func (s *fakeSystem) Stderr() io.Writer { return &s.stderr }
 
 func (s *fakeSystem) Halt() error {
 	s.record("halt")

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -259,6 +260,9 @@ func (Linux) Wait() (int, int, error) {
 
 	return pid, status.ExitStatus(), nil
 }
+
+// Stderr is the standard error of the init.
+func (Linux) Stderr() io.Writer { return os.Stderr }
 
 // Halt writes the file systems out and resets the machine, which ends the
 // VM because QEMU runs with -no-reboot.

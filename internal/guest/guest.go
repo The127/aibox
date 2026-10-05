@@ -133,6 +133,9 @@ type System interface {
 	Delegate(cgroup string) error
 	Wait() (pid, exitCode int, err error)
 	Halt() error
+	// Stderr is the standard error the init started with, the console of
+	// the kernel.
+	Stderr() io.Writer
 }
 
 type mount struct {
@@ -453,8 +456,13 @@ func Run(sys System) error {
 		err = serve(sys, options, console)
 	}
 
-	if err != nil && console != nil {
+	// the halt ends the init before it can return, so an error from before
+	// the console was open goes out here or not at all
+	switch {
+	case err != nil && console != nil:
 		say(console, "aibox: %v\n", err)
+	case err != nil:
+		say(sys.Stderr(), "aibox: %v\n", err)
 	}
 
 	if haltErr := sys.Halt(); haltErr != nil {

@@ -1,0 +1,142 @@
+//go:build darwin && cgo
+
+package vzlaunch
+
+import (
+	"errors"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// vzLike is a listener that closes as the one of vz does: Close hands its
+// error to the next Accept and blocks until one takes it.
+type vzLike struct {
+	accepted chan net.Conn
+	results  chan error
+}
+
+func newVZLike() *vzLike {
+	return &vzLike{accepted: make(chan net.Conn), results: make(chan error)}
+}
+
+func (l *vzLike) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.accepted:
+		return conn, nil
+	case err, ok := <-l.results:
+		// vz returns its own nil connection, which is not a nil net.Conn
+		var none *nilConn
+		if !ok {
+			return none, nil
+		}
+
+		return none, err
+	}
+}
+
+// nilConn is the type of the nil connection vz returns with an error.
+type nilConn struct{ net.Conn }
+
+func (c *nilConn) Close() error { return c.Conn.Close() }
+
+func (l *vzLike) Close() error {
+	l.results <- errors.New("accept failed: listener has been closed")
+	close(l.results)
+
+	return nil
+}
+
+func (l *vzLike) Addr() net.Addr { return nil }
+
+func within(t *testing.T, done <-chan struct{}, what string) {
+	t.Helper()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal(what)
+	}
+}
+
+func TestClosingAListenerNobodyAcceptsOnDoesNotBlock(t *testing.T) {
+	// arrange
+	l := newListener(newVZLike())
+	closed := make(chan struct{})
+
+	// act
+	go func() {
+		_ = l.Close()
+
+		close(closed)
+	}()
+
+	// assert
+	within(t, closed, "Close blocked")
+}
+
+func TestAnAcceptWaitingWhenTheListenerClosesEndsWithErrClosed(t *testing.T) {
+	// arrange
+	l := newListener(newVZLike())
+	ended := make(chan error, 1)
+
+	go func() {
+		_, err := l.Accept()
+		ended <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// act
+	require.NoError(t, l.Close())
+
+	// assert
+	select {
+	case err := <-ended:
+		assert.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Accept went on after Close")
+	}
+}
+
+func TestAcceptAfterCloseEndsWithErrClosed(t *testing.T) {
+	// arrange
+	l := newListener(newVZLike())
+	require.NoError(t, l.Close())
+
+	// act
+	_, err := l.Accept()
+
+	// assert
+	assert.ErrorIs(t, err, net.ErrClosed)
+}
+
+func TestAWatchedTerminalSaysWhenItConnectedAndWhenItEnded(t *testing.T) {
+	// arrange
+	inner := newVZLike()
+	w := watch(newListener(inner))
+	hostSide, guestSide := net.Pipe()
+
+	defer func() { _ = guestSide.Close() }()
+
+	go func() { inner.accepted <- hostSide }()
+
+	// act
+	conn, err := w.Accept()
+	require.NoError(t, err)
+	within(t, w.connected, "the connection was not reported")
+
+	select {
+	case <-w.ended:
+		t.Fatal("the session was reported over while it runs")
+	default:
+	}
+
+	require.NoError(t, conn.Close())
+
+	// assert
+	within(t, w.ended, "the end of the session was not reported")
+}

@@ -15,6 +15,9 @@ import (
 	"github.com/the127/aibox/internal/vm"
 )
 
+// ErrStateBusy is a state disk another run of the project has locked.
+var ErrStateBusy = errors.New("another aibox runs this project")
+
 // Image returns the kernel and the root disk in the folder.
 func Image(dir string) (kernel, rootfs string, err error) {
 	kernel = filepath.Join(dir, "vmlinuz")
@@ -106,7 +109,7 @@ func LockState(path string) (*os.File, error) {
 	case errors.Is(err, unix.EWOULDBLOCK):
 		_ = file.Close()
 
-		return nil, fmt.Errorf("another aibox runs this project and has its state disk %s", path)
+		return nil, fmt.Errorf("%w and has its state disk %s", ErrStateBusy, path)
 	case err != nil:
 		_ = file.Close()
 

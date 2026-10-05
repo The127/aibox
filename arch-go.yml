@@ -56,6 +56,18 @@ dependenciesRules:
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
+  # vzlaunch is the backend that runs a VM with Virtualization.framework
+  # of macOS
+  - package: '**.internal.vzlaunch$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.host$'
+        - '**.internal.machine$'
+        - '**.internal.vm$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:
@@ -175,6 +187,7 @@ dependenciesRules:
         - '**.internal.project$'
         - '**.internal.backend$'
         - '**.internal.launch$'
+        - '**.internal.vzlaunch$'
         - '**.internal.config$'
         - '**.internal.proxy$'
         - '**.internal.gitconfig$'

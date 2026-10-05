@@ -186,7 +186,7 @@ func TestLockStateKeepsASecondRunOff(t *testing.T) {
 	_, err = machine.LockState(state)
 
 	// assert
-	require.Error(t, err)
+	require.ErrorIs(t, err, machine.ErrStateBusy)
 	assert.Contains(t, err.Error(), "another aibox runs this project")
 }
 

@@ -9,9 +9,19 @@ build:
 
 # build the binary with cgo for Virtualization.framework, which runs it only signed with the entitlement
 [macos]
-build:
+build: && (sign "bin/aibox")
     CGO_ENABLED=1 go build -o bin/aibox ./cmd/aibox
-    codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements bin/aibox
+
+# sign a build of aibox with the entitlement Virtualization.framework asks for
+[macos]
+[private]
+sign path:
+    codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements {{path}}
+
+# list the packages aibox is built from on macOS, which is all that builds there
+[private]
+macos-packages:
+    @GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox
 
 # build the init of the VM, which the image copies in
 [linux]
@@ -71,7 +81,7 @@ install: install-image
     bin=${bin:-$(go env GOPATH)/bin}
     mkdir -p "$bin"
     CGO_ENABLED=1 go build -o "$bin/aibox" ./cmd/aibox
-    codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements "$bin/aibox"
+    just sign "$bin/aibox"
 
 # test
 test:
@@ -84,7 +94,7 @@ cover:
 # lint all code for Linux, and for macOS the host side, which is all that builds there
 lint:
     GOOS=linux GOARCH=amd64 golangci-lint run ./...
-    GOOS=darwin GOARCH=arm64 golangci-lint run $(GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox)
+    GOOS=darwin GOARCH=arm64 golangci-lint run $(just macos-packages)
 
 # format
 fmt:
@@ -123,5 +133,4 @@ ci: lint arch reuse prose build cover vuln
 # what macOS builds, with cgo for Virtualization.framework, which CI on Linux cannot check
 [macos]
 ci-macos: lint build
-    CGO_ENABLED=1 go vet $(go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox)
-    CGO_ENABLED=1 go test -race $(go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox)
+    CGO_ENABLED=1 go test -race $(just macos-packages)

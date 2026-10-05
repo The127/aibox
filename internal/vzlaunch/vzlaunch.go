@@ -235,23 +235,11 @@ func (b Backend) wait(ctx context.Context, v runningVM, terminal *watched) error
 		case <-afterSession:
 			return stop(v, states)
 		case <-terminal.again:
-			if err := stop(v, states); err != nil {
-				return err
-			}
-
-			return ErrStartedOver
+			return errors.Join(ErrStartedOver, stop(v, states))
 		case <-boot.C:
-			if err := stop(v, states); err != nil {
-				return err
-			}
-
-			return fmt.Errorf("%w in %v", ErrNoBoot, b.BootTimeout)
+			return errors.Join(fmt.Errorf("%w in %v", ErrNoBoot, b.BootTimeout), stop(v, states))
 		case <-ctx.Done():
-			if err := stop(v, states); err != nil {
-				return err
-			}
-
-			return ctx.Err()
+			return errors.Join(ctx.Err(), stop(v, states))
 		}
 	}
 }
@@ -450,7 +438,7 @@ func openConsole(path string) (*os.File, error) {
 		path = os.DevNull
 	}
 
-	console, err := os.Create(path) //nolint:gosec // the console log of the project
+	console, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // the console log of the project
 	if err != nil {
 		return nil, fmt.Errorf("open the console log: %w", err)
 	}

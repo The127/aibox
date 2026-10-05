@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Code-Hex/vz/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -40,21 +41,25 @@ func testMachine(t *testing.T) vm.Machine {
 	}
 }
 
-func TestConfigureGivesTheVMItsDisksVsockAndNoNetwork(t *testing.T) {
-	// arrange
-	m := testMachine(t)
+// configured is the configuration of the machine, with the files its
+// console reads from and writes to.
+func configured(t *testing.T, m vm.Machine) (*vz.VirtualMachineConfiguration, error) {
+	t.Helper()
+
 	console, err := os.Create(filepath.Join(t.TempDir(), "console.log"))
 	require.NoError(t, err)
-
-	defer func() { _ = console.Close() }()
+	t.Cleanup(func() { _ = console.Close() })
 
 	devNull, err := os.Open(os.DevNull)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
 
-	defer func() { _ = devNull.Close() }()
+	return configure(m, devNull, console)
+}
 
+func TestConfigureGivesTheVMItsDisksVsockAndNoNetwork(t *testing.T) {
 	// act
-	config, err := configure(m, devNull, console)
+	config, err := configured(t, testMachine(t))
 
 	// assert
 	require.NoError(t, err)
@@ -65,18 +70,7 @@ func TestConfigureGivesTheVMItsDisksVsockAndNoNetwork(t *testing.T) {
 
 func TestVirtualizationFrameworkTakesTheConfiguration(t *testing.T) {
 	// arrange
-	m := testMachine(t)
-	console, err := os.Create(filepath.Join(t.TempDir(), "console.log"))
-	require.NoError(t, err)
-
-	defer func() { _ = console.Close() }()
-
-	devNull, err := os.Open(os.DevNull)
-	require.NoError(t, err)
-
-	defer func() { _ = devNull.Close() }()
-
-	config, err := configure(m, devNull, console)
+	config, err := configured(t, testMachine(t))
 	require.NoError(t, err)
 
 	// act
@@ -160,4 +154,8 @@ func TestTheConsoleGoesToTheLogOrNowhere(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "booted", string(content))
 	assert.Equal(t, os.DevNull, nowhere.Name())
+
+	info, err := os.Stat(log)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the console log is the project's, as on Linux")
 }

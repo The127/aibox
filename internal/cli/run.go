@@ -248,24 +248,42 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 }
 
 // refuseUnsafeFolder is errNotAProject when the folder is the root, the
-// home directory or above it, or above the aibox folder. Symlinks are
-// resolved first, since the share follows them.
+// home directory or above it, or above the aibox folder.
 func refuseUnsafeFolder(cwd, home, aibox string) error {
-	cwd = resolved(cwd)
+	here, err := os.Stat(cwd)
+	if err != nil {
+		return fmt.Errorf("look at the current folder: %w", err)
+	}
 
-	if cwd == "/" {
+	if root, err := os.Stat("/"); err == nil && os.SameFile(here, root) {
 		return fmt.Errorf("%w, not the root of the file system", errNotAProject)
 	}
 
-	if holds(cwd, resolved(home)) {
+	if holds(here, home) {
 		return fmt.Errorf("%w, not one that holds the home directory %s", errNotAProject, home)
 	}
 
-	if holds(cwd, resolved(aibox)) {
+	if holds(here, aibox) {
 		return fmt.Errorf("%w, not one that holds %s", errNotAProject, aibox)
 	}
 
 	return nil
+}
+
+// holds tells whether the folder is the one at path or one above it. It
+// compares folders, not their names, since a folder has more names than one:
+// a symlink, another case where the file system does not tell case apart, a
+// firmlink of macOS or a bind mount.
+func holds(folder os.FileInfo, path string) bool {
+	for dir := resolved(path); ; dir = filepath.Dir(dir) {
+		if info, err := os.Stat(dir); err == nil && os.SameFile(folder, info) {
+			return true
+		}
+
+		if dir == filepath.Dir(dir) {
+			return false
+		}
+	}
 }
 
 // resolved is the path with its symlinks followed, or the path as it is
@@ -276,13 +294,6 @@ func resolved(path string) string {
 	}
 
 	return filepath.Clean(path)
-}
-
-// holds tells whether path is dir or lies below it.
-func holds(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // defaultDiskGiB is the size of the state disk unless the config says

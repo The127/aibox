@@ -383,6 +383,72 @@ func TestRunRefusesToRunInTheHomeFolderBehindASymlink(t *testing.T) {
 	assert.False(t, f.launch.called)
 }
 
+// otherCase is the folder spelled in upper case, which names the same folder
+// only on a file system that does not tell case apart, as that of a Mac.
+func otherCase(t *testing.T, dir string) string {
+	t.Helper()
+
+	upper := filepath.Join(filepath.Dir(dir), strings.ToUpper(filepath.Base(dir)))
+	if _, err := os.Stat(upper); err != nil {
+		t.Skip("the file system of the test tells case apart, so the folder has one spelling only")
+	}
+
+	return upper
+}
+
+func TestRunRefusesToRunInTheHomeFolderSpelledInAnotherCase(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.homeDir = filepath.Join(t.TempDir(), "home")
+	require.NoError(t, os.MkdirAll(f.homeDir, 0o700))
+	f.cwd = otherCase(t, f.homeDir)
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesToRunAboveTheAiboxFolderSpelledInAnotherCase(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.cwd = filepath.Join(t.TempDir(), "state")
+	f.aiboxDir = filepath.Join(f.cwd, ".aibox")
+	require.NoError(t, os.MkdirAll(f.aiboxDir, 0o700))
+	f.cwd = otherCase(t, f.cwd)
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesToRunInTheHomeFolderReachedThroughTheDataVolume(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	home, err := filepath.EvalSymlinks(f.homeDir)
+	require.NoError(t, err)
+
+	// macOS reaches the folders of the user through a firmlink to this volume
+	throughData := filepath.Join("/System/Volumes/Data", home)
+	if _, err := os.Stat(throughData); err != nil {
+		t.Skip("there is no data volume of macOS here")
+	}
+
+	f.cwd = throughData
+
+	// act
+	err = f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.False(t, f.launch.called)
+}
+
 func TestRunRefusesToRunWithoutATerminal(t *testing.T) {
 	// arrange
 	f := newFixture(t)

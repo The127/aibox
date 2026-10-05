@@ -56,6 +56,7 @@ type fixture struct {
 	launch   *fakeLaunch
 	// version is the version of aibox, fetched the images it downloaded
 	version string
+	digests map[string]string
 	fetched []fetch
 	editor  *fakeEditor
 	deps    dependencies
@@ -76,21 +77,27 @@ func newFixture(t *testing.T) *fixture {
 		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
 		backend:         f.launch,
 		version:         func() string { return f.version },
-		fetchImage: func(_ context.Context, version, arch, dir string) error {
-			f.fetched = append(f.fetched, fetch{version: version, arch: arch, dir: dir})
+		imageDigest: func(arch string) (string, bool) {
+			digest, ok := f.digests[arch]
+
+			return digest, ok
+		},
+		fetchImage: func(_ context.Context, version, arch, digest, dir string) error {
+			f.fetched = append(f.fetched, fetch{version: version, arch: arch, digest: digest, dir: dir})
 			writeImage(t, dir, "vmlinuz", "os.ext4")
 
 			return nil
 		},
 	}
 	f.version = "(devel)"
+	f.digests = map[string]string{runtime.GOARCH: "the digest"}
 
 	return f
 }
 
 // fetch is a download of an image.
 type fetch struct {
-	version, arch, dir string
+	version, arch, digest, dir string
 }
 
 func (f *fixture) run(args ...string) error {
@@ -498,7 +505,7 @@ func TestRunDownloadsTheImageOfItsReleaseWhenItIsMissing(t *testing.T) {
 	require.NoError(t, err)
 
 	dir := filepath.Join(f.aiboxDir, "image", "v0.2.0")
-	assert.Equal(t, []fetch{{version: "v0.2.0", arch: runtime.GOARCH, dir: dir}}, f.fetched)
+	assert.Equal(t, []fetch{{version: "v0.2.0", arch: runtime.GOARCH, digest: "the digest", dir: dir}}, f.fetched)
 	assert.Equal(t, dir, f.launch.spec.Image)
 	assert.NoDirExists(t, old, "the image of the release before is gone")
 }
@@ -548,14 +555,31 @@ func TestRunSaysWhenTheImageCannotBeDownloaded(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	f.version = "v0.2.0"
-	f.deps.fetchImage = func(context.Context, string, string, string) error { return errors.New("no network") }
+	f.deps.fetchImage = func(context.Context, string, string, string, string) error { return errors.New("no network") }
 
 	// act
 	err := f.run()
 
 	// assert
 	require.ErrorContains(t, err, "download the VM image of v0.2.0: no network")
+	assert.ErrorContains(t, err, "--image")
 	assert.False(t, f.launch.called)
+}
+
+func TestRunDownloadsNoImageForABuildAtATagWithoutTheDigest(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.version = "v0.2.0"
+	f.digests = nil
+	dir := writeImage(t, filepath.Join(f.aiboxDir, "image"), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, f.fetched)
+	assert.Equal(t, dir, f.launch.spec.Image, "the image of just install-image")
 }
 
 func TestRunRefusesToRunWithoutATerminal(t *testing.T) {

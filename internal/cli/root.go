@@ -4,7 +4,8 @@ package cli
 import (
 	"context"
 	"errors"
-	"net/http"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -29,8 +30,10 @@ type dependencies struct {
 	backend         backend.Backend
 	edit            func(editor, path string) error
 	version         func() string
+	// imageDigest is the digest of the image this aibox was released with
+	imageDigest func(arch string) (string, bool)
 	// fetchImage downloads the image of the release into dir
-	fetchImage func(ctx context.Context, version, arch, dir string) error
+	fetchImage func(ctx context.Context, version, arch, digest, dir string) error
 }
 
 // ExitCode is the code aibox ends with after the error: the code of the
@@ -61,7 +64,8 @@ func NewRootCommand() *cli.Command {
 		backend:         newBackend(),
 		edit:            runEditor,
 		version:         version.Get,
-		fetchImage:      image.Fetcher{BaseURL: image.ReleasesURL, Client: http.DefaultClient}.Fetch,
+		imageDigest:     image.Digest,
+		fetchImage:      image.Fetcher{BaseURL: image.ReleasesURL, Client: image.NewClient(), Progress: showProgress(os.Stderr)}.Fetch,
 	})
 }
 
@@ -81,4 +85,29 @@ func aiboxDir() (string, error) {
 	}
 
 	return filepath.Join(home, ".aibox"), nil
+}
+
+// showProgress writes how much of a download arrived, in MB, on one line
+// that it rewrites when the count changes.
+func showProgress(w io.Writer) func(done, total int64) {
+	shown := int64(-1)
+
+	return func(done, total int64) {
+		mb := done >> 20
+		if mb == shown {
+			return
+		}
+
+		shown = mb
+
+		if total > 0 {
+			_, _ = fmt.Fprintf(w, "\raibox: %d of %d MB", mb, total>>20)
+		} else {
+			_, _ = fmt.Fprintf(w, "\raibox: %d MB", mb)
+		}
+
+		if done == total {
+			_, _ = fmt.Fprintln(w)
+		}
+	}
 }

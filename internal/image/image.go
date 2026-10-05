@@ -1,11 +1,12 @@
 // Package image downloads the VM image of a release of aibox: the kernel
 // and the root disk, which a release carries as one archive for each
-// architecture, listed in its checksums.txt.
+// architecture. The release workflow builds the images before aibox and
+// writes their SHA-256 into it, so aibox takes only the image it was
+// released with.
 package image
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
@@ -25,134 +27,175 @@ import (
 // ReleasesURL is where the files of the releases of aibox are.
 const ReleasesURL = "https://github.com/The127/aibox/releases/download"
 
+// digests are the SHA-256 of the image archives of this release, as
+// arch:digest separated by commas. The release workflow sets it with
+// -ldflags -X. A build from a checkout has none.
+var digests string
+
 var (
-	// ErrNoImage is a release whose checksums.txt lists no image for the
-	// architecture.
-	ErrNoImage = errors.New("the release has no image for this architecture")
-	// ErrChecksum is an archive that does not match checksums.txt.
-	ErrChecksum = errors.New("the image does not match the checksum of the release")
+	// ErrChecksum is an archive that is not the one aibox was released with.
+	ErrChecksum = errors.New("the image is not the one of this release")
 	// ErrArchive is an archive that holds anything but the kernel and the
 	// root disk.
 	ErrArchive = errors.New("the archive of the image holds other files than vmlinuz and os.ext4")
 )
 
+const (
+	// maxFileSize stops an archive that would fill the disk before its
+	// checksum is known. The root disk takes about 400 MB.
+	maxFileSize = 8 << 30
+	// staleDownload is how old a download left by a crashed run must be
+	// before Prune removes it, so that it never takes one still running.
+	staleDownload  = 24 * time.Hour
+	downloadPrefix = ".download-"
+)
+
 // files are what the archive of an image holds.
 var files = []string{"vmlinuz", "os.ext4"}
 
-// Released tells whether the version is the one of a release, which has an
-// image to download. A build from a checkout has none: its version is
-// (devel), a pseudo-version or marked +dirty.
+// Released tells whether the version is the one of a release. A build from
+// a checkout is not: its version is (devel), a pseudo-version or marked
+// +dirty.
 func Released(version string) bool {
-	return semver.IsValid(version) && semver.Build(version) == "" && !module.IsPseudoVersion(version)
+	return semver.IsValid(version) && semver.Canonical(version) == version && !module.IsPseudoVersion(version)
 }
 
-// Fetcher downloads images from the releases at BaseURL.
-type Fetcher struct {
-	BaseURL string
-	Client  *http.Client
+// Digest is the SHA-256 of the image archive of the architecture this
+// aibox was released with.
+func Digest(arch string) (string, bool) {
+	return digestOf(digests, arch)
 }
 
-// Fetch downloads the image of the release for the architecture into dir,
-// which must not exist yet. The image appears there only complete and
-// checked. Another run that fetched it meanwhile wins.
-func (f Fetcher) Fetch(ctx context.Context, version, arch, dir string) error {
-	name := "aibox-image_" + arch + ".tar.gz"
-
-	want, err := f.checksum(ctx, version, name)
-	if err != nil {
-		return err
+func digestOf(list, arch string) (string, bool) {
+	for entry := range strings.SplitSeq(list, ",") {
+		name, digest, _ := strings.Cut(entry, ":")
+		if name == arch && digest != "" {
+			return digest, true
+		}
 	}
 
+	return "", false
+}
+
+// Fetcher downloads images from the releases at BaseURL. Progress, if set,
+// hears how many bytes of how many arrived so far. The total is -1 when
+// the server does not say.
+type Fetcher struct {
+	BaseURL  string
+	Client   *http.Client
+	Progress func(done, total int64)
+}
+
+// NewClient is a client for downloads that gives up on a server that does
+// not answer, but not on a slow download.
+func NewClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}}
+}
+
+// Fetch downloads the image archive of the release for the architecture,
+// checks it against digest and unpacks it into dir. The image appears in
+// dir only complete and checked. Another run that fetched it meanwhile
+// wins, and an incomplete dir is replaced.
+func (f Fetcher) Fetch(ctx context.Context, version, arch, digest, dir string) error {
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // the folder of the images, as just install-image makes it
 		return err
 	}
 
-	tmp, err := os.MkdirTemp(parent, ".download-")
+	tmp, err := os.MkdirTemp(parent, downloadPrefix)
 	if err != nil {
 		return err
 	}
 
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	body, err := f.get(ctx, version+"/"+name)
+	if err := f.download(ctx, version, arch, digest, tmp); err != nil {
+		return err
+	}
+
+	// MkdirTemp makes the folder for its owner only
+	if err := os.Chmod(tmp, 0o755); err != nil { //nolint:gosec // the image is not secret
+		return err
+	}
+
+	return place(tmp, dir)
+}
+
+func (f Fetcher) download(ctx context.Context, version, arch, digest, dir string) error {
+	name := "aibox-image_" + arch + ".tar.gz"
+	url := f.BaseURL + "/" + version + "/" + name
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 
-	defer func() { _ = body.Close() }()
+	resp, err := f.Client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download %s: %s", url, resp.Status)
+	}
+
+	var body io.Reader = resp.Body
+	if f.Progress != nil {
+		body = &counter{r: body, total: resp.ContentLength, report: f.Progress}
+	}
 
 	hash := sha256.New()
-	unpacked := unpack(io.TeeReader(body, hash), tmp)
+	if err := unpack(io.TeeReader(body, hash), dir); err != nil {
+		return err
+	}
 
 	// the checksum covers all of the archive, also what tar did not read
 	if _, err := io.Copy(hash, body); err != nil {
 		return fmt.Errorf("download %s: %w", name, err)
 	}
 
-	if hex.EncodeToString(hash.Sum(nil)) != want {
+	if hex.EncodeToString(hash.Sum(nil)) != digest {
 		return ErrChecksum
-	}
-
-	if unpacked != nil {
-		return unpacked
-	}
-
-	if err := os.Rename(tmp, dir); err != nil {
-		if complete(dir) {
-			return nil
-		}
-
-		return err
 	}
 
 	return nil
 }
 
-// checksum is the checksum checksums.txt of the release lists for the file.
-func (f Fetcher) checksum(ctx context.Context, version, name string) (string, error) {
-	body, err := f.get(ctx, version+"/checksums.txt")
-	if err != nil {
-		return "", err
+// place renames the downloaded image to dir. A complete image another run
+// placed meanwhile stays, an incomplete one gives way.
+func place(tmp, dir string) error {
+	err := os.Rename(tmp, dir)
+	if err == nil || complete(dir) {
+		return nil
 	}
 
-	defer func() { _ = body.Close() }()
-
-	lines := bufio.NewScanner(body)
-	for lines.Scan() {
-		sum, file, ok := strings.Cut(lines.Text(), "  ")
-		if ok && file == name {
-			return sum, nil
-		}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
 	}
 
-	if err := lines.Err(); err != nil {
-		return "", fmt.Errorf("read checksums.txt: %w", err)
-	}
-
-	return "", ErrNoImage
+	return os.Rename(tmp, dir)
 }
 
-func (f Fetcher) get(ctx context.Context, path string) (io.ReadCloser, error) {
-	url := f.BaseURL + "/" + path
+// counter reports how much of the body was read.
+type counter struct {
+	r      io.Reader
+	done   int64
+	total  int64
+	report func(done, total int64)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
+func (c *counter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.done += int64(n)
+	c.report(c.done, c.total)
 
-	resp, err := f.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-
-		return nil, fmt.Errorf("download %s: %s", url, resp.Status)
-	}
-
-	return resp.Body, nil
+	return n, err
 }
 
 // unpack writes the kernel and the root disk of the archive into dir. It
@@ -176,11 +219,11 @@ func unpack(archive io.Reader, dir string) error {
 		}
 
 		name, ok := imageFile(header.Name)
-		if header.Typeflag != tar.TypeReg || !ok {
+		if header.Typeflag != tar.TypeReg || !ok || header.Size > maxFileSize {
 			return fmt.Errorf("%w: %s", ErrArchive, header.Name)
 		}
 
-		if err := write(filepath.Join(dir, name), entries); err != nil {
+		if err := write(filepath.Join(dir, name), io.LimitReader(entries, maxFileSize)); err != nil {
 			return err
 		}
 	}
@@ -231,8 +274,9 @@ func complete(dir string) bool {
 	return true
 }
 
-// Prune removes the images of the releases in parent other than keep. The
-// image of a build from a checkout, right in parent, stays.
+// Prune removes from parent the images of the releases other than keep,
+// and downloads a run that crashed left behind. The image of a build from a
+// checkout, right in parent, stays.
 func Prune(parent, keep string) error {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
@@ -240,7 +284,11 @@ func Prune(parent, keep string) error {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && Released(entry.Name()) && entry.Name() != keep {
+		if !entry.IsDir() || entry.Name() == keep {
+			continue
+		}
+
+		if Released(entry.Name()) || isStaleDownload(entry) {
 			if err := os.RemoveAll(filepath.Join(parent, entry.Name())); err != nil {
 				return err
 			}
@@ -248,4 +296,14 @@ func Prune(parent, keep string) error {
 	}
 
 	return nil
+}
+
+func isStaleDownload(entry os.DirEntry) bool {
+	if !strings.HasPrefix(entry.Name(), downloadPrefix) {
+		return false
+	}
+
+	info, err := entry.Info()
+
+	return err == nil && time.Since(info.ModTime()) > staleDownload
 }

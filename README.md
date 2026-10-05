@@ -118,11 +118,12 @@ sha256sum --ignore-missing -c checksums.txt
 ```
 
 The packages do not hold the VM image. The first `aibox run` downloads the
-image of its release, about 150 MB, checks it against `checksums.txt` and
-keeps it in `~/.aibox/image/<version>`. After an upgrade it downloads the
-new image and removes the old one. aibox built from a checkout has no
-release, so it uses the image `just install-image` puts into
-`~/.aibox/image`.
+image of its release, about 150 MB, and keeps it in
+`~/.aibox/image/<version>`. It takes only the image whose SHA-256 the
+release built into it. After an upgrade it downloads the new image and
+removes the old one. Without network, `--image` runs with an image of your
+own. aibox built from a checkout has no release, so it uses the image
+`just install-image` puts into `~/.aibox/image`.
 
 ## Status
 

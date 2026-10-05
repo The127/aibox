@@ -28,12 +28,13 @@ jobs:
       - name: install miso, checked against its signed checksums
         env:
           GH_TOKEN: ${{ github.token }}
+          MISO_VERSION: v1.0.0
         run: |
           cd "$RUNNER_TEMP"
-          gh release download --repo The127/miso --pattern 'miso_*_linux_amd64.deb' --pattern 'checksums.txt*'
+          gh release download "$MISO_VERSION" --repo The127/miso --pattern 'miso_*_linux_amd64.deb' --pattern 'checksums.txt*'
           cosign verify-blob checksums.txt \
             --bundle checksums.txt.sigstore.json \
-            --certificate-identity-regexp '^https://github.com/The127/miso/' \
+            --certificate-identity https://github.com/The127/miso/.github/workflows/release.yml@refs/heads/main \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
           sha256sum --ignore-missing -c checksums.txt
           sudo apt-get update

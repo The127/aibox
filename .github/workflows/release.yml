@@ -67,9 +67,13 @@ jobs:
           path: images
           merge-multiple: true
 
-      # goreleaser would release without a missing image and say nothing
-      - name: check that both images are there
-        run: test -f images/aibox-image_amd64.tar.gz && test -f images/aibox-image_arm64.tar.gz
+      # aibox downloads only the images whose SHA-256 it was built with. The
+      # step fails if an image is missing.
+      - name: take the digests of the images
+        run: |
+          amd64=$(shasum -a 256 images/aibox-image_amd64.tar.gz | cut -d' ' -f1)
+          arm64=$(shasum -a 256 images/aibox-image_arm64.tar.gz | cut -d' ' -f1)
+          echo "AIBOX_IMAGE_DIGESTS=amd64:$amd64,arm64:$arm64" >> "$GITHUB_ENV"
 
       - uses: sigstore/cosign-installer@v4.1.2
 

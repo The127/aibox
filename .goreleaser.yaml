@@ -8,6 +8,9 @@ builds:
     binary: aibox
     env:
       - CGO_ENABLED=0
+    # the SHA-256 of the images of the release, which aibox downloads
+    ldflags:
+      - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
     goos:
       - linux
     goarch:
@@ -18,6 +21,9 @@ builds:
     binary: aibox
     env:
       - CGO_ENABLED=1
+    # the SHA-256 of the images of the release, which aibox downloads
+    ldflags:
+      - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
     goos:
       - darwin
     goarch:

@@ -27,7 +27,8 @@ Releases are made from the commit messages on `main`. Nobody tags by hand.
    uploaded as `checksums.txt.sigstore.json`.
 
 The binary reports its version from the Go build info stamp. A clean
-checkout of the tag is enough, there are no ldflags.
+checkout of the tag is enough. The only ldflags set the SHA-256 of the two
+images, which the workflow takes from the images it built.
 
 ## What the packages hold
 
@@ -36,8 +37,8 @@ QEMU, virtiofsd and bubblewrap (`qemu-system-x86` for deb,
 `qemu-system-x86-core` for rpm).
 
 The VM image is not in the packages. On its first run, aibox downloads
-the image of its own version from the release and checks it against
-`checksums.txt`. The amd64 image is built with miso, the arm64 image with
+the image of its own version from the release and takes it only if its
+SHA-256 is the one built into aibox. The amd64 image is built with miso, the arm64 image with
 docker from `image/Containerfile`.
 
 ## One-time setup

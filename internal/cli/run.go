@@ -46,7 +46,7 @@ func runCommand(deps dependencies) *cli.Command {
 		Name:  "run",
 		Usage: "boot the VM with the current folder shared into it",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "~/.aibox/image"},
+			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "the image of this release, or ~/.aibox/image for a build from a checkout"},
 			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
@@ -313,12 +313,14 @@ func resolved(path string) string {
 }
 
 // defaultImage is the folder of the image in parent that this aibox uses.
-// A release uses the image of its version, which it downloads the first
-// time and which replaces the images of the releases before. A build from
-// a checkout uses the one just install-image puts right into parent.
+// A release uses the image it was released with, which it downloads the
+// first time and which replaces the images of the releases before. A build
+// from a checkout uses the one just install-image puts right into parent.
 func defaultImage(ctx context.Context, deps dependencies, parent string) (string, error) {
 	version := deps.version()
-	if !image.Released(version) {
+	digest, ok := deps.imageDigest(runtime.GOARCH)
+
+	if !image.Released(version) || !ok {
 		return parent, nil
 	}
 
@@ -329,8 +331,8 @@ func defaultImage(ctx context.Context, deps dependencies, parent string) (string
 
 	_, _ = fmt.Fprintf(os.Stderr, "aibox: downloading the VM image of %s\n", version)
 
-	if err := deps.fetchImage(ctx, version, runtime.GOARCH, dir); err != nil {
-		return "", fmt.Errorf("download the VM image of %s: %w", version, err)
+	if err := deps.fetchImage(ctx, version, runtime.GOARCH, digest, dir); err != nil {
+		return "", fmt.Errorf("download the VM image of %s: %w. --image runs with an image of your own instead", version, err)
 	}
 
 	if err := image.Prune(parent, version); err != nil {

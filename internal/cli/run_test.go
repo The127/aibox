@@ -449,6 +449,25 @@ func TestRunRefusesToRunInTheHomeFolderReachedThroughTheDataVolume(t *testing.T)
 	assert.False(t, f.launch.called)
 }
 
+func TestRunRefusesToRunInTheDataVolume(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+
+	// the volume holds the home, though .. of /Users is /, not the volume
+	if _, err := os.Stat("/System/Volumes/Data"); err != nil {
+		t.Skip("there is no data volume of macOS here")
+	}
+
+	f.cwd = "/System/Volumes/Data"
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errNotAProject)
+	assert.False(t, f.launch.called)
+}
+
 func TestRunRefusesToRunWithoutATerminal(t *testing.T) {
 	// arrange
 	f := newFixture(t)

@@ -250,40 +250,52 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 // refuseUnsafeFolder is errNotAProject when the folder is the root, the
 // home directory or above it, or above the aibox folder.
 func refuseUnsafeFolder(cwd, home, aibox string) error {
-	here, err := os.Stat(cwd)
-	if err != nil {
-		return fmt.Errorf("look at the current folder: %w", err)
-	}
-
-	if root, err := os.Stat("/"); err == nil && os.SameFile(here, root) {
+	if holds(cwd, "/") {
 		return fmt.Errorf("%w, not the root of the file system", errNotAProject)
 	}
 
-	if holds(here, home) {
+	if holds(cwd, home) {
 		return fmt.Errorf("%w, not one that holds the home directory %s", errNotAProject, home)
 	}
 
-	if holds(here, aibox) {
+	if holds(cwd, aibox) {
 		return fmt.Errorf("%w, not one that holds %s", errNotAProject, aibox)
 	}
 
 	return nil
 }
 
-// holds tells whether the folder is the one at path or one above it. It
-// compares folders, not their names, since a folder has more names than one:
-// a symlink, another case where the file system does not tell case apart, a
-// firmlink of macOS or a bind mount.
-func holds(folder os.FileInfo, path string) bool {
-	for dir := resolved(path); ; dir = filepath.Dir(dir) {
-		if info, err := os.Stat(dir); err == nil && os.SameFile(folder, info) {
+// holds tells whether the folder is the one at path or holds it. It
+// compares files, not names, since a folder has more names than one: a
+// symlink, another case where the file system tells no case apart, a
+// firmlink of macOS or a bind mount. The folder holds the path when the
+// path, with some of its first folders cut off, leads from the folder to
+// the same file. So /System/Volumes/Data of a Mac holds /Users/you, though
+// .. of /Users is /. A path that does not exist yet stands for the first
+// folder above it that does. A symlink in the folder that leads to the
+// path makes it refused too, which errs on the safe side.
+func holds(folder, path string) bool {
+	path = resolved(path)
+
+	target, err := os.Stat(path)
+	for err != nil && path != filepath.Dir(path) {
+		path = filepath.Dir(path)
+		target, err = os.Stat(path)
+	}
+
+	if err != nil {
+		return false
+	}
+
+	names := strings.Split(strings.Trim(path, "/"), "/")
+	for i := range len(names) + 1 {
+		info, err := os.Stat(filepath.Join(append([]string{folder}, names[i:]...)...))
+		if err == nil && os.SameFile(info, target) {
 			return true
 		}
-
-		if dir == filepath.Dir(dir) {
-			return false
-		}
 	}
+
+	return false
 }
 
 // resolved is the path with its symlinks followed, or the path as it is

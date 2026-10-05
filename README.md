@@ -183,9 +183,10 @@ Linux. What is different:
   case-sensitive, and reads the ligature `ﬁ` as `fi`. The VM finds
   `.git/config` also as `.git/CONFIG` or `.git/conﬁg`, so the init makes all
   80 names of it read-only, and all 8 names of a `.git` file. Folders need
-  none of this. aibox refuses to start in your home folder by comparing
-  folders rather than paths, since `/users/YOU` and
-  `/System/Volumes/Data/Users/you` are your home folder too.
+  none of this. aibox refuses to start in your home folder or above it by
+  comparing folders rather than paths, since `/users/YOU` and
+  `/System/Volumes/Data/Users/you` are your home folder too, and
+  `/System/Volumes/Data` holds it.
 - The state disk is the same sparse file. Virtualization.framework locks it
   for as long as the VM runs, which keeps a second run of the project off.
 - Once the VM runs, aibox confines itself with Seatbelt, the sandbox of

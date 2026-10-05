@@ -34,13 +34,12 @@ import (
 var ErrSocketTimeout = errors.New("virtiofsd did not create its socket in time")
 
 const (
-	defaultSocketTimeout   = 10 * time.Second
-	defaultKVMDevice       = "/dev/kvm"
-	defaultBubblewrap      = "bwrap"
-	defaultLibraries       = "/usr/lib64"
-	defaultFirmware        = "/usr/share/qemu/qboot.rom"
-	defaultStopDelay       = time.Second
-	defaultSessionEndDelay = 3 * time.Second
+	defaultSocketTimeout = 10 * time.Second
+	defaultKVMDevice     = "/dev/kvm"
+	defaultBubblewrap    = "bwrap"
+	defaultLibraries     = "/usr/lib64"
+	defaultFirmware      = "/usr/share/qemu/qboot.rom"
+	defaultStopDelay     = time.Second
 )
 
 // Options are the programs Run starts, the terminal of the person on Stdin
@@ -130,7 +129,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 	}
 
 	if options.SessionEndDelay == 0 {
-		options.SessionEndDelay = defaultSessionEndDelay
+		options.SessionEndDelay = host.DefaultSessionEndDelay
 	}
 
 	if err := findPrograms(&options); err != nil {

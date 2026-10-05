@@ -208,3 +208,15 @@ func TestGuestWordsOfAPlainMachineAreNone(t *testing.T) {
 	// assert
 	assert.Empty(t, words)
 }
+
+func TestCmdlineStartsWithWhatTheVMMNeedsAndEndsWithTheWordsOfTheGuest(t *testing.T) {
+	// arrange
+	m := machine()
+	m.Shell = true
+
+	// act
+	line := m.Cmdline(vm.RootCmdline + " panic=1")
+
+	// assert
+	assert.Equal(t, "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=1 aibox.shell", line)
+}

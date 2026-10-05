@@ -13,6 +13,8 @@ import (
 	"github.com/Code-Hex/vz/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/the127/aibox/internal/vm"
 )
 
 // fakeVM is a VM that changes state as the test says, and stops when told.
@@ -200,7 +202,7 @@ func TestWaitStopsAGuestThatStartedOver(t *testing.T) {
 
 func TestTheKernelRebootsAfterAPanicAndHearsTheWordsOfTheGuest(t *testing.T) {
 	// act
-	line := cmdline([]string{"aibox.shell", "aibox.terminal=1024"})
+	line := vm.Machine{Shell: true, TerminalPort: 1024}.Cmdline(baseCmdline)
 
 	// assert
 	assert.Contains(t, strings.Fields(line), "panic=1")

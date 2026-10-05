@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
@@ -34,11 +33,10 @@ const (
 	// guest reboots, which Virtualization.framework carries out rather than
 	// ending the VM. The guest then connects to the terminal again, which is
 	// how Run learns that it started over and stops it.
-	baseCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=1"
+	baseCmdline = vm.RootCmdline + " panic=1"
 
-	defaultBootTimeout     = time.Minute
-	defaultSessionEndDelay = 3 * time.Second
-	defaultPowerOffWait    = 10 * time.Second
+	defaultBootTimeout  = time.Minute
+	defaultPowerOffWait = 10 * time.Second
 	// stopTimeout is how long a VM may take to stop once told to.
 	stopTimeout = 10 * time.Second
 )
@@ -69,7 +67,7 @@ var _ backend.Backend = Backend{}
 func NewBackend() Backend {
 	return Backend{
 		BootTimeout:     defaultBootTimeout,
-		SessionEndDelay: defaultSessionEndDelay,
+		SessionEndDelay: host.DefaultSessionEndDelay,
 		PowerOffWait:    defaultPowerOffWait,
 		Confine:         seatbelt.Apply,
 	}
@@ -277,7 +275,7 @@ func stop(v runningVM, states <-chan vz.VirtualMachineState) error {
 // with the words of the guest, the root disk read-only and the state disk,
 // the shares, the console, vsock and entropy, and no network device.
 func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfiguration, error) {
-	boot, err := vz.NewLinuxBootLoader(m.Kernel, vz.WithCommandLine(cmdline(m.GuestWords())))
+	boot, err := vz.NewLinuxBootLoader(m.Kernel, vz.WithCommandLine(m.Cmdline(baseCmdline)))
 	if err != nil {
 		return nil, fmt.Errorf("load the kernel %s: %w", m.Kernel, err)
 	}
@@ -340,11 +338,6 @@ func allowNestedVMs(config *vz.VirtualMachineConfiguration) error {
 	config.SetPlatformVirtualMachineConfiguration(platform)
 
 	return nil
-}
-
-// cmdline is the kernel command line with the words of the guest.
-func cmdline(words []string) string {
-	return strings.Join(append([]string{baseCmdline}, words...), " ")
 }
 
 func addConsole(config *vz.VirtualMachineConfiguration, devNull, console *os.File) error {

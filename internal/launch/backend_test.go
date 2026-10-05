@@ -60,7 +60,7 @@ func TestBackendNamesTheMissingImageFileAndHowToBuildIt(t *testing.T) {
 	assert.Contains(t, err.Error(), "just install-image")
 }
 
-func TestBackendSharesTheProjectAndHomeThenTheMountsAndMapsTheOwner(t *testing.T) {
+func TestBackendSharesTheProjectAndHomeThenTheMountsByNumberAndMapsTheOwner(t *testing.T) {
 	// arrange
 	image := imageFolder(t, "vmlinuz", "os.ext4")
 	spec := backend.Spec{
@@ -68,8 +68,8 @@ func TestBackendSharesTheProjectAndHomeThenTheMountsAndMapsTheOwner(t *testing.T
 		Project: "/work/project",
 		Home:    "/aibox/home",
 		Mounts: []backend.Mount{
-			{Tag: "skills", Host: "/h/.claude/skills", Guest: "/home/user/.claude/skills"},
-			{Tag: "mount0", Host: "/sdk/go", Guest: "/opt/go"},
+			{Host: "/h/.claude/skills", Guest: "/home/user/.claude/skills"},
+			{Host: "/sdk/go", Guest: "/opt/go"},
 		},
 	}
 
@@ -81,8 +81,8 @@ func TestBackendSharesTheProjectAndHomeThenTheMountsAndMapsTheOwner(t *testing.T
 	assert.Equal(t, []vm.Share{
 		{Tag: "project", Dir: "/work/project"},
 		{Tag: "home", Dir: "/aibox/home"},
-		{Tag: "skills", Dir: "/h/.claude/skills", Guest: "/home/user/.claude/skills"},
-		{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"},
+		{Tag: "mount0", Dir: "/h/.claude/skills", Guest: "/home/user/.claude/skills"},
+		{Tag: "mount1", Dir: "/sdk/go", Guest: "/opt/go"},
 	}, machine.Shares)
 	assert.Equal(t, &vm.Owner{UID: 1234, GID: 100}, machine.Owner)
 }

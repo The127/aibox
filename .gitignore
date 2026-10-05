@@ -7,3 +7,4 @@ coverage.out
 /.devenv/
 /.devenv.flake.nix
 /.direnv/
+/image/aibox-init-arm64

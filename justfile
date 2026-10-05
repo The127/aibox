@@ -129,8 +129,3 @@ setup: hooks
 
 # everything that must pass before a push
 ci: lint arch reuse prose build cover vuln
-
-# what macOS builds, with cgo for Virtualization.framework, which CI on Linux cannot check
-[macos]
-ci-macos: lint build
-    CGO_ENABLED=1 go test -race $(just macos-packages)

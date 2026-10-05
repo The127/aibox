@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package launch runs the aibox VM: virtiofsd for each share, the proxy and
 // the terminal for the VM, then QEMU.
 package launch

@@ -227,8 +227,6 @@ just install   # build the image into ~/.aibox/image and aibox, signed, where go
 aibox run
 ```
 
-`just ci-macos` checks what only macOS builds, which CI on Linux cannot.
-
 ## Contributing
 
 The tools the justfile needs, Go, golangci-lint, just, lefthook and reuse, are

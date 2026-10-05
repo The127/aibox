@@ -14,7 +14,11 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -30,23 +34,7 @@ jobs:
           install-only: true
       # `just reuse` runs reuse, which the devenv has locally
       - run: pipx install reuse==6.2.0
-      # tests that need vsock namespaces, Landlock network rules or KVM skip
-      # themselves where the runner lacks them
+      # tests that need vsock namespaces, Landlock network rules, KVM or the
+      # entitlement of Virtualization.framework skip themselves where the
+      # runner lacks them
       - run: just ci
-
-  # the code only macOS builds, with cgo for Virtualization.framework. The
-  # runner is itself a VM without nested virtualization, so the test that has
-  # Virtualization.framework check a configuration skips itself here
-  macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - uses: extractions/setup-just@v4
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.2
-          install-only: true
-      - run: just ci-macos

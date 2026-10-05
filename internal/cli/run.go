@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,16 +11,15 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
-	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
-	"github.com/the127/aibox/internal/vm"
 )
 
-// QEMU, virtiofsd and the proxy would run with root rights on the host, and
-// nothing here needs them.
+// The programs that run the VM and the proxy would run with root rights on
+// the host, and nothing here needs them.
 var errRoot = errors.New("do not run aibox as root, start it as a normal user")
 
 // Claude Code and the shell in the VM wait for keys, so without a terminal
@@ -33,13 +31,8 @@ var errNoTerminal = errors.New("run needs a terminal on stdin")
 // shell files and keys of the person, and could change its own allow list.
 var errNotAProject = errors.New("run must start in a project folder")
 
-const (
-	qemuProgram      = "qemu-system-x86_64"
-	virtiofsdProgram = "/usr/libexec/virtiofsd"
-	// the tags of the shares for the mounts of the config, followed by their
-	// position
-	mountTagPrefix = "mount"
-)
+// the tags of the mounts of the config, followed by their position
+const mountTagPrefix = "mount"
 
 // The skills of the person are shared from their home on the host into the
 // home of the VM.
@@ -54,11 +47,11 @@ func runCommand(deps dependencies) *cli.Command {
 		Name:  "run",
 		Usage: "boot the VM with the current folder shared into it",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image", Usage: "folder with vmlinuz and os.ext4", DefaultText: "~/.aibox/image"},
+			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "~/.aibox/image"},
 			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
-			&cli.BoolFlag{Name: "no-sandbox", Usage: "run QEMU outside its sandbox, to debug it"},
+			&cli.BoolFlag{Name: "no-sandbox", Usage: "run the VM outside its sandbox, to debug it"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -67,8 +60,7 @@ func runCommand(deps dependencies) *cli.Command {
 }
 
 func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
-	owner := deps.owner()
-	if owner.UID == 0 {
+	if deps.uid() == 0 {
 		return errRoot
 	}
 
@@ -106,8 +98,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		image = filepath.Join(aibox, "image")
 	}
 
-	kernel, rootfs, err := imageFiles(image)
-	if err != nil {
+	if err := deps.backend.CheckImage(image); err != nil {
 		return err
 	}
 
@@ -149,25 +140,28 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	machine := vm.Machine{
-		Kernel:    kernel,
-		Rootfs:    rootfs,
-		State:     p.State,
-		MemoryMiB: flagOrConfig(cmd, "memory", cfg.Memory),
-		CPUs:      flagOrConfig(cmd, "cpus", cfg.CPUs),
-		Shares: append([]vm.Share{
-			{Tag: "project", Dir: cwd},
-			{Tag: "home", Dir: p.Home},
-		}, mounts...),
-		Owner: &owner,
-		Shell: cmd.Bool("shell"),
-	}
-
-	options := launchOptions(cfg, p, log)
-	options.Env = env
-	options.NoSandbox = cmd.Bool("no-sandbox")
-
-	return deps.run(ctx, machine, options)
+	return deps.backend.Run(ctx, backend.Spec{
+		Image:       image,
+		State:       p.State,
+		MemoryMiB:   flagOrConfig(cmd, "memory", cfg.Memory),
+		CPUs:        flagOrConfig(cmd, "cpus", cfg.CPUs),
+		Project:     cwd,
+		Home:        p.Home,
+		Mounts:      mounts,
+		Shell:       cmd.Bool("shell"),
+		Unsandboxed: cmd.Bool("no-sandbox"),
+		Env:         env,
+		Proxy: proxy.Options{
+			Allow:     cfg.Allow.Allows,
+			OnRefused: proxy.RefusalLog(log),
+			Hint:      "Add it to " + p.Config + " to allow it.",
+		},
+		Ports:      cfg.Allow.Ports(),
+		ConsoleLog: p.ConsoleLog,
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+	})
 }
 
 // maxPathBytes is what the PATH for the VM may be long. The session carries
@@ -310,22 +304,22 @@ func stateBytes(cfg config.Config) int64 {
 	return int64(gib) << 30
 }
 
-// mountShares returns the share of the skills of the person, when the host
-// has any and no mount of the config takes their place, and a share for
+// mountShares returns the mount of the skills of the person, when the host
+// has any and no mount of the config takes their place, and a mount for
 // each mount of the config, once the host folders are known to exist.
-func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]vm.Share, error) {
+func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]backend.Mount, error) {
 	home, err := homeDir()
 	if err != nil {
 		return nil, fmt.Errorf("find the home folder: %w", err)
 	}
 
-	shares := make([]vm.Share, 0, len(mounts)+1)
+	folders := make([]backend.Mount, 0, len(mounts)+1)
 
 	// a person without skills is the normal case, so a missing folder is
 	// nothing to report
 	skills := filepath.Join(home, hostSkillsDir)
 	if isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
-		shares = append(shares, vm.Share{Tag: skillsTag, Dir: skills, Guest: guestSkillsDir})
+		folders = append(folders, backend.Mount{Tag: skillsTag, Host: skills, Guest: guestSkillsDir})
 	}
 
 	for i, mount := range mounts {
@@ -338,33 +332,16 @@ func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]vm.Sh
 			return nil, fmt.Errorf("mount %s: %s is not a folder", mount.Guest, mount.Host)
 		}
 
-		shares = append(shares, vm.Share{Tag: fmt.Sprintf("%s%d", mountTagPrefix, i), Dir: mount.Host, Guest: mount.Guest})
+		folders = append(folders, backend.Mount{Tag: fmt.Sprintf("%s%d", mountTagPrefix, i), Host: mount.Host, Guest: mount.Guest})
 	}
 
-	return shares, nil
+	return folders, nil
 }
 
 func isFolder(path string) bool {
 	info, err := os.Stat(path)
 
 	return err == nil && info.IsDir()
-}
-
-func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.Options {
-	return launch.Options{
-		QEMU:       qemuProgram,
-		Virtiofsd:  virtiofsdProgram,
-		Stdin:      os.Stdin,
-		Stdout:     os.Stdout,
-		Stderr:     os.Stderr,
-		ConsoleLog: p.ConsoleLog,
-		Ports:      cfg.Allow.Ports(),
-		Proxy: proxy.Options{
-			Allow:     cfg.Allow.Allows,
-			OnRefused: proxy.RefusalLog(log),
-			Hint:      "Add it to " + p.Config + " to allow it.",
-		},
-	}
 }
 
 // flagOrConfig returns the flag if it was given on the command line, else
@@ -376,17 +353,4 @@ func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
 	}
 
 	return cmd.Int(flag)
-}
-
-func imageFiles(dir string) (kernel, rootfs string, err error) {
-	kernel = filepath.Join(dir, "vmlinuz")
-	rootfs = filepath.Join(dir, "os.ext4")
-
-	for _, file := range []string{kernel, rootfs} {
-		if _, err := os.Stat(file); err != nil {
-			return "", "", fmt.Errorf("%w, build the VM image with just install-image or pass --image", err)
-		}
-	}
-
-	return kernel, rootfs, nil
 }

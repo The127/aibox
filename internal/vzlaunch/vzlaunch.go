@@ -282,6 +282,10 @@ func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfi
 		return nil, fmt.Errorf("configure the VM: %w", err)
 	}
 
+	if err := allowNestedVMs(config); err != nil {
+		return nil, err
+	}
+
 	if err := addConsole(config, devNull, console); err != nil {
 		return nil, err
 	}
@@ -309,6 +313,28 @@ func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfi
 	config.SetEntropyDevicesVirtualMachineConfiguration([]*vz.VirtioEntropyDeviceConfiguration{entropy})
 
 	return config, nil
+}
+
+// allowNestedVMs lets the guest run VMs of its own with hardware support,
+// as KVM does inside the VM on Linux, where the Mac offers it. Without it
+// the guest runs them slower, in software.
+func allowNestedVMs(config *vz.VirtualMachineConfiguration) error {
+	if !vz.IsNestedVirtualizationSupported() {
+		return nil
+	}
+
+	platform, err := vz.NewGenericPlatformConfiguration()
+	if err != nil {
+		return fmt.Errorf("configure the platform: %w", err)
+	}
+
+	if err := platform.SetNestedVirtualizationEnabled(true); err != nil {
+		return fmt.Errorf("allow nested VMs: %w", err)
+	}
+
+	config.SetPlatformVirtualMachineConfiguration(platform)
+
+	return nil
 }
 
 // cmdline is the kernel command line with the words of the guest.

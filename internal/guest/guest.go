@@ -570,7 +570,7 @@ func setup(sys System, platform Platform) (*os.File, Options, Transport, error) 
 	}
 
 	for _, l := range links {
-		if err := sys.Symlink(l.target, l.path); err != nil {
+		if err := sys.Symlink(l.target, l.path); err != nil && !errors.Is(err, fs.ErrExist) {
 			say(console, "aibox: link %s: %v\n", l.path, err)
 		}
 	}

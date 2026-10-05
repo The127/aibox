@@ -533,6 +533,18 @@ func TestRunReportsAnErrorOnTheConsoleOnlyOnceItIsOpen(t *testing.T) {
 	assert.Empty(t, sys.stderr.String())
 }
 
+func TestRunLeavesLinksTheKernelMadeAlready(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, existingLinks: []string{"/dev/fd", "/dev/stdin", "/dev/stdout", "/dev/stderr"}}
+
+	// act
+	err := guest.Run(sys, guest.QEMU{})
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.consoleOutput(), "link")
+}
+
 func TestRunPowersOffWhenTheCgroupOfTheUserCannotBeMade(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
@@ -962,8 +974,10 @@ type fakeSystem struct {
 	// failSocket and failEnter are the errors of ListenSocket and Enter
 	failSocket error
 	failEnter  error
-	// stderr is what the init wrote to its standard error
-	stderr syncBuffer
+	// existingLinks are the links the kernel made already, and stderr is
+	// what the init wrote to its standard error
+	existingLinks []string
+	stderr        syncBuffer
 }
 
 type attachResult struct {
@@ -1114,6 +1128,10 @@ func (s *fakeSystem) PivotRoot(newRoot, putOld string) error {
 
 func (s *fakeSystem) Symlink(target, path string) error {
 	s.record("link " + path + " -> " + target)
+
+	if slices.Contains(s.existingLinks, path) {
+		return &os.LinkError{Op: "symlink", Old: target, New: path, Err: fs.ErrExist}
+	}
 
 	return nil
 }

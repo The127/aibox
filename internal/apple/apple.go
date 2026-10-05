@@ -26,9 +26,10 @@ var ErrName = errors.New("a name must not be empty or start with a dash, and a v
 // ErrSize is a VM without a CPU or without memory.
 var ErrSize = errors.New("a VM needs at least one CPU and one MiB of memory")
 
-// GuestTerminalSocket is where the terminal of the VM listens in the guest.
-// The host reaches it through Machine.TerminalSocket.
-const GuestTerminalSocket = "/run/aibox/terminal.sock"
+// GuestSocket is where the guest listens for the host, on its root disk,
+// since the tool does not reach a socket on a file system the guest mounts
+// itself. The host reaches it through Machine.Socket.
+const GuestSocket = "/var/lib/aibox/link.sock"
 
 // guestState is where the state volume is mounted in the guest.
 const guestState = "/var/lib/aibox/state"
@@ -36,18 +37,19 @@ const guestState = "/var/lib/aibox/state"
 // Machine is a container with the image, sized as the person asked. Project
 // and Home are the host folders that appear writable as /project and
 // /home/user. State is the name of the volume of the project. The host
-// connects to the terminal of the VM over the socket at TerminalSocket.
+// connects to the guest over the socket at Socket and reaches the terminal
+// and the proxy through it.
 type Machine struct {
-	Name           string
-	Image          string
-	State          string
-	MemoryMiB      int
-	CPUs           int
-	Project        string
-	Home           string
-	Mounts         []Mount
-	Shell          bool
-	TerminalSocket string
+	Name      string
+	Image     string
+	State     string
+	MemoryMiB int
+	CPUs      int
+	Project   string
+	Home      string
+	Mounts    []Mount
+	Shell     bool
+	Socket    string
 }
 
 // Mount is a host folder that appears read-only at Guest.
@@ -66,6 +68,10 @@ func (m Machine) RunArgs() ([]string, error) {
 		"run", "--rm", "--name", m.Name,
 		// the VM reaches the network only through the proxy of the host
 		"--network", "none",
+		// the init is root of its own VM, as under QEMU, and mounts, moves
+		// itself between cgroups and halts the VM. The command it starts runs
+		// as the user without any of these.
+		"--cap-add", "ALL",
 		"--cpus", strconv.Itoa(m.CPUs),
 		"--memory", strconv.Itoa(m.MemoryMiB) + "M",
 		"--mount", mountOption(Mount{Host: m.Project, Guest: "/project"}, false),
@@ -78,11 +84,13 @@ func (m Machine) RunArgs() ([]string, error) {
 
 	args = append(args,
 		"--volume", m.State+":"+guestState,
-		"--publish-socket", m.TerminalSocket+":"+GuestTerminalSocket,
+		"--publish-socket", m.Socket+":"+GuestSocket,
+		// the guest reads its settings from the kernel command line, as it
+		// does under QEMU, and reaches the proxy the way it reaches the
+		// terminal
+		"--kernel-arg", "aibox.proxy",
 	)
 
-	// the guest reads its settings from the kernel command line, as it does
-	// under QEMU
 	if m.Shell {
 		args = append(args, "--kernel-arg", "aibox.shell")
 	}
@@ -117,8 +125,8 @@ func (m Machine) validate() error {
 		}
 	}
 
-	if m.TerminalSocket == "" || strings.Contains(m.TerminalSocket, ":") {
-		return fmt.Errorf("%q: %w", m.TerminalSocket, ErrSocketPath)
+	if m.Socket == "" || strings.Contains(m.Socket, ":") {
+		return fmt.Errorf("%q: %w", m.Socket, ErrSocketPath)
 	}
 
 	return nil

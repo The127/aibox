@@ -11,14 +11,14 @@ import (
 
 func machine() apple.Machine {
 	return apple.Machine{
-		Name:           "aibox-1234",
-		Image:          "aibox:1",
-		State:          "aibox-state-home-someone-project",
-		MemoryMiB:      2048,
-		CPUs:           2,
-		Project:        "/Users/someone/project",
-		Home:           "/Users/someone/.aibox/projects/p/home",
-		TerminalSocket: "/tmp/aibox-1234/terminal.sock",
+		Name:      "aibox-1234",
+		Image:     "aibox:1",
+		State:     "aibox-state-home-someone-project",
+		MemoryMiB: 2048,
+		CPUs:      2,
+		Project:   "/Users/someone/project",
+		Home:      "/Users/someone/.aibox/projects/p/home",
+		Socket:    "/tmp/aibox-1234/link.sock",
 	}
 }
 
@@ -31,12 +31,14 @@ func TestRunArgs(t *testing.T) {
 	assert.Equal(t, []string{
 		"run", "--rm", "--name", "aibox-1234",
 		"--network", "none",
+		"--cap-add", "ALL",
 		"--cpus", "2",
 		"--memory", "2048M",
 		"--mount", "type=bind,source=/Users/someone/project,target=/project",
 		"--mount", "type=bind,source=/Users/someone/.aibox/projects/p/home,target=/home/user",
 		"--volume", "aibox-state-home-someone-project:/var/lib/aibox/state",
-		"--publish-socket", "/tmp/aibox-1234/terminal.sock:/run/aibox/terminal.sock",
+		"--publish-socket", "/tmp/aibox-1234/link.sock:/var/lib/aibox/link.sock",
+		"--kernel-arg", "aibox.proxy",
 		"--", "aibox:1",
 	}, args)
 }
@@ -82,16 +84,16 @@ func TestRunArgsTellTheGuestToOpenAShell(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"aibox.shell"}, values(args, "--kernel-arg"))
+	assert.Equal(t, []string{"aibox.proxy", "aibox.shell"}, values(args, "--kernel-arg"))
 }
 
-func TestRunArgsPassNoSettingsWithoutAShell(t *testing.T) {
+func TestRunArgsTellTheGuestOnlyAboutTheProxyWithoutAShell(t *testing.T) {
 	// act
 	args, err := machine().RunArgs()
 
 	// assert
 	require.NoError(t, err)
-	assert.Empty(t, values(args, "--kernel-arg"))
+	assert.Equal(t, []string{"aibox.proxy"}, values(args, "--kernel-arg"))
 }
 
 func TestRunArgsRefuseAFolderWithACommaInItsPath(t *testing.T) {
@@ -152,8 +154,8 @@ func TestRunArgsRefuseAProjectOrHomeThatCannotBeMounted(t *testing.T) {
 func TestRunArgsRefuseASocketPathWithAColonOrNone(t *testing.T) {
 	// arrange
 	colon, empty := machine(), machine()
-	colon.TerminalSocket = "/tmp/a:b/terminal.sock"
-	empty.TerminalSocket = ""
+	colon.Socket = "/tmp/a:b/link.sock"
+	empty.Socket = ""
 
 	// act
 	_, colonErr := colon.RunArgs()

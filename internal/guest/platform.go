@@ -3,6 +3,7 @@
 package guest
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +17,9 @@ type Platform interface {
 	// Prepare readies the root for the mount points, before anything is
 	// mounted.
 	Prepare(sys System) error
+	// Premounted are the targets of the kernel file systems the platform
+	// mounted already, which the init leaves as they are.
+	Premounted() []string
 	// Console opens where the messages of the init go.
 	Console(sys System, options Options) (*os.File, error)
 	// Shares mounts the project and the home.
@@ -29,6 +33,24 @@ type Platform interface {
 	// Connect returns how the guest reaches the host, once the root is
 	// locked.
 	Connect(sys System, options Options) (Transport, error)
+}
+
+// ErrUnknownPlatform is an argument of the init that names no platform.
+var ErrUnknownPlatform = errors.New("no such platform")
+
+// PlatformOf returns the platform the arguments of the init name. The kernel
+// under QEMU starts the init without arguments, a runtime that starts it as
+// the process of a container passes "container".
+func PlatformOf(args []string) (Platform, error) {
+	if len(args) == 0 {
+		return QEMU{}, nil
+	}
+
+	if args[0] == "container" {
+		return &Container{}, nil
+	}
+
+	return nil, fmt.Errorf("%q: %w", args[0], ErrUnknownPlatform)
 }
 
 // Transport is how the guest reaches the terminal and the proxy of the host.
@@ -66,9 +88,17 @@ func (QEMU) Prepare(sys System) error {
 	return nil
 }
 
+// Premounted is empty, the kernel leaves every mount to the init.
+func (QEMU) Premounted() []string { return nil }
+
 // Console opens the console the kernel command line names.
 func (QEMU) Console(sys System, options Options) (*os.File, error) {
-	return sys.OpenConsole(options.Console)
+	console, err := sys.OpenConsole(options.Console)
+	if err != nil {
+		return nil, fmt.Errorf("open the console %s: %w", options.Console, err)
+	}
+
+	return console, nil
 }
 
 // Shares mounts the project and the home from virtiofs.

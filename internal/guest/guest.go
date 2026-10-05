@@ -92,6 +92,8 @@ type Mount struct {
 type Network interface {
 	BringLoopbackUp() error
 	Listen(address string) (net.Listener, error)
+	// ListenSocket listens on a unix socket at the path.
+	ListenSocket(path string) (net.Listener, error)
 	DialHost(port uint32) (net.Conn, error)
 }
 
@@ -133,6 +135,8 @@ type System interface {
 	// Delegate makes the cgroup, if missing, and gives it to the user, so
 	// that the user can make cgroups below it.
 	Delegate(cgroup string) error
+	// Enter makes the cgroup, if missing, and moves the init into it.
+	Enter(cgroup string) error
 	Wait() (pid, exitCode int, err error)
 	Halt() error
 }
@@ -143,7 +147,7 @@ type mount struct {
 	data                   string
 }
 
-type link struct {
+type symlink struct {
 	target, path string
 }
 
@@ -217,7 +221,7 @@ var (
 	}
 
 	// devtmpfs does not create these
-	links = []link{
+	links = []symlink{
 		{target: "/proc/self/fd", path: "/dev/fd"},
 		{target: "/proc/self/fd/0", path: "/dev/stdin"},
 		{target: "/proc/self/fd/1", path: "/dev/stdout"},
@@ -254,7 +258,7 @@ func ParseCmdline(cmdline string) (Options, error) {
 	}
 
 	for _, word := range strings.Fields(cmdline) {
-		key, value, _ := strings.Cut(word, "=")
+		key, value, hasValue := strings.Cut(word, "=")
 
 		switch key {
 		case "console":
@@ -264,6 +268,13 @@ func ParseCmdline(cmdline string) (Options, error) {
 		case "aibox.shell":
 			options.Shell = true
 		case "aibox.proxy":
+			// without a port the proxy is reached the way the terminal is
+			if !hasValue {
+				options.Proxy = true
+
+				break
+			}
+
 			options.ProxyPort = port(key, value)
 			options.Proxy = options.ProxyPort != 0
 		case "aibox.terminal":
@@ -470,7 +481,13 @@ func setup(sys System, platform Platform) (*os.File, Options, Transport, error) 
 		return nil, Options{}, nil, err
 	}
 
+	premounted := platform.Premounted()
+
 	for _, m := range earlyMounts {
+		if slices.Contains(premounted, m.target) {
+			continue
+		}
+
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return nil, Options{}, nil, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
 		}
@@ -485,7 +502,7 @@ func setup(sys System, platform Platform) (*os.File, Options, Transport, error) 
 
 	console, err := platform.Console(sys, options)
 	if err != nil {
-		return nil, options, nil, fmt.Errorf("open the console %s: %w", options.Console, err)
+		return nil, options, nil, err
 	}
 
 	if badWord != nil {
@@ -493,6 +510,10 @@ func setup(sys System, platform Platform) (*os.File, Options, Transport, error) 
 	}
 
 	for _, m := range mounts {
+		if slices.Contains(premounted, m.target) {
+			continue
+		}
+
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return console, options, nil, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
 		}

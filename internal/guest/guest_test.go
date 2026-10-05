@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/guest"
+	"github.com/the127/aibox/internal/link"
 	"github.com/the127/aibox/internal/session"
 )
 
@@ -933,6 +934,9 @@ type fakeSystem struct {
 	failStart    error
 	failWait     error
 	failHalt     error
+	// failSocket and failEnter are the errors of ListenSocket and Enter
+	failSocket error
+	failEnter  error
 }
 
 type attachResult struct {
@@ -1277,4 +1281,82 @@ func (s *fakeSystem) consoleOutput() string {
 	require.NoError(s.t, err)
 
 	return string(content)
+}
+
+// proxyAnswer is what the fake host answers on each proxy stream of the link.
+const proxyAnswer = "from the proxy on the host"
+
+// ListenSocket listens on a socket in a folder of the test instead of the
+// path, and plays the host: it connects as the runtime would, attaches a
+// session to the terminal stream and answers each proxy stream.
+func (s *fakeSystem) ListenSocket(path string) (net.Listener, error) {
+	s.record("listen socket " + path)
+
+	if s.failSocket != nil {
+		return nil, s.failSocket
+	}
+
+	dir, err := os.MkdirTemp("", "guest")
+	require.NoError(s.t, err)
+	s.t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	socket := filepath.Join(dir, "link.sock")
+	listener, err := net.Listen("unix", socket)
+	require.NoError(s.t, err)
+	s.t.Cleanup(func() { _ = listener.Close() })
+
+	s.attached = make(chan attachResult, 1)
+
+	go s.playHost(socket)
+
+	return listener, nil
+}
+
+func (s *fakeSystem) playHost(socket string) {
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		s.attached <- attachResult{err: err}
+
+		return
+	}
+
+	host, err := link.Host(conn)
+	if err != nil {
+		s.attached <- attachResult{err: err}
+
+		return
+	}
+
+	s.t.Cleanup(func() { _ = host.Close() })
+
+	go func() {
+		for {
+			stream, err := host.Proxy().Accept()
+			if err != nil {
+				return
+			}
+
+			_, _ = io.WriteString(stream, proxyAnswer)
+			_ = stream.Close()
+		}
+	}()
+
+	terminal, err := host.Terminal().Accept()
+	if err != nil {
+		s.attached <- attachResult{err: err}
+
+		return
+	}
+
+	defer func() { _ = terminal.Close() }()
+
+	client := session.Client{In: strings.NewReader(""), Out: &s.screen, Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}, Env: s.clientEnv}
+	code, err := client.Attach(terminal)
+	s.attached <- attachResult{code: code, err: err}
+}
+
+func (s *fakeSystem) Enter(cgroup string) error {
+	s.record("enter " + cgroup)
+
+	return s.failEnter
 }

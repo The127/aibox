@@ -11,9 +11,15 @@ import (
 )
 
 func main() {
+	platform, err := guest.PlatformOf(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	// Run powers the VM off itself. If that failed too, exiting PID 1 panics
 	// the kernel, which with panic=-1 on the command line ends the VM as well.
-	if err := guest.Run(guest.Linux{}, guest.QEMU{}); err != nil {
+	if err := guest.Run(guest.Linux{}, platform); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

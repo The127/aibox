@@ -185,6 +185,11 @@ func (Linux) Listen(address string) (net.Listener, error) {
 	return net.Listen("tcp", address)
 }
 
+// ListenSocket listens on a unix socket at the path.
+func (Linux) ListenSocket(path string) (net.Listener, error) {
+	return net.Listen("unix", path)
+}
+
 // DialHost connects to the host over vsock.
 func (Linux) DialHost(port uint32) (net.Conn, error) {
 	return vsock.Dial(vsock.Host, port, nil)
@@ -237,6 +242,16 @@ func (Linux) Delegate(cgroup string) error {
 	}
 
 	return nil
+}
+
+// Enter makes the cgroup and moves the whole process into it. Writing 0
+// names the process that writes.
+func (Linux) Enter(cgroup string) error {
+	if err := os.Mkdir(cgroup, 0o755); err != nil && !errors.Is(err, fs.ErrExist) { //nolint:gosec // a cgroup everyone may read
+		return err
+	}
+
+	return os.WriteFile(cgroup+"/cgroup.procs", []byte("0"), 0)
 }
 
 // Wait waits for any child to exit and returns its PID and exit code. A

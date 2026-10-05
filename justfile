@@ -14,8 +14,14 @@ build:
     codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements bin/aibox
 
 # build the init of the VM, which the image copies in
+[linux]
 init:
     GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
+
+# build the init of the VM for arm64, which the image copies in
+[macos]
+init:
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
 
 # build the VM image into out/
 [linux]
@@ -24,12 +30,15 @@ image: init
 
 # build the VM image for arm64 into out/, with Apple's container tool until miso runs on macOS
 [macos]
-image:
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o image/aibox-init-arm64 ./cmd/aibox-init
+image: init
     rm -rf out/build
     container build --file image/Containerfile --target out --output type=local,dest=out/build --cpus 8 --memory 8g image
     @# the tool puts its files in folders of its own below the destination
-    mv "$(find out/build -name vmlinuz)" "$(find out/build -name os.ext4)" out/
+    for f in vmlinuz os.ext4; do \
+      found=$(find out/build -type f -name "$f"); \
+      [ "$(printf '%s\n' "$found" | grep -c .)" = 1 ] || { echo "the build left no single $f in out/build"; exit 1; }; \
+      mv "$found" out/; \
+    done
     rm -rf out/build
 
 # build aibox and run it on this repo with the image from out/

@@ -1,6 +1,8 @@
 # aibox
 
 Run Claude Code inside a microVM, with your project folder mounted into it.
+It runs on Linux and on macOS. What follows describes Linux, and
+[macOS](#macos) says what is different there.
 
 - The VM runs on QEMU's microvm machine type.
 - The project folder is shared into the VM with virtio-fs. Your user on the
@@ -136,6 +138,53 @@ secret gets in without being written into the file. They travel over the
 terminal session, not over the kernel command line. A variable aibox sets
 itself, such as `HOME`, `PATH` or the proxy variables, is refused.
 
+## macOS
+
+On macOS aibox runs the VM with Virtualization.framework instead of QEMU, on
+Apple silicon. The guest, the image layout, the commands and the config are
+the same as on Linux. What is different:
+
+- aibox owns the VM, as it owns QEMU on Linux. The terminal and the proxy
+  are on vsock, which only the process that owns the VM can reach, so no
+  vsock namespace is needed. The shares are virtio-fs as on Linux, read-only
+  where Linux has them read-only, which the host enforces. There is no
+  mapping of user ids: the VM user writes as you, and the files it makes
+  are yours.
+- The state disk is the same sparse file. Virtualization.framework locks it
+  for as long as the VM runs, which keeps a second run of the project off.
+- Once the VM runs, aibox confines itself with Seatbelt, the sandbox of
+  macOS, as it does with Landlock and seccomp on Linux: it reads no files
+  but those of the resolver, connects over TCP only to the ports of the
+  allow list, starts no programs and cannot read or signal other
+  processes. The VM itself runs in a process of Virtualization.framework,
+  which aibox cannot put into a sandbox of its own as it does QEMU with
+  bubblewrap, so `--no-sandbox` changes nothing on macOS.
+- The kernel is the same source for arm64. `image/vz-arm64.config` is the
+  configuration of the kernel Apple's container tool boots on
+  Virtualization.framework, and `image/kernel-arm64.config` holds what aibox
+  changes about it, as `kernel.config` does for x86. It has no modules, no
+  network drivers, no BPF and no tracing, but PCI and ACPI, which
+  Virtualization.framework needs.
+- Where the Mac offers nested virtualization, on M3 and newer with macOS 15
+  or newer, the VM has `/dev/kvm` for VMs of its own, as on Linux.
+- miso does not run on macOS yet, so `just image` builds the image with
+  Apple's [container](https://github.com/apple/container) tool from
+  `image/Containerfile`, whose stages follow the Imagefile. Its builder needs
+  `rosetta = false` under `[build]` in `~/.config/container/config.toml`
+  when Rosetta is not installed.
+- aibox is built with cgo and signed with the entitlement
+  Virtualization.framework asks for, which `just build` and `just install`
+  do. A build without cgo says that it cannot run a VM.
+
+It needs the Xcode command line tools for cgo and the container tool for the
+image:
+
+```
+just install   # build the image into ~/.aibox/image and aibox, signed, into ~/go/bin
+aibox run
+```
+
+`just ci-macos` checks what only macOS builds, which CI on Linux cannot.
 
 ## Contributing
 

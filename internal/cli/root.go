@@ -2,7 +2,9 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -11,6 +13,7 @@ import (
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
+	"github.com/the127/aibox/internal/image"
 	"github.com/the127/aibox/internal/version"
 )
 
@@ -25,6 +28,9 @@ type dependencies struct {
 	gitIdentity     func(dir string) gitconfig.Identity
 	backend         backend.Backend
 	edit            func(editor, path string) error
+	version         func() string
+	// fetchImage downloads the image of the release into dir
+	fetchImage func(ctx context.Context, version, arch, dir string) error
 }
 
 // ExitCode is the code aibox ends with after the error: the code of the
@@ -54,6 +60,8 @@ func NewRootCommand() *cli.Command {
 		gitIdentity:     gitconfig.Read,
 		backend:         newBackend(),
 		edit:            runEditor,
+		version:         version.Get,
+		fetchImage:      image.Fetcher{BaseURL: image.ReleasesURL, Client: http.DefaultClient}.Fetch,
 	})
 }
 

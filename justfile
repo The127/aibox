@@ -53,8 +53,9 @@ image-docker-arm64: (init "arm64")
     docker build --file image/Containerfile --target out --output type=local,dest=out image
 
 # pack the VM image in out/ into the archive a release carries for the architecture
+# with only the two files: tar of macOS would add the extended attributes as ._ files
 image-archive arch:
-    tar -czf out/aibox-image_{{arch}}.tar.gz -C out vmlinuz os.ext4
+    COPYFILE_DISABLE=1 tar -czf out/aibox-image_{{arch}}.tar.gz -C out vmlinuz os.ext4
 
 # build aibox and run it on this repo with the image from out/
 aibox *args: build

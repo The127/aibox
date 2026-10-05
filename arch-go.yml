@@ -180,6 +180,14 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the image downloads the VM image of a release and knows nothing else
+  - package: '**.internal.image$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the config reads the settings of a project and knows nothing else
   - package: '**.internal.config$'
     shouldNotDependsOn:
@@ -202,6 +210,7 @@ dependenciesRules:
         - '**.internal.config$'
         - '**.internal.proxy$'
         - '**.internal.gitconfig$'
+        - '**.internal.image$'
         - '**.internal.vsockns$'
   # the guest is the init of the VM. It knows nothing of the host side
   - package: '**.internal.guest$'

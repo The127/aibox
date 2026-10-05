@@ -13,6 +13,8 @@ Releases are made from the commit messages on `main`. Nobody tags by hand.
    - a `tar.gz`, a `deb` and an `rpm` for linux amd64
    - a `tar.gz` for macOS arm64, signed ad hoc with the entitlement
      Virtualization.framework asks for
+   - `aibox-image_amd64.tar.gz` and `aibox-image_arm64.tar.gz`, the VM
+     images, which the `images` workflow builds before goreleaser runs
    - `checksums.txt`
 
    Tags with a suffix such as `-rc.1` are marked as pre-releases.
@@ -29,9 +31,14 @@ checkout of the tag is enough, there are no ldflags.
 
 ## What the packages hold
 
-Only the `aibox` binary and the license. The VM image is not shipped. The
-`deb` and the `rpm` depend on QEMU, virtiofsd and bubblewrap
-(`qemu-system-x86` for deb, `qemu-system-x86-core` for rpm).
+Only the `aibox` binary and the license. The `deb` and the `rpm` depend on
+QEMU, virtiofsd and bubblewrap (`qemu-system-x86` for deb,
+`qemu-system-x86-core` for rpm).
+
+The VM image is not in the packages. On its first run, aibox downloads
+the image of its own version from the release and checks it against
+`checksums.txt`. The amd64 image is built with miso, the arm64 image with
+docker from `image/Containerfile`.
 
 ## One-time setup
 

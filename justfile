@@ -46,13 +46,32 @@ aibox *args: build
     ./bin/aibox run --image out {{args}}
 
 # copy the VM image to where aibox run looks for it
+[linux]
 install-image: image
     mkdir -p ~/.aibox/image
     cp --reflink=auto out/vmlinuz out/os.ext4 ~/.aibox/image/
 
+# copy the VM image to where aibox run looks for it, as a clone on APFS
+[macos]
+install-image: image
+    mkdir -p ~/.aibox/image
+    cp -c out/vmlinuz out/os.ext4 ~/.aibox/image/
+
 # install the aibox binary into Go's bin folder and the image into ~/.aibox
+[linux]
 install: install-image
     CGO_ENABLED=0 go install ./cmd/aibox
+
+# install aibox where go install puts programs, built with cgo and signed, and the image into ~/.aibox
+[macos]
+install: install-image
+    #!/bin/sh
+    set -e
+    bin=$(go env GOBIN)
+    bin=${bin:-$(go env GOPATH)/bin}
+    mkdir -p "$bin"
+    CGO_ENABLED=1 go build -o "$bin/aibox" ./cmd/aibox
+    codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements "$bin/aibox"
 
 # test
 test:

@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !(darwin && cgo)
 
 package cli
 
@@ -11,7 +11,7 @@ import (
 	"github.com/the127/aibox/internal/backend"
 )
 
-var errNoBackend = errors.New("aibox cannot run a VM on this kind of host yet")
+var errNoBackend = errors.New("aibox runs a VM on Linux, and on macOS when built with cgo")
 
 type noBackend struct{}
 

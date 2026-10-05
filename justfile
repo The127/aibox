@@ -3,8 +3,15 @@ default:
     @just --list
 
 # build the static binary
+[linux]
 build:
     CGO_ENABLED=0 go build -o bin/aibox ./cmd/aibox
+
+# build the binary with cgo for Virtualization.framework, which runs it only signed with the entitlement
+[macos]
+build:
+    CGO_ENABLED=1 go build -o bin/aibox ./cmd/aibox
+    codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements bin/aibox
 
 # build the init of the VM, which the image copies in
 init:

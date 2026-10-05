@@ -387,3 +387,19 @@ func TestRunRefusesASecondRunOfTheProject(t *testing.T) {
 	cancel()
 	assert.ErrorIs(t, <-first, context.Canceled)
 }
+
+func TestWithoutTheToolItSaysToInstallItNotToBuildAnImage(t *testing.T) {
+	// arrange
+	f := newFake(t)
+	f.backend.Program = filepath.Join(t.TempDir(), "container")
+
+	// act
+	checked := f.backend.CheckImage(f.spec.Image)
+	ran := f.backend.Run(context.Background(), f.spec)
+
+	// assert
+	for _, err := range []error{checked, ran} {
+		require.ErrorIs(t, err, applelaunch.ErrNoTool)
+		assert.NotErrorIs(t, err, applelaunch.ErrNoImage)
+	}
+}

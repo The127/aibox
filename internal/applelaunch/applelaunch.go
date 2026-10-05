@@ -42,6 +42,8 @@ const (
 var (
 	// ErrNoImage is an image folder that names no image the tool has.
 	ErrNoImage = errors.New("no image for Apple's container tool, build it with just install-container-image or pass --image")
+	// ErrNoTool is a host without the container tool.
+	ErrNoTool = errors.New("aibox needs Apple's container tool, from https://github.com/apple/container")
 	// ErrNoBoot is a VM whose guest did not answer in time.
 	ErrNoBoot = errors.New("the VM did not come up")
 	// ErrBusy is a project another run of aibox has, whose state volume a
@@ -67,6 +69,10 @@ func NewBackend() Backend {
 
 // CheckImage says whether the folder names an image the tool has.
 func (b Backend) CheckImage(dir string) error {
+	if err := b.findTool(); err != nil {
+		return err
+	}
+
 	ref, err := imageRef(dir)
 	if err != nil {
 		return err
@@ -74,6 +80,16 @@ func (b Backend) CheckImage(dir string) error {
 
 	if err := b.tool(context.Background(), "image", "inspect", ref); err != nil {
 		return fmt.Errorf("%w: the tool has no %s: %w", ErrNoImage, ref, err)
+	}
+
+	return nil
+}
+
+// findTool says whether the tool is there, so that a missing tool is not
+// taken for a missing image, which the tool would have to build.
+func (b Backend) findTool() error {
+	if _, err := exec.LookPath(b.Program); err != nil {
+		return fmt.Errorf("%w: %w", ErrNoTool, err)
 	}
 
 	return nil
@@ -99,6 +115,10 @@ func imageRef(dir string) (string, error) {
 // volume and the socket folder are made first, and the socket folder is
 // removed again.
 func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
+	if err := b.findTool(); err != nil {
+		return err
+	}
+
 	ref, err := imageRef(spec.Image)
 	if err != nil {
 		return err

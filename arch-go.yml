@@ -47,6 +47,15 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # the link carries streams over one connection and knows nothing of
+  # what they carry
+  - package: '**.internal.link$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:

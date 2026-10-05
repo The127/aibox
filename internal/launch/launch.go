@@ -19,6 +19,7 @@ import (
 	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
 
+	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/confine"
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/sandbox"
@@ -215,16 +216,8 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 // which the console log usually explains.
 var ErrNoTerminal = errors.New("the VM ended before its terminal came up")
 
-// ExitError is a command in the VM that ended with a code other than 0,
-// which aibox ends with too. It has no ExitCode method on purpose:
-// urfave/cli would then exit by itself.
-type ExitError struct {
-	Code int
-}
-
-func (e *ExitError) Error() string {
-	return fmt.Sprintf("the command in the VM ended with exit code %d", e.Code)
-}
+// ExitError is a command in the VM that ended with a code other than 0.
+type ExitError = backend.ExitError
 
 // outcome is how the terminal session went: whether the VM connected,
 // the exit code of the command in it, and why the session broke off.

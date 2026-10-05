@@ -13,28 +13,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
-	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/project"
-	"github.com/the127/aibox/internal/vm"
 )
 
 type fakeLaunch struct {
-	called  bool
-	machine vm.Machine
-	options launch.Options
-	err     error
+	called bool
+	spec   backend.Spec
+	err    error
+	// image is what the fake was asked to check, and imageErr what it says
+	image    string
+	imageErr error
 	// refuse is a host the fake reports as refused while it runs
 	refuse string
 }
 
-func (f *fakeLaunch) run(_ context.Context, machine vm.Machine, options launch.Options) error {
+func (f *fakeLaunch) CheckImage(dir string) error {
+	f.image = dir
+
+	return f.imageErr
+}
+
+func (f *fakeLaunch) Run(_ context.Context, spec backend.Spec) error {
 	f.called = true
-	f.machine = machine
-	f.options = options
+	f.spec = spec
 
 	if f.refuse != "" {
-		options.Proxy.OnRefused(f.refuse)
+		spec.Proxy.OnRefused(f.refuse)
 	}
 
 	return f.err
@@ -69,11 +75,11 @@ func newFixture(t *testing.T) *fixture {
 		getwd:           func() (string, error) { return f.cwd, nil },
 		aiboxDir:        func() (string, error) { return f.aiboxDir, nil },
 		homeDir:         func() (string, error) { return f.homeDir, nil },
-		owner:           func() vm.Owner { return vm.Owner{UID: 1234, GID: 100} },
+		uid:             func() int { return 1234 },
 		stdinIsTerminal: func() bool { return true },
 		lookupEnv:       func(string) (string, bool) { return "", false },
 		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
-		run:             f.launch.run,
+		backend:         f.launch,
 	}
 
 	return f
@@ -108,11 +114,10 @@ func TestRunPassesTheFlagsToTheMachine(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(image, "vmlinuz"), f.launch.machine.Kernel)
-	assert.Equal(t, filepath.Join(image, "os.ext4"), f.launch.machine.Rootfs)
-	assert.Equal(t, 1024, f.launch.machine.MemoryMiB)
-	assert.Equal(t, 3, f.launch.machine.CPUs)
-	assert.False(t, f.launch.machine.Shell)
+	assert.Equal(t, image, f.launch.spec.Image)
+	assert.Equal(t, 1024, f.launch.spec.MemoryMiB)
+	assert.Equal(t, 3, f.launch.spec.CPUs)
+	assert.False(t, f.launch.spec.Shell)
 }
 
 func TestRunWithShell(t *testing.T) {
@@ -125,7 +130,7 @@ func TestRunWithShell(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.True(t, f.launch.machine.Shell)
+	assert.True(t, f.launch.spec.Shell)
 }
 
 func TestRunSharesTheProjectAndItsHome(t *testing.T) {
@@ -139,8 +144,9 @@ func TestRunSharesTheProjectAndItsHome(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []vm.Share{{Tag: "project", Dir: f.cwd}, {Tag: "home", Dir: home}}, f.launch.machine.Shares)
-	assert.Equal(t, &vm.Owner{UID: 1234, GID: 100}, f.launch.machine.Owner)
+	assert.Equal(t, f.cwd, f.launch.spec.Project)
+	assert.Equal(t, home, f.launch.spec.Home)
+	assert.Empty(t, f.launch.spec.Mounts)
 	assert.DirExists(t, home)
 }
 
@@ -154,7 +160,7 @@ func TestRunWritesTheConsoleIntoTheProjectFolder(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, f.project(t).ConsoleLog, f.launch.options.ConsoleLog)
+	assert.Equal(t, f.project(t).ConsoleLog, f.launch.spec.ConsoleLog)
 }
 
 func TestRunAttachesTheTerminal(t *testing.T) {
@@ -167,11 +173,9 @@ func TestRunAttachesTheTerminal(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, "qemu-system-x86_64", f.launch.options.QEMU)
-	assert.Equal(t, "/usr/libexec/virtiofsd", f.launch.options.Virtiofsd)
-	assert.Same(t, os.Stdin, f.launch.options.Stdin)
-	assert.Same(t, os.Stdout, f.launch.options.Stdout)
-	assert.Same(t, os.Stderr, f.launch.options.Stderr)
+	assert.Same(t, os.Stdin, f.launch.spec.Stdin)
+	assert.Same(t, os.Stdout, f.launch.spec.Stdout)
+	assert.Same(t, os.Stderr, f.launch.spec.Stderr)
 }
 
 func TestRunDefaults(t *testing.T) {
@@ -184,9 +188,9 @@ func TestRunDefaults(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(image, "vmlinuz"), f.launch.machine.Kernel)
-	assert.Equal(t, 2048, f.launch.machine.MemoryMiB)
-	assert.Equal(t, 2, f.launch.machine.CPUs)
+	assert.Equal(t, image, f.launch.spec.Image)
+	assert.Equal(t, 2048, f.launch.spec.MemoryMiB)
+	assert.Equal(t, 2, f.launch.spec.CPUs)
 }
 
 func TestRunTakesTheSizeFromTheConfigUnlessAFlagIsGiven(t *testing.T) {
@@ -212,8 +216,8 @@ func TestRunTakesTheSizeFromTheConfigUnlessAFlagIsGiven(t *testing.T) {
 
 			// assert
 			require.NoError(t, err)
-			assert.Equal(t, test.memory, f.launch.machine.MemoryMiB)
-			assert.Equal(t, test.cpus, f.launch.machine.CPUs)
+			assert.Equal(t, test.memory, f.launch.spec.MemoryMiB)
+			assert.Equal(t, test.cpus, f.launch.spec.CPUs)
 		})
 	}
 }
@@ -221,14 +225,15 @@ func TestRunTakesTheSizeFromTheConfigUnlessAFlagIsGiven(t *testing.T) {
 func TestRunWithoutImage(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	image := writeImage(t, t.TempDir(), "vmlinuz")
+	f.launch.imageErr = errors.New("no root disk")
+	image := t.TempDir()
 
 	// act
 	err := f.run("--image", image)
 
 	// assert
-	require.ErrorContains(t, err, filepath.Join(image, "os.ext4"))
-	assert.ErrorContains(t, err, "just install-image")
+	require.ErrorIs(t, err, f.launch.imageErr)
+	assert.Equal(t, image, f.launch.image)
 	assert.False(t, f.launch.called)
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
 }
@@ -244,7 +249,7 @@ func TestRunPassesThePortsOfTheAllowListForTheConfinement(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []uint16{22, 443}, f.launch.options.Ports)
+	assert.Equal(t, []uint16{22, 443}, f.launch.spec.Ports)
 }
 
 func TestRunSandboxesQEMUByDefault(t *testing.T) {
@@ -257,7 +262,7 @@ func TestRunSandboxesQEMUByDefault(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.False(t, f.launch.options.NoSandbox)
+	assert.False(t, f.launch.spec.Unsandboxed)
 }
 
 func TestRunLeavesTheSandboxOffWhenAsked(t *testing.T) {
@@ -270,7 +275,7 @@ func TestRunLeavesTheSandboxOffWhenAsked(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.True(t, f.launch.options.NoSandbox)
+	assert.True(t, f.launch.spec.Unsandboxed)
 }
 
 func TestRunCreatesTheStateDiskOfTheProjectWith16GiB(t *testing.T) {
@@ -283,7 +288,7 @@ func TestRunCreatesTheStateDiskOfTheProjectWith16GiB(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, f.project(t).State, f.launch.machine.State)
+	assert.Equal(t, f.project(t).State, f.launch.spec.State)
 	assert.Equal(t, int64(16<<30), f.stateSize(t))
 }
 
@@ -314,7 +319,7 @@ func (f *fixture) stateSize(t *testing.T) int64 {
 func TestRunRefusesToRunAsRoot(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	f.deps.owner = func() vm.Owner { return vm.Owner{UID: 0, GID: 0} }
+	f.deps.uid = func() int { return 0 }
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
 
 	// act
@@ -469,12 +474,10 @@ func TestRunSharesTheMountsOfTheConfigReadOnly(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []vm.Share{
-		{Tag: "project", Dir: f.cwd},
-		{Tag: "home", Dir: f.project(t).Home},
-		{Tag: "mount0", Dir: sdk, Guest: "/opt/go"},
-		{Tag: "mount1", Dir: bin, Guest: "/opt/bin"},
-	}, f.launch.machine.Shares)
+	assert.Equal(t, []backend.Mount{
+		{Tag: "mount0", Host: sdk, Guest: "/opt/go"},
+		{Tag: "mount1", Host: bin, Guest: "/opt/bin"},
+	}, f.launch.spec.Mounts)
 }
 
 func TestRunSendsThePathOfTheConfigAsAVariable(t *testing.T) {
@@ -488,7 +491,7 @@ func TestRunSendsThePathOfTheConfigAsAVariable(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "PATH=/opt/go/bin:/opt/bin"}, f.launch.options.Env)
+	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "PATH=/opt/go/bin:/opt/bin"}, f.launch.spec.Env)
 }
 
 func TestRunTakesTheFoldersOfAVariableInThePath(t *testing.T) {
@@ -509,7 +512,7 @@ func TestRunTakesTheFoldersOfAVariableInThePath(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"PATH=/opt/bin:/nix/store/abc-go/bin:/usr/bin:/home/me/bin"}, f.launch.options.Env)
+	assert.Equal(t, []string{"PATH=/opt/bin:/nix/store/abc-go/bin:/usr/bin:/home/me/bin"}, f.launch.spec.Env)
 }
 
 func TestRunWithoutAPathSendsNoPathVariable(t *testing.T) {
@@ -523,7 +526,7 @@ func TestRunWithoutAPathSendsNoPathVariable(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"GOFLAGS=-mod=mod"}, f.launch.options.Env)
+	assert.Equal(t, []string{"GOFLAGS=-mod=mod"}, f.launch.spec.Env)
 }
 
 func TestRunSendsEachFolderOfThePathOnce(t *testing.T) {
@@ -538,7 +541,7 @@ func TestRunSendsEachFolderOfThePathOnce(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"PATH=/opt/bin:/usr/bin"}, f.launch.options.Env)
+	assert.Equal(t, []string{"PATH=/opt/bin:/usr/bin"}, f.launch.spec.Env)
 }
 
 func TestRunFailsWhenThePathIsTooLongForTheVM(t *testing.T) {
@@ -593,7 +596,7 @@ func TestRunPassesTheEnvOfTheConfigToTheSession(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "GITHUB_TOKEN=s3cret"}, f.launch.options.Env)
+	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "GITHUB_TOKEN=s3cret"}, f.launch.spec.Env)
 }
 
 func TestRunWhenAVariableToPassThroughIsNotSetOnTheHost(t *testing.T) {
@@ -619,10 +622,10 @@ func (f *fixture) skillsFolder(t *testing.T) string {
 	return skills
 }
 
-func tags(shares []vm.Share) []string {
-	result := make([]string, 0, len(shares))
-	for _, share := range shares {
-		result = append(result, share.Tag)
+func tags(mounts []backend.Mount) []string {
+	result := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		result = append(result, mount.Tag)
 	}
 
 	return result
@@ -640,8 +643,8 @@ func TestRunSharesTheSkillsOfThePersonBeforeTheMounts(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"project", "home", "skills", "mount0"}, tags(f.launch.machine.Shares))
-	assert.Equal(t, vm.Share{Tag: "skills", Dir: skills, Guest: "/home/user/.claude/skills"}, f.launch.machine.Shares[2])
+	assert.Equal(t, []string{"skills", "mount0"}, tags(f.launch.spec.Mounts))
+	assert.Equal(t, backend.Mount{Tag: "skills", Host: skills, Guest: "/home/user/.claude/skills"}, f.launch.spec.Mounts[0])
 }
 
 func TestRunSharesNoSkillsWhenThePersonHasNone(t *testing.T) {
@@ -654,7 +657,7 @@ func TestRunSharesNoSkillsWhenThePersonHasNone(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"project", "home"}, tags(f.launch.machine.Shares))
+	assert.Empty(t, f.launch.spec.Mounts)
 }
 
 func TestRunSharesNoSkillsWhenTheSkillsAreAFile(t *testing.T) {
@@ -669,7 +672,7 @@ func TestRunSharesNoSkillsWhenTheSkillsAreAFile(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []string{"project", "home"}, tags(f.launch.machine.Shares))
+	assert.Empty(t, f.launch.spec.Mounts)
 }
 
 func TestRunLetsAMountOfTheConfigTakeThePlaceOfTheSkills(t *testing.T) {
@@ -686,7 +689,7 @@ func TestRunLetsAMountOfTheConfigTakeThePlaceOfTheSkills(t *testing.T) {
 
 			// assert
 			require.NoError(t, err)
-			assert.Equal(t, []string{"project", "home", "mount0"}, tags(f.launch.machine.Shares))
+			assert.Equal(t, []string{"mount0"}, tags(f.launch.spec.Mounts))
 		})
 	}
 }
@@ -738,11 +741,11 @@ func TestRunPassesTheAllowListToTheProxy(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	require.NotNil(t, f.launch.options.Proxy.Allow)
-	assert.True(t, f.launch.options.Proxy.Allow("example.com", "443"))
-	assert.False(t, f.launch.options.Proxy.Allow("example.com", "80"))
-	assert.False(t, f.launch.options.Proxy.Allow("api.anthropic.com", "443"))
-	assert.Contains(t, f.launch.options.Proxy.Hint, f.project(t).Config)
+	require.NotNil(t, f.launch.spec.Proxy.Allow)
+	assert.True(t, f.launch.spec.Proxy.Allow("example.com", "443"))
+	assert.False(t, f.launch.spec.Proxy.Allow("example.com", "80"))
+	assert.False(t, f.launch.spec.Proxy.Allow("api.anthropic.com", "443"))
+	assert.Contains(t, f.launch.spec.Proxy.Hint, f.project(t).Config)
 }
 
 func TestRunWritesTheDefaultConfigForANewProject(t *testing.T) {

@@ -4,6 +4,7 @@ package vzlaunch
 
 import (
 	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -139,4 +140,48 @@ func TestAWatchedTerminalSaysWhenItConnectedAndWhenItEnded(t *testing.T) {
 
 	// assert
 	within(t, w.ended, "the end of the session was not reported")
+}
+
+func TestATerminalThatConnectsAgainIsReportedAndEachExtraConnectionClosed(t *testing.T) {
+	// arrange
+	inner := newVZLike()
+	w := watch(newListener(inner))
+	first, firstGuest := net.Pipe()
+
+	defer func() { _ = firstGuest.Close() }()
+
+	go func() { inner.accepted <- first }()
+
+	conn, err := w.Accept()
+	require.NoError(t, err)
+
+	defer func() { _ = conn.Close() }()
+
+	// act
+	var extras []net.Conn
+
+	for range 3 {
+		host, guest := net.Pipe()
+		extras = append(extras, guest)
+		inner.accepted <- host
+	}
+
+	// assert
+	within(t, w.again, "a second connection was not reported")
+
+	for _, guest := range extras {
+		read := make(chan error, 1)
+
+		go func() {
+			_, err := guest.Read(make([]byte, 1))
+			read <- err
+		}()
+
+		select {
+		case err := <-read:
+			assert.ErrorIs(t, err, io.EOF)
+		case <-time.After(3 * time.Second):
+			t.Fatal("an extra connection was left open")
+		}
+	}
 }

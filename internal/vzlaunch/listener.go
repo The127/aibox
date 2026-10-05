@@ -64,18 +64,21 @@ func (l *listener) Close() error {
 	return nil
 }
 
-// watched is the terminal listener, which reports when the guest connected
-// and when its session ended, so that a VM that never connects or that
-// stays up after its session is stopped.
+// watched is the terminal listener, which reports when the guest connected,
+// when its session ended and when it connected again, so that a VM that
+// never connects, stays up after its session or started over is stopped.
+// The guest is not trusted, so every connection after the first is closed.
 type watched struct {
 	net.Listener
 	connected chan struct{}
 	ended     chan struct{}
+	again     chan struct{}
 	once      sync.Once
+	againOnce sync.Once
 }
 
 func watch(inner net.Listener) *watched {
-	return &watched{Listener: inner, connected: make(chan struct{}), ended: make(chan struct{})}
+	return &watched{Listener: inner, connected: make(chan struct{}), ended: make(chan struct{}), again: make(chan struct{})}
 }
 
 func (w *watched) Accept() (net.Conn, error) {
@@ -84,9 +87,28 @@ func (w *watched) Accept() (net.Conn, error) {
 		return nil, err
 	}
 
-	w.once.Do(func() { close(w.connected) })
+	w.once.Do(func() {
+		close(w.connected)
+
+		go w.turnAway()
+	})
 
 	return &endingConn{Conn: conn, ended: w.ended}, nil
+}
+
+// turnAway closes each connection after the first until the listener
+// closes. A guest connects again after it started over.
+func (w *watched) turnAway() {
+	for {
+		conn, err := w.Listener.Accept()
+		if err != nil {
+			return
+		}
+
+		_ = conn.Close()
+
+		w.againOnce.Do(func() { close(w.again) })
+	}
 }
 
 // endingConn reports its close, which is the end of the session.

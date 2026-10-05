@@ -29,11 +29,11 @@ const (
 	terminalPort = 1024
 	proxyPort    = 1025
 
-	// baseCmdline boots the root disk read-only, as under QEMU. There is no
-	// panic=: a panicking guest would reboot, which Virtualization.framework
-	// carries out instead of ending the VM, over and over. A panicked guest
-	// hangs instead, and Run stops it.
-	baseCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet"
+	// baseCmdline boots the root disk read-only, as under QEMU. A panicking
+	// guest reboots, which Virtualization.framework carries out rather than
+	// ending the VM. The guest then connects to the terminal again, which is
+	// how Run learns that it started over and stops it.
+	baseCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=1"
 
 	defaultBootTimeout     = time.Minute
 	defaultSessionEndDelay = 3 * time.Second
@@ -42,8 +42,13 @@ const (
 	stopTimeout = 10 * time.Second
 )
 
-// ErrNoBoot is a VM whose guest did not connect in time.
-var ErrNoBoot = errors.New("the VM did not come up")
+var (
+	// ErrNoBoot is a VM whose guest did not connect in time.
+	ErrNoBoot = errors.New("the VM did not come up")
+	// ErrStartedOver is a guest that connected again, after it started
+	// over, most likely from a kernel panic.
+	ErrStartedOver = errors.New("the guest started over, most likely after a kernel panic")
+)
 
 // Backend runs the VM with Virtualization.framework. BootTimeout is how long
 // the guest may take to connect, SessionEndDelay how long the session may go
@@ -145,7 +150,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	}
 
 	vmErr := b.wait(ctx, v, terminal)
-	if errors.Is(vmErr, ErrNoBoot) && spec.ConsoleLog != "" {
+	if (errors.Is(vmErr, ErrNoBoot) || errors.Is(vmErr, ErrStartedOver)) && spec.ConsoleLog != "" {
 		vmErr = fmt.Errorf("%w, see %s", vmErr, spec.ConsoleLog)
 	}
 
@@ -208,6 +213,12 @@ func (b Backend) wait(ctx context.Context, v runningVM, terminal *watched) error
 			ended = nil
 		case <-afterSession:
 			return stop(v, states)
+		case <-terminal.again:
+			if err := stop(v, states); err != nil {
+				return err
+			}
+
+			return ErrStartedOver
 		case <-boot.C:
 			if err := stop(v, states); err != nil {
 				return err
@@ -257,9 +268,7 @@ func stop(v runningVM, states <-chan vz.VirtualMachineState) error {
 // with the words of the guest, the root disk read-only and the state disk,
 // the shares, the console, vsock and entropy, and no network device.
 func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfiguration, error) {
-	cmdline := strings.Join(append([]string{baseCmdline}, m.GuestWords()...), " ")
-
-	boot, err := vz.NewLinuxBootLoader(m.Kernel, vz.WithCommandLine(cmdline))
+	boot, err := vz.NewLinuxBootLoader(m.Kernel, vz.WithCommandLine(cmdline(m.GuestWords())))
 	if err != nil {
 		return nil, fmt.Errorf("load the kernel %s: %w", m.Kernel, err)
 	}
@@ -300,6 +309,11 @@ func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfi
 	}
 
 	return config, nil
+}
+
+// cmdline is the kernel command line with the words of the guest.
+func cmdline(words []string) string {
+	return strings.Join(append([]string{baseCmdline}, words...), " ")
 }
 
 func addConsole(config *vz.VirtualMachineConfiguration, devNull, console *os.File) error {

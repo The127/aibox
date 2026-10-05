@@ -5,6 +5,7 @@ package vzlaunch
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ func (v *fakeVM) stopCount() int {
 }
 
 func terminal() *watched {
-	return &watched{connected: make(chan struct{}), ended: make(chan struct{})}
+	return &watched{connected: make(chan struct{}), ended: make(chan struct{}), again: make(chan struct{})}
 }
 
 func quick() Backend {
@@ -180,4 +181,28 @@ func TestWaitReportsAVMThatFailed(t *testing.T) {
 	// assert
 	assert.Error(t, err)
 	assert.False(t, errors.Is(err, ErrNoBoot))
+}
+
+func TestWaitStopsAGuestThatStartedOver(t *testing.T) {
+	// arrange
+	v := newFakeVM()
+	w := terminal()
+	close(w.connected)
+	close(w.again)
+
+	// act
+	err := quick().wait(context.Background(), v, w)
+
+	// assert
+	require.ErrorIs(t, err, ErrStartedOver)
+	assert.Equal(t, 1, v.stopCount())
+}
+
+func TestTheKernelRebootsAfterAPanicAndHearsTheWordsOfTheGuest(t *testing.T) {
+	// act
+	line := cmdline([]string{"aibox.shell", "aibox.terminal=1024"})
+
+	// assert
+	assert.Contains(t, strings.Fields(line), "panic=1")
+	assert.True(t, strings.HasSuffix(line, " aibox.shell aibox.terminal=1024"), line)
 }

@@ -18,13 +18,17 @@ import (
 type vzLike struct {
 	accepted chan net.Conn
 	results  chan error
+	// waiting gets a value each time an Accept starts to wait
+	waiting chan struct{}
 }
 
 func newVZLike() *vzLike {
-	return &vzLike{accepted: make(chan net.Conn), results: make(chan error)}
+	return &vzLike{accepted: make(chan net.Conn), results: make(chan error), waiting: make(chan struct{}, 16)}
 }
 
 func (l *vzLike) Accept() (net.Conn, error) {
+	l.waiting <- struct{}{}
+
 	select {
 	case conn := <-l.accepted:
 		return conn, nil
@@ -81,7 +85,8 @@ func TestClosingAListenerNobodyAcceptsOnDoesNotBlock(t *testing.T) {
 
 func TestAnAcceptWaitingWhenTheListenerClosesEndsWithErrClosed(t *testing.T) {
 	// arrange
-	l := newListener(newVZLike())
+	inner := newVZLike()
+	l := newListener(inner)
 	ended := make(chan error, 1)
 
 	go func() {
@@ -89,7 +94,7 @@ func TestAnAcceptWaitingWhenTheListenerClosesEndsWithErrClosed(t *testing.T) {
 		ended <- err
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	<-inner.waiting
 
 	// act
 	require.NoError(t, l.Close())
@@ -184,4 +189,17 @@ func TestATerminalThatConnectsAgainIsReportedAndEachExtraConnectionClosed(t *tes
 			t.Fatal("an extra connection was left open")
 		}
 	}
+}
+
+// valueConn is a connection that is not a pointer.
+type valueConn struct{ net.Conn }
+
+func TestAConnectionThatIsNoPointerIsAConnection(t *testing.T) {
+	// act
+	var conn net.Conn = valueConn{}
+
+	// assert
+	assert.True(t, isConn(conn))
+	assert.False(t, isConn(nil))
+	assert.False(t, isConn((*nilConn)(nil)))
 }

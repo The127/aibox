@@ -47,7 +47,13 @@ func (l *listener) Accept() (net.Conn, error) {
 // its own type with an error, and once closed without one, and that is not a
 // nil net.Conn.
 func isConn(conn net.Conn) bool {
-	return conn != nil && !reflect.ValueOf(conn).IsNil()
+	if conn == nil {
+		return false
+	}
+
+	value := reflect.ValueOf(conn)
+
+	return value.Kind() != reflect.Pointer || !value.IsNil()
 }
 
 func (l *listener) Close() error {
@@ -55,8 +61,13 @@ func (l *listener) Close() error {
 		close(l.closed)
 
 		// takes the close of vz when no Accept waits, and returns at once
-		// when one does and vz closed its channel behind it
-		go func() { _, _ = l.Listener.Accept() }()
+		// when one does and vz closed its channel behind it. A connection of
+		// the guest that comes in just then is closed.
+		go func() {
+			if conn, err := l.Listener.Accept(); err == nil && isConn(conn) {
+				_ = conn.Close()
+			}
+		}()
 
 		_ = l.Listener.Close()
 	})

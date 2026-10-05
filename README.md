@@ -140,9 +140,9 @@ itself, such as `HOME`, `PATH` or the proxy variables, is refused.
 
 ## macOS
 
-On macOS aibox runs the VM with Virtualization.framework instead of QEMU, on
-Apple silicon. The guest, the image layout, the commands and the config are
-the same as on Linux. What is different:
+On macOS aibox runs the VM with Virtualization.framework instead of QEMU. The
+guest, the image layout, the commands and the config are the same as on
+Linux. What is different:
 
 - aibox owns the VM, as it owns QEMU on Linux. The terminal and the proxy
   are on vsock, which only the process that owns the VM can reach, so no
@@ -150,37 +150,47 @@ the same as on Linux. What is different:
   where Linux has them read-only, which the host enforces. There is no
   mapping of user ids: the VM user writes as you, and the files it makes
   are yours.
+- The VM is arm64 Linux, so programs of the Mac do not run in it. A mount of
+  a tool from the Mac, such as a Go SDK or `/nix/store`, gives the VM files
+  it cannot run. Tools for the VM come from a folder of arm64 Linux
+  programs, or are installed into `/usr/local` in the VM, which keeps them.
 - The state disk is the same sparse file. Virtualization.framework locks it
   for as long as the VM runs, which keeps a second run of the project off.
 - Once the VM runs, aibox confines itself with Seatbelt, the sandbox of
-  macOS, as it does with Landlock and seccomp on Linux: it reads no files
-  but those of the resolver, connects over TCP only to the ports of the
-  allow list, starts no programs and cannot read or signal other
-  processes. The VM itself runs in a process of Virtualization.framework,
-  which aibox cannot put into a sandbox of its own as it does QEMU with
-  bubblewrap, so `--no-sandbox` changes nothing on macOS.
+  macOS, as it does with Landlock and seccomp on Linux. It reads the
+  contents of no files but those of the resolver, though it sees the
+  metadata of all, connects over TCP only to the ports of the allow list,
+  reaches the name service of the system, starts no programs and cannot
+  read or signal other processes. The files it opened before, such as the
+  logs, and the VM keep working. The VM itself runs in a process of
+  Virtualization.framework, which aibox cannot put into a sandbox of its
+  own as it does QEMU with bubblewrap, so `--no-sandbox` changes nothing on
+  macOS.
 - The kernel is the same source for arm64. `image/vz-arm64.config` is the
   configuration of the kernel Apple's container tool boots on
   Virtualization.framework, and `image/kernel-arm64.config` holds what aibox
-  changes about it, as `kernel.config` does for x86. It has no modules, no
-  network drivers, no BPF and no tracing, but PCI and ACPI, which
-  Virtualization.framework needs.
-- Where the Mac offers nested virtualization, on M3 and newer with macOS 15
-  or newer, the VM has `/dev/kvm` for VMs of its own, as on Linux.
+  changes about it, as `kernel.config` does for x86. Like the kernel for
+  x86 it has no modules, no network drivers, no `bpf()` syscall, no ftrace
+  and no kprobes. Unlike it, it has PCI and ACPI.
+- Where Virtualization.framework offers nested virtualization, which Apple
+  documents for M3 and newer with macOS 15 or newer, the VM has `/dev/kvm`
+  for VMs of its own, as on Linux. Elsewhere such VMs run in software.
 - miso does not run on macOS yet, so `just image` builds the image with
   Apple's [container](https://github.com/apple/container) tool from
-  `image/Containerfile`, whose stages follow the Imagefile. Its builder needs
-  `rosetta = false` under `[build]` in `~/.config/container/config.toml`
-  when Rosetta is not installed.
+  `image/Containerfile`, whose stages follow the Imagefile. Its builder gets
+  8 CPUs and 8 GiB of memory, and needs `rosetta = false` under `[build]` in
+  `~/.config/container/config.toml` when Rosetta is not installed.
 - aibox is built with cgo and signed with the entitlement
   Virtualization.framework asks for, which `just build` and `just install`
-  do. A build without cgo says that it cannot run a VM.
+  do. A build without cgo says that it runs a VM on macOS only when built
+  with cgo.
 
-It needs the Xcode command line tools for cgo and the container tool for the
-image:
+The image is for arm64, so aibox runs on Macs with Apple silicon. It needs
+Go as `go.mod` names it, `just`, the Xcode command line tools for cgo and
+the container tool for the image. It was tried on an M5 with macOS 26.
 
 ```
-just install   # build the image into ~/.aibox/image and aibox, signed, into ~/go/bin
+just install   # build the image into ~/.aibox/image and aibox, signed, where go install puts programs
 aibox run
 ```
 

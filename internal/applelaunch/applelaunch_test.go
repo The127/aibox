@@ -15,6 +15,7 @@ import (
 	"github.com/the127/aibox/internal/applelaunch"
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/host"
+	"github.com/the127/aibox/internal/link"
 	"github.com/the127/aibox/internal/proxy"
 )
 
@@ -278,6 +279,7 @@ func TestRunGivesUpOnAVMThatDoesNotComeUpAndStopsIt(t *testing.T) {
 
 	// assert
 	require.ErrorIs(t, err, applelaunch.ErrNoBoot)
+	assert.ErrorContains(t, err, "see "+f.spec.ConsoleLog)
 	assert.Contains(t, f.calls(t), "kill "+nameOf(f.runCall(t)))
 }
 
@@ -402,4 +404,59 @@ func TestWithoutTheToolItSaysToInstallItNotToBuildAnImage(t *testing.T) {
 		require.ErrorIs(t, err, applelaunch.ErrNoTool)
 		assert.NotErrorIs(t, err, applelaunch.ErrNoImage)
 	}
+}
+
+func TestRunGivesUpInTimeOnAToolThatHoldsTheConnectionSilently(t *testing.T) {
+	// arrange
+	f := newFake(t)
+	t.Setenv(fakeRun, "hold")
+	f.backend.BootTimeout = 300 * time.Millisecond
+	started := time.Now()
+
+	// act
+	err := f.backend.Run(context.Background(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, applelaunch.ErrNoBoot)
+	assert.Less(t, time.Since(started), 5*time.Second, "the run waited out the greeting")
+	assert.Contains(t, f.calls(t), "kill "+nameOf(f.runCall(t)))
+}
+
+func TestRunStopsAtOnceWhenCancelledWhileItWaitsForTheGreeting(t *testing.T) {
+	// arrange
+	f := newFake(t)
+	t.Setenv(fakeRun, "hold")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		for !f.ranTheVM() {
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	started := time.Now()
+
+	// act
+	err := f.backend.Run(ctx, f.spec)
+
+	// assert
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, time.Since(started), 5*time.Second, "the run waited out the greeting")
+}
+
+func TestRunKillsTheVMWhenSomethingElseThanTheGuestAnswers(t *testing.T) {
+	// arrange
+	f := newFake(t)
+	t.Setenv(fakeRun, "garbage")
+
+	// act
+	err := f.backend.Run(context.Background(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, link.ErrNotAGuest)
+	assert.Contains(t, f.calls(t), "kill "+nameOf(f.runCall(t)))
 }

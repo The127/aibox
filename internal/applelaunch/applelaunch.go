@@ -119,6 +119,10 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return err
 	}
 
+	if spec.Stderr == nil {
+		spec.Stderr = io.Discard
+	}
+
 	ref, err := imageRef(spec.Image)
 	if err != nil {
 		return err
@@ -181,10 +185,13 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	end, err := b.connect(ctx, machine.Socket, vm)
 	if err != nil {
-		b.kill(machine.Name, vm)
+		b.kill(machine.Name, vm, spec.Stderr)
 
-		if errors.Is(err, errVMEnded) {
+		switch {
+		case errors.Is(err, errVMEnded):
 			return host.Result(nil, host.Outcome{}, spec.ConsoleLog)
+		case errors.Is(err, ErrNoBoot) && spec.ConsoleLog != "":
+			return fmt.Errorf("%w, see %s", err, spec.ConsoleLog)
 		}
 
 		return err
@@ -209,7 +216,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	select {
 	case <-vm.done:
 	case <-ctx.Done():
-		b.kill(machine.Name, vm)
+		b.kill(machine.Name, vm, spec.Stderr)
 
 		vmErr = ctx.Err()
 	}
@@ -311,6 +318,9 @@ func (b Backend) start(args []string, console io.Writer) (*running, error) {
 	cmd.Stderr = console
 	// a Ctrl-C from the terminal reaches the session, not the tool
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// a helper of the tool that keeps its output open must not keep Wait
+	// from returning once the tool exited
+	cmd.WaitDelay = killWait
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", b.Program, err)
@@ -335,12 +345,11 @@ var errVMEnded = errors.New("the VM ended")
 // drops connections while the guest does not listen yet, so those are
 // tried again.
 func (b Backend) connect(ctx context.Context, socket string, vm *running) (*link.HostEnd, error) {
-	timeout := time.NewTimer(b.BootTimeout)
-	defer timeout.Stop()
+	deadline := time.Now().Add(b.BootTimeout)
 
 	for {
 		if conn, err := net.Dial("unix", socket); err == nil {
-			end, err := link.Host(conn)
+			end, err := greet(ctx, conn, vm, deadline)
 			if err == nil {
 				return end, nil
 			}
@@ -355,15 +364,40 @@ func (b Backend) connect(ctx context.Context, socket string, vm *running) (*link
 			return nil, errVMEnded
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-timeout.C:
+		case <-time.After(time.Until(deadline)):
 			return nil, fmt.Errorf("%w in %v", ErrNoBoot, b.BootTimeout)
 		case <-time.After(dialInterval):
 		}
 	}
 }
 
-// kill tells the tool to end the VM and waits for it, for a while.
-func (b Backend) kill(name string, vm *running) {
+// greet waits for the greeting of the guest on the connection. A tool may
+// hold a connection without a word while the guest does not listen yet, so
+// the wait ends as soon as the run is cancelled, the VM ends or the boot
+// time is up, not only when the link gives up on the greeting.
+func greet(ctx context.Context, conn net.Conn, vm *running, deadline time.Time) (*link.HostEnd, error) {
+	greeted := make(chan struct{})
+	defer close(greeted)
+
+	go func() {
+		select {
+		case <-greeted:
+			return
+		case <-ctx.Done():
+		case <-vm.done:
+		case <-time.After(time.Until(deadline)):
+		}
+
+		_ = conn.Close()
+	}()
+
+	return link.Host(conn)
+}
+
+// kill tells the tool to end the VM and waits for it, for a while. When the
+// tool does not end it in time, only the tool's client is ended, and the
+// VM may go on, so the person learns its name.
+func (b Backend) kill(name string, vm *running, stderr io.Writer) {
 	select {
 	case <-vm.done:
 		return
@@ -381,5 +415,7 @@ func (b Backend) kill(name string, vm *running) {
 		_ = vm.cmd.Process.Kill()
 
 		<-vm.done
+
+		_, _ = fmt.Fprintf(stderr, "aibox: the VM %s may still run, end it with: %s kill %s\n", name, b.Program, name)
 	}
 }

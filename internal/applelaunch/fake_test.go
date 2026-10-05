@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,9 @@ const fakeEnv = "AIBOX_FAKE_CONTAINER"
 // How the fake guest behaves, from the environment of the run.
 const (
 	// fakeRun is "session" (the default), "fail" to end before listening,
-	// or "hang" to come up never
+	// "hang" to come up never, "hold" to take connections and say nothing,
+	// as a tool might while the guest does not listen yet, or "garbage" to
+	// answer with something else than a guest
 	fakeRun = "FAKE_RUN"
 	// fakeDrops is how many connections the fake tool takes and closes
 	// before the guest listens, as Apple's tool does
@@ -116,6 +119,11 @@ func fakeVM(dir string, args []string) int {
 		return 1
 	}
 
+	switch os.Getenv(fakeRun) {
+	case "hold", "garbage":
+		return holdUntilKilled(dir, listener, os.Getenv(fakeRun) == "garbage")
+	}
+
 	drops, _ := strconv.Atoi(os.Getenv(fakeDrops))
 	for range drops {
 		conn, err := listener.Accept()
@@ -152,6 +160,48 @@ func fakeVM(dir string, args []string) int {
 
 	// the init ends the VM with a restart, which the tool reports as a signal
 	return 129
+}
+
+// holdUntilKilled takes every connection and keeps it open without a word,
+// or with an answer no guest gives, until the VM is killed, which closes
+// them.
+func holdUntilKilled(dir string, listener net.Listener, garbage bool) int {
+	var (
+		mu   sync.Mutex
+		held []net.Conn
+	)
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+
+			if garbage {
+				_, _ = io.WriteString(conn, "HTTP/1.1 400 Bad Request\r\n\r\n")
+			}
+
+			mu.Lock()
+			held = append(held, conn)
+			mu.Unlock()
+		}
+	}()
+
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "killed")); err == nil { //nolint:gosec // the folder of the test
+			mu.Lock()
+			defer mu.Unlock()
+
+			for _, conn := range held {
+				_ = conn.Close()
+			}
+
+			return 137
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // askProxy asks the proxy of the host for evil.example and keeps the answer.

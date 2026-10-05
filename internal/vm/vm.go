@@ -142,7 +142,14 @@ func fdsetPath(set int) string {
 }
 
 func (m Machine) cmdline() string {
-	words := []string{baseCmdline}
+	return strings.Join(append([]string{baseCmdline}, m.GuestWords()...), " ")
+}
+
+// GuestWords are the words of the kernel command line that tell the guest
+// its settings, the vsock ports of the host and the mounts of the host,
+// whichever VMM boots it.
+func (m Machine) GuestWords() []string {
+	var words []string
 	if m.Shell {
 		words = append(words, "aibox.shell")
 	}
@@ -161,7 +168,7 @@ func (m Machine) cmdline() string {
 		}
 	}
 
-	return strings.Join(words, " ")
+	return words
 }
 
 // VirtiofsdArgs returns the arguments for virtiofsd that serve the share to

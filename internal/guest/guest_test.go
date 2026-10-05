@@ -508,6 +508,31 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
 }
 
+func TestRunReportsAnErrorBeforeTheConsoleOnStandardError(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failPivot: true}
+
+	// act
+	err := guest.Run(sys, guest.QEMU{})
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, sys.stderr.String(), "aibox: make /run/root the root: invalid argument")
+}
+
+func TestRunReportsAnErrorOnTheConsoleOnlyOnceItIsOpen(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
+
+	// act
+	err := guest.Run(sys, guest.QEMU{})
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, sys.consoleOutput(), "no such file or directory")
+	assert.Empty(t, sys.stderr.String())
+}
+
 func TestRunPowersOffWhenTheCgroupOfTheUserCannotBeMade(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
@@ -937,6 +962,8 @@ type fakeSystem struct {
 	// failSocket and failEnter are the errors of ListenSocket and Enter
 	failSocket error
 	failEnter  error
+	// stderr is what the init wrote to its standard error
+	stderr syncBuffer
 }
 
 type attachResult struct {
@@ -1090,6 +1117,8 @@ func (s *fakeSystem) Symlink(target, path string) error {
 
 	return nil
 }
+
+func (s *fakeSystem) Stderr() io.Writer { return &s.stderr }
 
 func (s *fakeSystem) ReadCmdline() (string, error) {
 	s.record("read cmdline")

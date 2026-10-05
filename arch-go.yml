@@ -33,6 +33,19 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # the host serves the proxy and the terminal of a running VM, whichever
+  # backend started it
+  - package: '**.internal.host$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.proxy$'
+        - '**.internal.session$'
+    shouldNotDependsOn:
+      internal:
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:
@@ -61,6 +74,7 @@ dependenciesRules:
     shouldOnlyDependsOn:
       internal:
         - '**.internal.backend$'
+        - '**.internal.host$'
         - '**.internal.vm$'
         - '**.internal.proxy$'
         - '**.internal.session$'

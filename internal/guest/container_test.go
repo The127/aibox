@@ -5,6 +5,8 @@ package guest_test
 import (
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +17,17 @@ import (
 
 	"github.com/the127/aibox/internal/guest"
 )
+
+// untilReleased is a command that runs until the test creates the file it
+// returns, so that the command outlives the checks of the test without a
+// guess at how long they take.
+func untilReleased(t *testing.T) (command, release string) {
+	t.Helper()
+
+	release = filepath.Join(t.TempDir(), "release")
+
+	return "while [ ! -e " + release + " ]; do sleep 0.01; done", release
+}
 
 // containerCmdline is what the kernel of a container VM starts with, plus
 // the words the host adds.
@@ -92,7 +105,8 @@ func TestRunInAContainerHandsTheExitCodeToTheHost(t *testing.T) {
 
 func TestRunInAContainerForwardsTheProxyOverTheLink(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: containerCmdline + " aibox.proxy", realCommand: "sleep 2"}
+	command, release := untilReleased(t)
+	sys := &fakeSystem{t: t, cmdline: containerCmdline + " aibox.proxy", realCommand: command}
 	ran := make(chan error, 1)
 
 	// act
@@ -106,6 +120,7 @@ func TestRunInAContainerForwardsTheProxyOverTheLink(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, proxyAnswer, string(answer))
 	assert.Contains(t, sys.callsCopy(), "listen 127.0.0.1:3128")
+	require.NoError(t, os.WriteFile(release, nil, 0o600))
 	require.NoError(t, <-ran)
 }
 
@@ -164,7 +179,8 @@ func TestPlatformOfAnUnknownNameIsAnError(t *testing.T) {
 
 func TestRunUnderQEMUSaysWhyAProxyWithoutAPortCannotBeReached(t *testing.T) {
 	// arrange
-	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy", realCommand: "sleep 1"}
+	command, release := untilReleased(t)
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy", realCommand: command}
 	ran := make(chan error, 1)
 
 	go func() { ran <- guest.Run(sys, guest.QEMU{}) }()
@@ -180,6 +196,7 @@ func TestRunUnderQEMUSaysWhyAProxyWithoutAPortCannotBeReached(t *testing.T) {
 	assert.True(t, strings.HasPrefix(string(answer), "HTTP/1.1 502"), string(answer))
 	assert.Contains(t, sys.consoleOutput(), guest.ErrNoProxyPort.Error())
 	assert.NotContains(t, sys.callsCopy(), "dial host 0")
+	require.NoError(t, os.WriteFile(release, nil, 0o600))
 	require.NoError(t, <-ran)
 }
 

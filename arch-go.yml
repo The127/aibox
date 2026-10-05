@@ -69,6 +69,17 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # applelaunch is the backend that runs a VM with Apple's container tool
+  - package: '**.internal.applelaunch$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.apple$'
+        - '**.internal.backend$'
+        - '**.internal.host$'
+        - '**.internal.link$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:

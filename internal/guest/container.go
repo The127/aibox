@@ -3,6 +3,7 @@
 package guest
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -25,6 +26,9 @@ const (
 	// not start in the root cgroup, which may.
 	initCgroup = cgroupRoot + "/init"
 )
+
+// ErrNotPrepared is a Container asked to connect before it listened.
+var ErrNotPrepared = errors.New("the platform did not listen for the host")
 
 // Container is the platform of a VM whose runtime mounts the project, the
 // home, the further folders and the state disk itself, on a writable root,
@@ -84,8 +88,15 @@ func (*Container) State(System) error { return nil }
 func (*Container) Folders(System, Options) error { return nil }
 
 // Connect waits for the host on the socket in the background and carries
-// the terminal and the proxy over the link it makes.
+// the terminal and the proxy over the link it makes. The host decides how
+// long a VM may take to come up and ends it when it gives up, so the guest
+// waits for as long as it runs. The host connects once, a second connection
+// finds the socket closed.
 func (c *Container) Connect(System, Options) (Transport, error) {
+	if c.listener == nil {
+		return nil, ErrNotPrepared
+	}
+
 	t := &linkTransport{ready: make(chan struct{})}
 
 	go t.accept(c.listener)

@@ -161,3 +161,32 @@ func TestPlatformOfAnUnknownNameIsAnError(t *testing.T) {
 	require.ErrorIs(t, err, guest.ErrUnknownPlatform)
 	assert.ErrorContains(t, err, "firecracker")
 }
+
+func TestRunUnderQEMUSaysWhyAProxyWithoutAPortCannotBeReached(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy", realCommand: "sleep 1"}
+	ran := make(chan error, 1)
+
+	go func() { ran <- guest.Run(sys, guest.QEMU{}) }()
+
+	require.Eventually(t, func() bool { return slices.Contains(sys.callsCopy(), "start /usr/bin/claude") }, 5*time.Second, 10*time.Millisecond)
+
+	// act
+	client := dialWithDeadline(t, sys.listener.Addr().String())
+	answer, err := io.ReadAll(client)
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(answer), "HTTP/1.1 502"), string(answer))
+	assert.Contains(t, sys.consoleOutput(), guest.ErrNoProxyPort.Error())
+	assert.NotContains(t, sys.callsCopy(), "dial host 0")
+	require.NoError(t, <-ran)
+}
+
+func TestAContainerThatWasNotPreparedCannotConnect(t *testing.T) {
+	// act
+	_, err := (&guest.Container{}).Connect(&fakeSystem{t: t}, guest.Options{})
+
+	// assert
+	assert.ErrorIs(t, err, guest.ErrNotPrepared)
+}

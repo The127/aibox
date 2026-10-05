@@ -35,6 +35,10 @@ type Platform interface {
 	Connect(sys System, options Options) (Transport, error)
 }
 
+// ErrNoProxyPort is a proxy the kernel command line names without the vsock
+// port it is reached on.
+var ErrNoProxyPort = errors.New("aibox.proxy names no vsock port")
+
 // ErrUnknownPlatform is an argument of the init that names no platform.
 var ErrUnknownPlatform = errors.New("no such platform")
 
@@ -171,5 +175,9 @@ func (t vsockTransport) DialTerminal() (net.Conn, error) {
 }
 
 func (t vsockTransport) DialProxy() (net.Conn, error) {
+	if t.options.ProxyPort == 0 {
+		return nil, ErrNoProxyPort
+	}
+
 	return t.network.DialHost(t.options.ProxyPort)
 }

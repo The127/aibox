@@ -25,10 +25,13 @@ type Spec struct {
 	// Image is the folder with the image of the VM. Which files the backend
 	// needs in it is its own business.
 	Image string
-	// State is the file of the disk of the project that survives restarts.
-	State     string
-	MemoryMiB int
-	CPUs      int
+	// State is where the backend keeps the disk of the project that survives
+	// restarts, and StateBytes the size it makes a new one with. An
+	// existing disk keeps its size.
+	State      string
+	StateBytes int64
+	MemoryMiB  int
+	CPUs       int
 	// Project and Home are the host folders that appear in the VM as
 	// /project and /home/user, writable.
 	Project string

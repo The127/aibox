@@ -57,31 +57,3 @@ func Open(base, path string) (Project, error) {
 
 	return p, nil
 }
-
-// CreateState makes the state disk at path with the size, as a sparse file
-// that takes up space only as the VM writes to it. An existing disk keeps
-// its size, so the size counts on the first run only. An empty file is
-// sized again, since a run stopped between creating and sizing leaves one.
-func CreateState(path string, size int64) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600) //nolint:gosec // the path is the project's state disk
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-
-	defer func() { _ = file.Close() }()
-
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("look at %s: %w", path, err)
-	}
-
-	if info.Size() != 0 {
-		return nil
-	}
-
-	if err := file.Truncate(size); err != nil {
-		return fmt.Errorf("size %s: %w", path, err)
-	}
-
-	return nil
-}

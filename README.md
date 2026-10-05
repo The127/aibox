@@ -1,24 +1,14 @@
 # aibox
 
 Run Claude Code inside a microVM, with your project folder mounted into it.
+It runs on Linux and on macOS. What follows describes Linux, and
+[macOS](#macos) says what is different there.
 
 - The VM runs on QEMU's microvm machine type.
 - The project folder is shared into the VM with virtio-fs. Your user on the
-  host is the user inside the VM. The VM sees `.git/config` and `.git/hooks`
-  read-only: a config key or a hook written there would run on the host the
-  next time you use git, and nothing in `git status` or `git diff` would
-  show it. `.git` itself can neither be renamed nor removed in the VM, so it
-  cannot be swapped for a writable copy, and a `.git` file of a worktree or
-  submodule is read-only as a whole. `.git/info` stays writable, since
-  lefthook keeps unstaged changes there during a commit. The rest of `.git`
-  and the working tree stay writable, so `git worktree add` and submodules
-  work. Inside the VM, `git -c key=value` still sets a key for one command.
-  Not covered: a worktree or submodule made in the VM, whose own config and
-  hooks git reads when you run it inside that folder on the host; a project
-  that gets its `.git` only inside the VM; a config that includes a file
-  from the working tree; `.git/config.worktree`; and a git dir placed inside
-  the project with `--separate-git-dir`. A symlink in place of one of the
-  protected paths stops the VM from starting.
+  host is the user inside the VM. The VM can write everything in the project,
+  `.git` included. [What the VM writes](#what-the-vm-writes) says what that
+  means for you.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
   host, which only lets through hosts on an allowlist. Each VM gets a vsock
   namespace of its own, which aibox creates inside an unprivileged user
@@ -74,6 +64,33 @@ Run Claude Code inside a microVM, with your project folder mounted into it.
   no modules and no network drivers: `image/microvm.config` is a complete
   configuration for QEMU's microvm board, and `image/kernel.config` holds
   what aibox changes about it. `just image` rebuilds the image.
+
+## What the VM writes
+
+The project folder is shared writable on purpose: you open the project in
+your editor, start aibox in it and watch Claude Code work. So whatever the
+VM writes into the project is untrusted until you have read it, like a pull
+request from a stranger. That includes files that tools on the host run
+without asking. lefthook runs the commands of `lefthook.yml`, direnv runs
+`.envrc`, just reads the `justfile`, npm runs the scripts of
+`package.json`, and an IDE starts the run configurations under `.idea/`, all
+from the working tree.
+
+This includes `.git`. A key in `.git/config`, such as `core.fsmonitor` or
+`core.hooksPath`, or a hook in `.git/hooks` runs the next time you use git
+on the host, and neither `git status` nor `git diff` shows it. aibox does
+not protect them. A read-only mount in the VM does not hold: git and IDEs
+replace `.git/config` whenever they write it, for example on
+`git push -u`, and the mount goes with the old file.
+
+So:
+
+- Trust a project in your IDE, which GoLand asks about when you first open
+  it, only when the project is your own.
+- Read the diff of what the VM changed before you run a build, a test, a
+  script or a run configuration of the project on the host, and before you
+  commit with hooks the project defines.
+- Check `.git/config` and `.git/hooks` for changes you did not make.
 
 ## Status
 
@@ -136,6 +153,70 @@ secret gets in without being written into the file. They travel over the
 terminal session, not over the kernel command line. A variable aibox sets
 itself, such as `HOME`, `PATH` or the proxy variables, is refused.
 
+## macOS
+
+On macOS aibox runs the VM with Virtualization.framework instead of QEMU. The
+guest, the image layout, the commands and the config are the same as on
+Linux. What is different:
+
+- aibox owns the VM, as it owns QEMU on Linux. The terminal and the proxy
+  are on vsock, which only the process that owns the VM can reach, so no
+  vsock namespace is needed. The shares are virtio-fs as on Linux, read-only
+  where Linux has them read-only, which the host enforces. There is no
+  mapping of user ids: the VM user writes as you, and the files it makes
+  are yours.
+- The VM is arm64 Linux, so programs of the Mac do not run in it. A mount of
+  a tool from the Mac, such as a Go SDK or `/nix/store`, gives the VM files
+  it cannot run. Tools for the VM come from a folder of arm64 Linux
+  programs, or are installed into `/usr/local` in the VM, which keeps them.
+- aibox refuses to start in your home folder or above it by comparing
+  folders rather than paths. On a Mac `/users/YOU` and
+  `/System/Volumes/Data/Users/you` are your home folder too, and
+  `/System/Volumes/Data` holds it.
+- The VM can set and remove the extended attributes of files in the project,
+  `com.apple.quarantine` among them, and the files it makes carry none, so
+  Gatekeeper never checks a program that comes out of the VM.
+  Virtualization.framework has no option against it. Like everything the VM
+  writes, such a program is untrusted until you have read it.
+- The state disk is the same sparse file. Virtualization.framework locks it
+  for as long as the VM runs, which keeps a second run of the project off.
+- Once the VM runs, aibox confines itself with Seatbelt, the sandbox of
+  macOS, as it does with Landlock and seccomp on Linux. It reads the
+  contents of no files but those of the resolver, though it sees the
+  metadata of all, connects over TCP only to the ports of the allow list,
+  reaches the name service of the system, starts no programs and cannot
+  read or signal other processes. The files it opened before, such as the
+  logs, and the VM keep working. The VM itself runs in a process of
+  Virtualization.framework, which aibox cannot put into a sandbox of its
+  own as it does QEMU with bubblewrap, so `--no-sandbox` changes nothing on
+  macOS.
+- The kernel is the same source for arm64. `image/vz-arm64.config` is the
+  configuration of the kernel Apple's container tool boots on
+  Virtualization.framework, and `image/kernel-arm64.config` holds what aibox
+  changes about it, as `kernel.config` does for x86. Like the kernel for
+  x86 it has no modules, no network drivers, no `bpf()` syscall, no ftrace
+  and no kprobes. Unlike it, it has PCI and ACPI.
+- Where Virtualization.framework offers nested virtualization, which Apple
+  documents for M3 and newer with macOS 15 or newer, the VM has `/dev/kvm`
+  for VMs of its own, as on Linux. Elsewhere such VMs run in software.
+- miso does not run on macOS yet, so `just image` builds the image with
+  Apple's [container](https://github.com/apple/container) tool from
+  `image/Containerfile`, whose stages follow the Imagefile. Its builder gets
+  8 CPUs and 8 GiB of memory, and needs `rosetta = false` under `[build]` in
+  `~/.config/container/config.toml` when Rosetta is not installed.
+- aibox is built with cgo and signed with the entitlement
+  Virtualization.framework asks for, which `just build` and `just install`
+  do. A build without cgo says that it runs a VM on macOS only when built
+  with cgo.
+
+The image is for arm64, so aibox runs on Macs with Apple silicon. It needs
+Go as `go.mod` names it, `just`, the Xcode command line tools for cgo and
+the container tool for the image. It was tried on an M5 with macOS 26.
+
+```
+just install   # build the image into ~/.aibox/image and aibox, signed, where go install puts programs
+aibox run
+```
 
 ## Contributing
 

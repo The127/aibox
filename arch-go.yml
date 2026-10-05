@@ -33,6 +33,51 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # the host serves the proxy and the terminal of a running VM, whichever
+  # backend started it
+  - package: '**.internal.host$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.proxy$'
+        - '**.internal.session$'
+    shouldNotDependsOn:
+      internal:
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the machine prepares what booting the kernel of aibox needs on the
+  # host, whichever VMM boots it
+  - package: '**.internal.machine$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.vm$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # vzlaunch is the backend that runs a VM with Virtualization.framework
+  # of macOS
+  - package: '**.internal.vzlaunch$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.host$'
+        - '**.internal.machine$'
+        - '**.internal.vm$'
+        - '**.internal.seatbelt$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # seatbelt confines aibox on macOS with the sandbox of the system and
+  # knows nothing of aibox
+  - package: '**.internal.seatbelt$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:
@@ -45,10 +90,24 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
-  # the launch starts virtiofsd and QEMU for a vm.Machine
+  # the backend says what a run needs and what runs it. It knows the proxy
+  # options and nothing of how a VM is run
+  - package: '**.internal.backend$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.proxy$'
+    shouldNotDependsOn:
+      internal:
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the launch is the backend that runs a VM on QEMU and virtiofsd
   - package: '**.internal.launch$'
     shouldOnlyDependsOn:
       internal:
+        - '**.internal.backend$'
+        - '**.internal.host$'
+        - '**.internal.machine$'
         - '**.internal.vm$'
         - '**.internal.proxy$'
         - '**.internal.session$'
@@ -136,8 +195,10 @@ dependenciesRules:
       internal:
         - '**.internal.version$'
         - '**.internal.project$'
+        - '**.internal.backend$'
+        - '**.internal.machine$'
         - '**.internal.launch$'
-        - '**.internal.vm$'
+        - '**.internal.vzlaunch$'
         - '**.internal.config$'
         - '**.internal.proxy$'
         - '**.internal.gitconfig$'

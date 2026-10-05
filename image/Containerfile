@@ -1,0 +1,101 @@
+# The VM aibox runs Claude Code in on macOS, booted by Virtualization.framework
+# without an initrd and without systemd. It is the image of the Imagefile for
+# arm64, built with Apple's container tool until miso runs on macOS:
+#
+#   just image
+#
+# builds the init of the VM for arm64 into image/aibox-init, so that the
+# image needs no Go toolchain, and leaves out/vmlinuz and out/os.ext4, as
+# miso does on Linux. The stages follow the Imagefile, so that a change to one belongs
+# in the other too.
+
+FROM debian:sid AS kernel
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential bc bison flex libelf-dev libssl-dev cpio xz-utils linux-source-7.2
+RUN mkdir /src && tar -xf /usr/src/linux-source-7.2.tar.xz -C /src && mv /src/linux-source-7.2 /src/linux
+
+# vz-arm64.config is a complete kernel configuration for Virtualization.framework,
+# the one of the kernel Apple's container tool boots on it, taken over as it
+# is. kernel-arm64.config holds what aibox changes about it.
+COPY vz-arm64.config kernel-arm64.config /src/
+RUN cd /src/linux && \
+    scripts/kconfig/merge_config.sh -m /src/vz-arm64.config /src/kernel-arm64.config && make olddefconfig
+# merge_config.sh only warns about an option it could not set or unset
+RUN cd /src/linux && grep '^CONFIG_.*=y$' /src/kernel-arm64.config | while read -r option; do \
+      grep -qx "$option" .config || { echo "$option did not stick"; exit 1; }; \
+    done && \
+    grep -o '^# CONFIG_[A-Z0-9_]* is not set$' /src/kernel-arm64.config | cut -d' ' -f2 | while read -r option; do \
+      if grep -q "^$option=" .config; then echo "$option is still set"; exit 1; fi; \
+    done
+# Virtualization.framework boots the uncompressed Image of arm64
+RUN cd /src/linux && make -j"$(nproc)" Image
+
+# The programs of the VM, each collected with the libraries it loads into a
+# tree of its own under /out.
+FROM debian:sid AS tools
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap
+# The installer puts Claude Code in the home directory. It goes to /usr/bin
+# because the disk of a project is mounted over /usr/local.
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/bin/claude
+
+RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
+RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
+RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
+# the init formats the state disk of a project on its first boot
+RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
+# rootless containers map their users through these two setuid programs
+RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
+
+FROM scratch AS root
+
+# busybox gives the stage a shell, so the RUN steps below work, and the VM
+# its basic tools. The tool leaves the sh link of the Imagefile out of the
+# context, since it points at nothing there, so busybox makes it, in the
+# exec form that needs no shell yet.
+COPY --from=tools /bin/busybox /bin/busybox
+RUN ["/bin/busybox", "--install", "-s", "/bin"]
+# /usr/local and /var/lib/aibox/state are mount points for the state disk
+RUN mkdir -p /run /tmp /root /project /home/user /usr/local /var/lib/aibox/state
+
+COPY --from=tools /out/bash/ /
+COPY --from=tools /out/git/ /
+COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
+COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
+COPY --from=tools /out/claude/ /
+COPY --from=tools /out/mke2fs/ /
+COPY --from=tools /etc/mke2fs.conf /etc/
+# lddtree drops the setuid bit, which the two need to map the subuid
+# range of "user", the user of the passwd file
+COPY --from=tools /out/uidmap/ /
+RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
+COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY passwd group subuid subgid /etc/
+# podman's defaults: a container shares the network of the VM, and images
+# are not checked for signatures, since the allow list of the proxy already
+# says where they may come from
+COPY containers/ /etc/containers/
+COPY aibox.md /etc/aibox/prompt.md
+COPY aibox-init /sbin/init
+
+# miso writes the root disk itself, here mke2fs does, from the tree of the
+# root stage. The disk gets a fifth more than its files take, for the file
+# system itself.
+FROM debian:sid AS disk
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs
+COPY --from=root / /root-tree/
+# the copy keeps the setuid bits rootless containers need, and a tool that
+# dropped them would break podman in the VM without a word
+RUN test -u /root-tree/usr/bin/newuidmap && test -u /root-tree/usr/bin/newgidmap
+RUN mkdir -p /root-tree/proc /root-tree/sys /root-tree/dev && \
+    size=$(( $(du -sm /root-tree | cut -f1) * 6 / 5 + 32 )) && \
+    mke2fs -q -t ext4 -L aiboxroot -d /root-tree /os.ext4 "${size}M"
+
+FROM scratch AS out
+
+COPY --from=kernel /src/linux/arch/arm64/boot/Image /vmlinuz
+COPY --from=disk /os.ext4 /os.ext4

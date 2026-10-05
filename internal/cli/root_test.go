@@ -7,12 +7,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/the127/aibox/internal/launch"
+	"github.com/the127/aibox/internal/backend"
 )
 
 func TestExitCodeIsTheCodeOfTheCommandInTheVM(t *testing.T) {
 	// arrange
-	err := fmt.Errorf("run: %w", &launch.ExitError{Code: 7})
+	err := fmt.Errorf("run: %w", &backend.ExitError{Code: 7})
 
 	// act
 	code := ExitCode(err)

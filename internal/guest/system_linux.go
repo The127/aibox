@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -48,31 +49,6 @@ func (Linux) Mkdir(path string) error {
 // Chmod sets the mode of the file.
 func (Linux) Chmod(path string, mode os.FileMode) error {
 	return os.Chmod(path, mode)
-}
-
-// Pin binds the file or folder on itself, which no one without
-// CAP_SYS_ADMIN can undo. A symlink is refused, because the mount would
-// sit on its target while the link itself stays replaceable.
-func (Linux) Pin(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink", path)
-	}
-
-	return syscall.Mount(path, path, "", syscall.MS_BIND, "")
-}
-
-// Protect pins the file or folder and makes the mount read-only.
-func (l Linux) Protect(path string) error {
-	if err := l.Pin(path); err != nil {
-		return err
-	}
-
-	return syscall.Mount("", path, "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, "")
 }
 
 // PivotRoot makes newRoot the root, moves the old root to putOld inside
@@ -260,11 +236,13 @@ func (Linux) Wait() (int, int, error) {
 	return pid, status.ExitStatus(), nil
 }
 
-// Halt writes the file systems out and resets the machine, which ends the
-// VM because QEMU runs with -no-reboot.
+// Stderr is the standard error of the init.
+func (Linux) Stderr() io.Writer { return os.Stderr }
+
+// Halt writes the file systems out and ends the machine, the way that ends
+// the VM on this architecture.
 func (Linux) Halt() error {
 	syscall.Sync()
 
-	// the kernel has no ACPI, so it cannot power off
-	return syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
+	return syscall.Reboot(haltCommand)
 }

@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package vsockns gives a VM a vsock namespace of its own: a network
 // namespace in local mode, where the guest CID is private, so every VM can
 // have the same one, and where only aibox has sockets.

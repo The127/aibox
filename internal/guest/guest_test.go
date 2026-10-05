@@ -458,7 +458,6 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"delegate /sys/fs/cgroup/user/session",
 		"chmod 666 /dev/kvm",
 		"chmod 666 /dev/fuse",
-		"pin /project/.git",
 		"blank /dev/vdb",
 		"format /dev/vdb",
 		"mount /dev/vdb /var/lib/aibox/state",
@@ -507,6 +506,31 @@ func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
 	assert.Equal(t, append(slices.Clone(overlayCalls), "halt"), sys.calls)
 }
 
+func TestRunReportsAnErrorBeforeTheConsoleOnStandardError(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failPivot: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, sys.stderr.String(), "aibox: make /run/root the root: invalid argument")
+}
+
+func TestRunReportsAnErrorOnTheConsoleOnlyOnceItIsOpen(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, sys.consoleOutput(), "no such file or directory")
+	assert.Empty(t, sys.stderr.String())
+}
+
 func TestRunPowersOffWhenTheCgroupOfTheUserCannotBeMade(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, failDelegate: errors.New("no such file or directory")}
@@ -543,82 +567,6 @@ func TestRunPowersOffWhenADeviceCannotBeOpenedToEveryone(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "/dev/kvm")
 	assert.ErrorContains(t, err, "read-only file system")
-	assert.Equal(t, "halt", sys.calls[len(sys.calls)-1])
-}
-
-func TestRunProtectsTheGitConfigAndHooksOfTheProject(t *testing.T) {
-	// arrange
-	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/hooks", "/project/.git/info"}}
-
-	// act
-	err := guest.Run(sys)
-
-	// assert
-	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"pin /project/.git",
-		"protect /project/.git/config",
-		"protect /project/.git/hooks",
-	}, sys.gitCalls())
-}
-
-func TestRunProtectsTheGitFileOfAWorktree(t *testing.T) {
-	// arrange
-	sys := &fakeSystem{t: t, files: []string{"/project/.git"}, gitIsFile: true}
-
-	// act
-	err := guest.Run(sys)
-
-	// assert
-	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"pin /project/.git",
-		"protect /project/.git/config",
-		"protect /project/.git",
-	}, sys.gitCalls())
-}
-
-func TestRunMakesTheGitHooksFolderWhenItIsMissing(t *testing.T) {
-	// arrange
-	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}}
-
-	// act
-	err := guest.Run(sys)
-
-	// assert
-	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"pin /project/.git",
-		"protect /project/.git/config",
-		"protect /project/.git/hooks",
-		"mkdir /project/.git/hooks",
-		"protect /project/.git/hooks",
-	}, sys.gitCalls())
-}
-
-func TestRunLeavesAProjectWithoutGitAlone(t *testing.T) {
-	// arrange
-	sys := &fakeSystem{t: t}
-
-	// act
-	err := guest.Run(sys)
-
-	// assert
-	require.NoError(t, err)
-	assert.Equal(t, []string{"pin /project/.git"}, sys.gitCalls())
-}
-
-func TestRunPowersOffWhenTheGitConfigCannotBeProtected(t *testing.T) {
-	// arrange
-	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}, failProtect: errors.New("device busy")}
-
-	// act
-	err := guest.Run(sys)
-
-	// assert
-	assert.ErrorContains(t, err, "device busy")
-	assert.Contains(t, sys.consoleOutput(), "/project/.git/config")
-	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
 	assert.Equal(t, "halt", sys.calls[len(sys.calls)-1])
 }
 
@@ -910,21 +858,18 @@ type fakeSystem struct {
 	// clientEnv is what the session client on the host sends
 	clientEnv []string
 	// started is the last command Start was given
-	started     *exec.Cmd
-	formatted   bool
-	failFormat  error
-	failMount   string
-	failPivot   bool
-	failProtect error
-	failChmod   error
+	started    *exec.Cmd
+	formatted  bool
+	failFormat error
+	failMount  string
+	failPivot  bool
+	failChmod  error
 	// failDelegate is the error of every Delegate, startedIn the cgroup
 	// the command was started in
 	failDelegate error
 	startedIn    string
-	// files are the paths of the project that exist, and gitIsFile makes
-	// .git a file instead of a folder
+	// files are the paths that exist
 	files        []string
-	gitIsFile    bool
 	failLoopback error
 	failListen   error
 	failOpen     error
@@ -933,6 +878,8 @@ type fakeSystem struct {
 	failStart    error
 	failWait     error
 	failHalt     error
+	// stderr is what the init wrote to its standard error
+	stderr syncBuffer
 }
 
 type attachResult struct {
@@ -1012,19 +959,6 @@ func (s *fakeSystem) Own(path string) error {
 	return nil
 }
 
-// gitCalls are the calls about the project's .git, in order.
-func (s *fakeSystem) gitCalls() []string {
-	var calls []string
-
-	for _, call := range s.calls {
-		if strings.Contains(call, "/project/.git") {
-			calls = append(calls, call)
-		}
-	}
-
-	return calls
-}
-
 func (s *fakeSystem) Chmod(path string, mode os.FileMode) error {
 	s.record(fmt.Sprintf("chmod %o %s", mode, path))
 
@@ -1035,28 +969,8 @@ func (s *fakeSystem) Chmod(path string, mode os.FileMode) error {
 	return s.failChmod
 }
 
-func (s *fakeSystem) Pin(path string) error {
-	s.record("pin " + path)
-
-	return s.exists(path)
-}
-
-func (s *fakeSystem) Protect(path string) error {
-	s.record("protect " + path)
-
-	if s.failProtect != nil {
-		return s.failProtect
-	}
-
-	return s.exists(path)
-}
-
-// exists is the error a mount on the path would give.
+// exists is the error a change of the file would give.
 func (s *fakeSystem) exists(path string) error {
-	if s.gitIsFile && strings.HasPrefix(path, "/project/.git/") {
-		return syscall.ENOTDIR
-	}
-
 	if !slices.Contains(s.files, path) {
 		return fs.ErrNotExist
 	}
@@ -1261,6 +1175,8 @@ func (s *fakeSystem) Wait() (int, int, error) {
 
 	return s.child, s.exitCode, nil
 }
+
+func (s *fakeSystem) Stderr() io.Writer { return &s.stderr }
 
 func (s *fakeSystem) Halt() error {
 	s.record("halt")

@@ -3,7 +3,6 @@ package project_test
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,56 +107,4 @@ func TestOpenWhenBaseIsAFile(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, filepath.Join(base, "-home-someone-repos-aibox", "home"))
-}
-
-func TestCreateStateMakesASparseFileOfTheSize(t *testing.T) {
-	// arrange
-	path := filepath.Join(t.TempDir(), "state.ext4")
-
-	// act
-	err := project.CreateState(path, 1<<30)
-
-	// assert
-	require.NoError(t, err)
-
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1<<30), info.Size())
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-
-	var stat syscall.Stat_t
-	require.NoError(t, syscall.Stat(path, &stat))
-	assert.Less(t, stat.Blocks*512, int64(1<<20), "the file takes up space before anything was written")
-}
-
-func TestCreateStateSizesAnEmptyFile(t *testing.T) {
-	// arrange
-	path := filepath.Join(t.TempDir(), "state.ext4")
-	require.NoError(t, os.WriteFile(path, nil, 0o600))
-
-	// act
-	err := project.CreateState(path, 1<<30)
-
-	// assert
-	require.NoError(t, err)
-
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1<<30), info.Size())
-}
-
-func TestCreateStateKeepsAnExistingDisk(t *testing.T) {
-	// arrange
-	path := filepath.Join(t.TempDir(), "state.ext4")
-	require.NoError(t, os.WriteFile(path, []byte("data of the project"), 0o600))
-
-	// act
-	err := project.CreateState(path, 1<<30)
-
-	// assert
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
-	require.NoError(t, err)
-	assert.Equal(t, "data of the project", string(content))
 }

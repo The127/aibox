@@ -185,3 +185,38 @@ func TestVirtiofsdArgsTranslateRootToo(t *testing.T) {
 	assert.Contains(t, args, "--translate-uid=guest:1000:0:1")
 	assert.Contains(t, args, "--translate-gid=host:0:1000:1")
 }
+
+func TestGuestWordsTellTheGuestItsSettingsPortsAndMounts(t *testing.T) {
+	// arrange
+	m := machine()
+	m.Shell = true
+	m.ProxyPort = 1025
+	m.TerminalPort = 1024
+	m.Shares = append(m.Shares, vm.Share{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"})
+
+	// act
+	words := m.GuestWords()
+
+	// assert
+	assert.Equal(t, []string{"aibox.shell", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go"}, words)
+}
+
+func TestGuestWordsOfAPlainMachineAreNone(t *testing.T) {
+	// act
+	words := machine().GuestWords()
+
+	// assert
+	assert.Empty(t, words)
+}
+
+func TestCmdlineStartsWithWhatTheVMMNeedsAndEndsWithTheWordsOfTheGuest(t *testing.T) {
+	// arrange
+	m := machine()
+	m.Shell = true
+
+	// act
+	line := m.Cmdline(vm.RootCmdline + " panic=1")
+
+	// assert
+	assert.Equal(t, "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=1 aibox.shell", line)
+}

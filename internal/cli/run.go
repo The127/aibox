@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,16 +11,16 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
-	"github.com/the127/aibox/internal/launch"
+	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
-	"github.com/the127/aibox/internal/vm"
 )
 
-// QEMU, virtiofsd and the proxy would run with root rights on the host, and
-// nothing here needs them.
+// The programs that run the VM and the proxy would run with root rights on
+// the host, and nothing here needs them.
 var errRoot = errors.New("do not run aibox as root, start it as a normal user")
 
 // Claude Code and the shell in the VM wait for keys, so without a terminal
@@ -33,18 +32,9 @@ var errNoTerminal = errors.New("run needs a terminal on stdin")
 // shell files and keys of the person, and could change its own allow list.
 var errNotAProject = errors.New("run must start in a project folder")
 
-const (
-	qemuProgram      = "qemu-system-x86_64"
-	virtiofsdProgram = "/usr/libexec/virtiofsd"
-	// the tags of the shares for the mounts of the config, followed by their
-	// position
-	mountTagPrefix = "mount"
-)
-
 // The skills of the person are shared from their home on the host into the
 // home of the VM.
 const (
-	skillsTag      = "skills"
 	hostSkillsDir  = ".claude/skills"
 	guestSkillsDir = "/home/user/.claude/skills"
 )
@@ -54,11 +44,11 @@ func runCommand(deps dependencies) *cli.Command {
 		Name:  "run",
 		Usage: "boot the VM with the current folder shared into it",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image", Usage: "folder with vmlinuz and os.ext4", DefaultText: "~/.aibox/image"},
+			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "~/.aibox/image"},
 			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
-			&cli.BoolFlag{Name: "no-sandbox", Usage: "run QEMU outside its sandbox, to debug it"},
+			&cli.BoolFlag{Name: "no-sandbox", Usage: "run the VM outside its sandbox, to debug it"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -67,8 +57,7 @@ func runCommand(deps dependencies) *cli.Command {
 }
 
 func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
-	owner := deps.owner()
-	if owner.UID == 0 {
+	if deps.uid() == 0 {
 		return errRoot
 	}
 
@@ -106,8 +95,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		image = filepath.Join(aibox, "image")
 	}
 
-	kernel, rootfs, err := imageFiles(image)
-	if err != nil {
+	if _, _, err := machine.Image(image); err != nil {
 		return err
 	}
 
@@ -121,7 +109,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	mounts, err := mountShares(deps.homeDir, cfg.Mounts)
+	mounts, err := mountFolders(deps.homeDir, cfg.Mounts)
 	if err != nil {
 		return err
 	}
@@ -145,29 +133,29 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer func() { _ = log.Close() }()
 
-	if err := project.CreateState(p.State, stateBytes(cfg)); err != nil {
-		return err
-	}
-
-	machine := vm.Machine{
-		Kernel:    kernel,
-		Rootfs:    rootfs,
-		State:     p.State,
-		MemoryMiB: flagOrConfig(cmd, "memory", cfg.Memory),
-		CPUs:      flagOrConfig(cmd, "cpus", cfg.CPUs),
-		Shares: append([]vm.Share{
-			{Tag: "project", Dir: cwd},
-			{Tag: "home", Dir: p.Home},
-		}, mounts...),
-		Owner: &owner,
-		Shell: cmd.Bool("shell"),
-	}
-
-	options := launchOptions(cfg, p, log)
-	options.Env = env
-	options.NoSandbox = cmd.Bool("no-sandbox")
-
-	return deps.run(ctx, machine, options)
+	return deps.backend.Run(ctx, backend.Spec{
+		Image:       image,
+		State:       p.State,
+		StateBytes:  stateBytes(cfg),
+		MemoryMiB:   flagOrConfig(cmd, "memory", cfg.Memory),
+		CPUs:        flagOrConfig(cmd, "cpus", cfg.CPUs),
+		Project:     cwd,
+		Home:        p.Home,
+		Mounts:      mounts,
+		Shell:       cmd.Bool("shell"),
+		Unsandboxed: cmd.Bool("no-sandbox"),
+		Env:         env,
+		Proxy: proxy.Options{
+			Allow:     cfg.Allow.Allows,
+			OnRefused: proxy.RefusalLog(log),
+			Hint:      "Add it to " + p.Config + " to allow it.",
+		},
+		Ports:      cfg.Allow.Ports(),
+		ConsoleLog: p.ConsoleLog,
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+	})
 }
 
 // maxPathBytes is what the PATH for the VM may be long. The session carries
@@ -260,24 +248,54 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 }
 
 // refuseUnsafeFolder is errNotAProject when the folder is the root, the
-// home directory or above it, or above the aibox folder. Symlinks are
-// resolved first, since the share follows them.
+// home directory or above it, or above the aibox folder.
 func refuseUnsafeFolder(cwd, home, aibox string) error {
-	cwd = resolved(cwd)
-
-	if cwd == "/" {
+	if holds(cwd, "/") {
 		return fmt.Errorf("%w, not the root of the file system", errNotAProject)
 	}
 
-	if holds(cwd, resolved(home)) {
+	if holds(cwd, home) {
 		return fmt.Errorf("%w, not one that holds the home directory %s", errNotAProject, home)
 	}
 
-	if holds(cwd, resolved(aibox)) {
+	if holds(cwd, aibox) {
 		return fmt.Errorf("%w, not one that holds %s", errNotAProject, aibox)
 	}
 
 	return nil
+}
+
+// holds tells whether the folder is the one at path or holds it. It
+// compares files, not names, since a folder has more names than one: a
+// symlink, another case where the file system tells no case apart, a
+// firmlink of macOS or a bind mount. The folder holds the path when the
+// path, with some of its first folders cut off, leads from the folder to
+// the same file. So /System/Volumes/Data of a Mac holds /Users/you, though
+// .. of /Users is /. A path that does not exist yet stands for the first
+// folder above it that does. A symlink in the folder that leads to the
+// path makes it refused too, which errs on the safe side.
+func holds(folder, path string) bool {
+	path = resolved(path)
+
+	target, err := os.Stat(path)
+	for err != nil && path != filepath.Dir(path) {
+		path = filepath.Dir(path)
+		target, err = os.Stat(path)
+	}
+
+	if err != nil {
+		return false
+	}
+
+	names := strings.Split(strings.Trim(path, "/"), "/")
+	for i := range len(names) + 1 {
+		info, err := os.Stat(filepath.Join(append([]string{folder}, names[i:]...)...))
+		if err == nil && os.SameFile(info, target) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // resolved is the path with its symlinks followed, or the path as it is
@@ -288,13 +306,6 @@ func resolved(path string) string {
 	}
 
 	return filepath.Clean(path)
-}
-
-// holds tells whether path is dir or lies below it.
-func holds(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // defaultDiskGiB is the size of the state disk unless the config says
@@ -310,25 +321,25 @@ func stateBytes(cfg config.Config) int64 {
 	return int64(gib) << 30
 }
 
-// mountShares returns the share of the skills of the person, when the host
-// has any and no mount of the config takes their place, and a share for
+// mountFolders returns the mount of the skills of the person, when the host
+// has any and no mount of the config takes their place, and a mount for
 // each mount of the config, once the host folders are known to exist.
-func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]vm.Share, error) {
+func mountFolders(homeDir func() (string, error), mounts []config.Mount) ([]backend.Mount, error) {
 	home, err := homeDir()
 	if err != nil {
 		return nil, fmt.Errorf("find the home folder: %w", err)
 	}
 
-	shares := make([]vm.Share, 0, len(mounts)+1)
+	folders := make([]backend.Mount, 0, len(mounts)+1)
 
 	// a person without skills is the normal case, so a missing folder is
 	// nothing to report
 	skills := filepath.Join(home, hostSkillsDir)
 	if isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
-		shares = append(shares, vm.Share{Tag: skillsTag, Dir: skills, Guest: guestSkillsDir})
+		folders = append(folders, backend.Mount{Host: skills, Guest: guestSkillsDir})
 	}
 
-	for i, mount := range mounts {
+	for _, mount := range mounts {
 		info, err := os.Stat(mount.Host)
 		if err != nil {
 			return nil, fmt.Errorf("mount %s: %w", mount.Guest, err)
@@ -338,33 +349,16 @@ func mountShares(homeDir func() (string, error), mounts []config.Mount) ([]vm.Sh
 			return nil, fmt.Errorf("mount %s: %s is not a folder", mount.Guest, mount.Host)
 		}
 
-		shares = append(shares, vm.Share{Tag: fmt.Sprintf("%s%d", mountTagPrefix, i), Dir: mount.Host, Guest: mount.Guest})
+		folders = append(folders, backend.Mount{Host: mount.Host, Guest: mount.Guest})
 	}
 
-	return shares, nil
+	return folders, nil
 }
 
 func isFolder(path string) bool {
 	info, err := os.Stat(path)
 
 	return err == nil && info.IsDir()
-}
-
-func launchOptions(cfg config.Config, p project.Project, log io.Writer) launch.Options {
-	return launch.Options{
-		QEMU:       qemuProgram,
-		Virtiofsd:  virtiofsdProgram,
-		Stdin:      os.Stdin,
-		Stdout:     os.Stdout,
-		Stderr:     os.Stderr,
-		ConsoleLog: p.ConsoleLog,
-		Ports:      cfg.Allow.Ports(),
-		Proxy: proxy.Options{
-			Allow:     cfg.Allow.Allows,
-			OnRefused: proxy.RefusalLog(log),
-			Hint:      "Add it to " + p.Config + " to allow it.",
-		},
-	}
 }
 
 // flagOrConfig returns the flag if it was given on the command line, else
@@ -376,17 +370,4 @@ func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
 	}
 
 	return cmd.Int(flag)
-}
-
-func imageFiles(dir string) (kernel, rootfs string, err error) {
-	kernel = filepath.Join(dir, "vmlinuz")
-	rootfs = filepath.Join(dir, "os.ext4")
-
-	for _, file := range []string{kernel, rootfs} {
-		if _, err := os.Stat(file); err != nil {
-			return "", "", fmt.Errorf("%w, build the VM image with just install-image or pass --image", err)
-		}
-	}
-
-	return kernel, rootfs, nil
 }

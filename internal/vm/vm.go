@@ -17,10 +17,14 @@ const (
 // because each has a vsock namespace of its own.
 const GuestCID uint32 = 3
 
+// RootCmdline boots the root disk read-only on the virtio console, whichever
+// VMM boots the VM. The root stays read-only, as the VMM opened it: the init
+// mounts an overlay for what it has to write.
+const RootCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet"
+
 // reboot=t makes the kernel reset the machine with a triple fault, which
-// -no-reboot below turns into a QEMU exit. The root stays read-only, as
-// QEMU opened it: the init mounts an overlay for what it has to write.
-const baseCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=-1 reboot=t"
+// -no-reboot below turns into a QEMU exit.
+const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk and keeps its state
 // on a second disk. Shell boots it into a shell instead of Claude Code.
@@ -142,7 +146,20 @@ func fdsetPath(set int) string {
 }
 
 func (m Machine) cmdline() string {
-	words := []string{baseCmdline}
+	return m.Cmdline(baseCmdline)
+}
+
+// Cmdline is the kernel command line that starts with what the VMM needs and
+// goes on with the words of the guest.
+func (m Machine) Cmdline(start string) string {
+	return strings.Join(append([]string{start}, m.GuestWords()...), " ")
+}
+
+// GuestWords are the words of the kernel command line that tell the guest
+// its settings, the vsock ports of the host and the mounts of the host,
+// whichever VMM boots it.
+func (m Machine) GuestWords() []string {
+	var words []string
 	if m.Shell {
 		words = append(words, "aibox.shell")
 	}
@@ -161,7 +178,7 @@ func (m Machine) cmdline() string {
 		}
 	}
 
-	return strings.Join(words, " ")
+	return words
 }
 
 // VirtiofsdArgs returns the arguments for virtiofsd that serve the share to

@@ -13,8 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    runs-on: ubuntu-latest
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -28,8 +32,19 @@ jobs:
         with:
           version: v2.13.2
           install-only: true
-      # `just reuse` runs reuse, which the devenv has locally
-      - run: pipx install reuse==6.2.0
-      # tests that need vsock namespaces, Landlock network rules or KVM skip
-      # themselves where the runner lacks them
+      # `just reuse` runs reuse, which the devenv has locally. It needs a
+      # module to detect the encoding of files, which macOS lacks
+      - run: pipx install "reuse[charset-normalizer]==6.2.0"
+      # tests that need vsock namespaces, Landlock network rules, KVM or the
+      # entitlement of Virtualization.framework skip themselves where the
+      # runner lacks them
       - run: just ci
+
+  # the ruleset of main requires a check named ci, which the jobs of the
+  # matrix are not, so this one stands for all of them
+  ci:
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.check.result }}" = success

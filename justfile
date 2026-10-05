@@ -14,15 +14,17 @@ init:
 image: init
     miso build -o out image
 
-# build the image for Apple's container tool, with an arm64 init apart from the one of QEMU
+# build the image for Apple's container tool and name it in out/, as `just image` fills out/ for QEMU
 container-image:
     GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o image/aibox-init-arm64 ./cmd/aibox-init
     container build --file image/Containerfile --tag aibox:latest image
+    mkdir -p out
+    echo aibox:latest > out/container-image
 
 # build the image for Apple's container tool and name it where aibox run looks
 install-container-image: container-image
     mkdir -p ~/.aibox/image
-    echo aibox:latest > ~/.aibox/image/container-image
+    cp out/container-image ~/.aibox/image/
 
 # build aibox and run it on this repo with the image from out/
 aibox *args: build

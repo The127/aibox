@@ -167,6 +167,10 @@ go install ./cmd/aibox
 aibox run
 ```
 
+To work on aibox itself, `just container-image` builds the image and names
+it in `out/`, so `just aibox` runs this checkout with it, as after
+`just image` on Linux.
+
 
 ## Contributing
 

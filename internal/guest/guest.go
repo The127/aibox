@@ -606,13 +606,15 @@ func protectGit(sys System) error {
 // .git/config, while the guest takes each name for a file of its own, which
 // the mount on the one name leaves writable. Folders need none of this, the
 // guest finds a folder under one name only. A host that has no file under
-// the name in upper case tells case apart, and has none of the others.
+// the name in upper case tells case apart, and has none of the others. A
+// symlink under another name is skipped: on a host that tells no case
+// apart it would be the file itself, so it is not.
 func protectOtherNames(sys System, path string) error {
 	dir, name := filepath.Split(path)
 
 	for i, other := range otherNames(name) {
 		err := sys.Protect(dir + other)
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errSymlink) {
 			if i == 0 {
 				return nil
 			}

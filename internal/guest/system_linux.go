@@ -61,11 +61,14 @@ func (Linux) Pin(path string) error {
 	}
 
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink", path)
+		return fmt.Errorf("%s: %w", path, errSymlink)
 	}
 
 	return syscall.Mount(path, path, "", syscall.MS_BIND, "")
 }
+
+// errSymlink is how Pin refuses a symlink.
+var errSymlink = errors.New("is a symlink")
 
 // Protect pins the file or folder and makes the mount read-only.
 func (l Linux) Protect(path string) error {

@@ -636,6 +636,31 @@ func TestRunProtectsEveryOtherNameOfTheGitFileOfAWorktreeOnAHostThatFoldsCase(t 
 	assert.Contains(t, protected, "/project/.gIt")
 }
 
+func TestRunSkipsAnotherNameOfTheGitConfigThatIsASymlink(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/hooks"}, symlinks: []string{"/project/.git/CONFIG"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.calls, "start /usr/bin/claude")
+}
+
+func TestRunProtectsAFileNamedLikeTheGitConfigOnAHostThatTellsCaseApart(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config", "/project/.git/CONFIG", "/project/.git/hooks"}}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.calls, "protect /project/.git/CONFIG")
+	assert.Contains(t, sys.calls, "protect /project/.git/cONFIG")
+}
+
 func TestRunMakesTheGitHooksFolderWhenItIsMissing(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, files: []string{"/project/.git", "/project/.git/config"}}
@@ -983,9 +1008,11 @@ type fakeSystem struct {
 	// files are the paths of the project that exist, gitIsFile makes .git a
 	// file instead of a folder, and foldsCase finds them under every other
 	// name the APFS of a Mac finds them under
-	files        []string
-	gitIsFile    bool
-	foldsCase    bool
+	files     []string
+	gitIsFile bool
+	foldsCase bool
+	// symlinks are the paths of the project that are symlinks
+	symlinks     []string
 	failLoopback error
 	failListen   error
 	failOpen     error
@@ -1135,6 +1162,10 @@ func (s *fakeSystem) Protect(path string) error {
 
 // exists is the error a mount on the path would give.
 func (s *fakeSystem) exists(path string) error {
+	if slices.Contains(s.symlinks, path) {
+		return fmt.Errorf("%s: %w", path, guest.ErrSymlink)
+	}
+
 	if s.gitIsFile && strings.HasPrefix(path, "/project/.git/") {
 		return syscall.ENOTDIR
 	}

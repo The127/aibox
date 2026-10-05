@@ -6,22 +6,9 @@ It runs on Linux and on macOS. What follows describes Linux, and
 
 - The VM runs on QEMU's microvm machine type.
 - The project folder is shared into the VM with virtio-fs. Your user on the
-  host is the user inside the VM. The VM sees `.git/config` and `.git/hooks`
-  read-only: a config key or a hook written there would run on the host the
-  next time you use git, and nothing in `git status` or `git diff` would
-  show it. `.git` itself can neither be renamed nor removed in the VM, so it
-  cannot be swapped for a writable copy, and a `.git` file of a worktree or
-  submodule is read-only as a whole. `.git/info` stays writable, since
-  lefthook keeps unstaged changes there during a commit. The rest of `.git`
-  and the working tree stay writable, so `git worktree add` and submodules
-  work. Inside the VM, `git -c key=value` still sets a key for one command.
-  Not covered: a worktree or submodule made in the VM, whose own config and
-  hooks git reads when you run it inside that folder on the host; a project
-  that gets its `.git` only inside the VM; a config that includes a file
-  from the working tree; `.git/config.worktree`; and a git dir placed inside
-  the project with `--separate-git-dir`. A symlink in place of one of the
-  protected paths stops the VM from starting. Do not rely on it.
-  [What the VM writes](#what-the-vm-writes) says why.
+  host is the user inside the VM. The VM can write everything in the project,
+  `.git` included. [What the VM writes](#what-the-vm-writes) says what that
+  means for you.
 - The VM has no network card. All traffic goes over vsock to a proxy on the
   host, which only lets through hosts on an allowlist. Each VM gets a vsock
   namespace of its own, which aibox creates inside an unprivileged user
@@ -89,14 +76,12 @@ without asking. lefthook runs the commands of `lefthook.yml`, direnv runs
 `package.json`, and an IDE starts the run configurations under `.idea/`, all
 from the working tree.
 
-The read-only `.git/config` and `.git/hooks` make the quietest of these
-ways harder: a key or a hook that runs the next time you use git while
-`git diff` shows nothing. Do not rely on them. Everything above stays
-writable, and the protection of `.git/config` ends as soon as git or your
-IDE on the host rewrites the file, for example with `git push -u` or
-`git config`. git replaces the file when it writes it, and the mount on
-the old file goes with it. A process that gained root in the VM could also
-undo the mounts.
+This includes `.git`. A key in `.git/config`, such as `core.fsmonitor` or
+`core.hooksPath`, or a hook in `.git/hooks` runs the next time you use git
+on the host, and neither `git status` nor `git diff` shows it. aibox does
+not protect them. A read-only mount in the VM does not hold: git and IDEs
+replace `.git/config` whenever they write it, for example on
+`git push -u`, and the mount goes with the old file.
 
 So:
 
@@ -105,6 +90,7 @@ So:
 - Read the diff of what the VM changed before you run a build, a test, a
   script or a run configuration of the project on the host, and before you
   commit with hooks the project defines.
+- Check `.git/config` and `.git/hooks` for changes you did not make.
 
 ## Status
 
@@ -183,12 +169,8 @@ Linux. What is different:
   a tool from the Mac, such as a Go SDK or `/nix/store`, gives the VM files
   it cannot run. Tools for the VM come from a folder of arm64 Linux
   programs, or are installed into `/usr/local` in the VM, which keeps them.
-- APFS, the file system of the Mac, tells no case apart unless it was made
-  case-sensitive, and reads the ligature `ﬁ` as `fi`. The VM finds
-  `.git/config` also as `.git/CONFIG` or `.git/conﬁg`, so the init makes all
-  80 names of it read-only, and all 8 names of a `.git` file. Folders need
-  none of this. aibox refuses to start in your home folder or above it by
-  comparing folders rather than paths, since `/users/YOU` and
+- aibox refuses to start in your home folder or above it by comparing
+  folders rather than paths. On a Mac `/users/YOU` and
   `/System/Volumes/Data/Users/you` are your home folder too, and
   `/System/Volumes/Data` holds it.
 - The VM can set and remove the extended attributes of files in the project,

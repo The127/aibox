@@ -102,13 +102,6 @@ type System interface {
 	// Chmod sets the mode of the file. The error wraps fs.ErrNotExist when
 	// there is no such file.
 	Chmod(path string, mode os.FileMode) error
-	// Pin makes the file or folder a mount point, so that it can neither
-	// be renamed nor removed. The error wraps fs.ErrNotExist when the path
-	// does not exist, and syscall.ENOTDIR when a folder on the way is a file.
-	Pin(path string) error
-	// Protect pins the file or folder and makes it read-only, with the
-	// same errors.
-	Protect(path string) error
 	// PivotRoot makes newRoot the root and lets the old root go. putOld is
 	// where the old root goes meanwhile, as a path inside the new root.
 	PivotRoot(newRoot, putOld string) error
@@ -158,16 +151,6 @@ const (
 // ErrDamaged is returned for a state disk that has data but no ext4 file
 // system, which the init will not format over.
 var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
-
-// gitDir is pinned by protectGit, and gitConfig and gitDirs made read-only.
-// .git/info stays writable: lefthook keeps unstaged changes there during a
-// commit, and exclude and attributes in it run nothing on the host.
-const (
-	gitDir    = project + "/.git"
-	gitConfig = gitDir + "/config"
-)
-
-var gitDirs = []string{gitDir + "/hooks"}
 
 // localBin is made on the state disk, cache is where caches go.
 const (
@@ -515,10 +498,6 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
-	if err := protectGit(sys); err != nil {
-		return console, options, err
-	}
-
 	if err := mountState(sys); err != nil {
 		return console, options, err
 	}
@@ -554,137 +533,6 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	return console, options, nil
-}
-
-// protectGit makes the config and hooks of the project's .git read-only,
-// because a config key or a hook written there in the VM would run on the
-// host the next time the person uses git, and neither git status nor git
-// diff would show it. The .git folder itself is pinned, or it could be
-// renamed away and made again without the mounts. A .git that is a file, as
-// in a worktree or a submodule, names the real folder and is made read-only
-// as a whole. A missing hooks folder is made first, since a folder made
-// later in the VM would not be read-only.
-func protectGit(sys System) error {
-	err := sys.Pin(gitDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("pin %s: %w", gitDir, err)
-	}
-
-	err = sys.Protect(gitConfig)
-	if errors.Is(err, syscall.ENOTDIR) {
-		if err := sys.Protect(gitDir); err != nil {
-			return fmt.Errorf("protect %s: %w", gitDir, err)
-		}
-
-		return protectOtherNames(sys, gitDir)
-	}
-
-	if err != nil {
-		return fmt.Errorf("protect %s: %w", gitConfig, err)
-	}
-
-	if err := protectOtherNames(sys, gitConfig); err != nil {
-		return err
-	}
-
-	for _, dir := range gitDirs {
-		if err := protectOrMake(sys, dir); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// protectOtherNames makes the file read-only under the other names the host
-// may find it under. The APFS of a Mac tells no case apart and reads the
-// ligature ﬁ as fi, so .git/CONFIG and .git/conﬁg are the host's
-// .git/config, while the guest takes each name for a file of its own, which
-// the mount on the one name leaves writable. Folders need none of this, the
-// guest finds a folder under one name only. A host that has no file under
-// the name in upper case tells case apart, and has none of the others. A
-// symlink under another name is skipped: on a host that tells no case
-// apart it would be the file itself, so it is not.
-func protectOtherNames(sys System, path string) error {
-	dir, name := filepath.Split(path)
-
-	for i, other := range otherNames(name) {
-		err := sys.Protect(dir + other)
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errSymlink) {
-			if i == 0 {
-				return nil
-			}
-
-			continue
-		}
-
-		if err != nil {
-			return fmt.Errorf("protect %s: %w", dir+other, err)
-		}
-	}
-
-	return nil
-}
-
-// otherNames are the names APFS reads as the name, but the name itself: every
-// mix of cases, with ﬁ for fi. The first is the name in upper case.
-func otherNames(name string) []string {
-	var names []string
-
-	for _, other := range spellings(name) {
-		if other != name {
-			names = append(names, other)
-		}
-	}
-
-	return names
-}
-
-// spellings are the names APFS reads as the name, upper case first.
-func spellings(name string) []string {
-	if name == "" {
-		return []string{""}
-	}
-
-	rest := spellings(name[1:])
-
-	var names []string
-
-	for _, first := range slices.Compact([]string{strings.ToUpper(name[:1]), strings.ToLower(name[:1])}) {
-		for _, r := range rest {
-			names = append(names, first+r)
-		}
-	}
-
-	if strings.EqualFold(name[:min(2, len(name))], "fi") {
-		for _, r := range spellings(name[2:]) {
-			names = append(names, "\ufb01"+r)
-		}
-	}
-
-	return names
-}
-
-// protectOrMake makes the folder read-only, making it first if missing.
-func protectOrMake(sys System, dir string) error {
-	err := sys.Protect(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		if err := sys.Mkdir(dir); err != nil {
-			return fmt.Errorf("make %s: %w", dir, err)
-		}
-
-		err = sys.Protect(dir)
-	}
-
-	if err != nil {
-		return fmt.Errorf("protect %s: %w", dir, err)
-	}
-
-	return nil
 }
 
 // enterOverlay puts an overlay in RAM over the read-only root disk and

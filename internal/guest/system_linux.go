@@ -51,34 +51,6 @@ func (Linux) Chmod(path string, mode os.FileMode) error {
 	return os.Chmod(path, mode)
 }
 
-// Pin binds the file or folder on itself, which no one without
-// CAP_SYS_ADMIN can undo. A symlink is refused, because the mount would
-// sit on its target while the link itself stays replaceable.
-func (Linux) Pin(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s: %w", path, errSymlink)
-	}
-
-	return syscall.Mount(path, path, "", syscall.MS_BIND, "")
-}
-
-// errSymlink is how Pin refuses a symlink.
-var errSymlink = errors.New("is a symlink")
-
-// Protect pins the file or folder and makes the mount read-only.
-func (l Linux) Protect(path string) error {
-	if err := l.Pin(path); err != nil {
-		return err
-	}
-
-	return syscall.Mount("", path, "", syscall.MS_REMOUNT|syscall.MS_BIND|syscall.MS_RDONLY, "")
-}
-
 // PivotRoot makes newRoot the root, moves the old root to putOld inside
 // it, and detaches it from there.
 func (Linux) PivotRoot(newRoot, putOld string) error {

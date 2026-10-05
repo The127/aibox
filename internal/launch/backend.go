@@ -33,13 +33,6 @@ func NewBackend() Backend {
 	}
 }
 
-// CheckImage says whether the folder holds the kernel and the root disk.
-func (b Backend) CheckImage(dir string) error {
-	_, _, err := machine.Image(dir)
-
-	return err
-}
-
 // Run boots the VM of the spec, see the function Run.
 func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	m, options, err := b.prepare(spec)

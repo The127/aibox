@@ -16,10 +16,8 @@ func TestAHostWithoutABackendSaysSoInsteadOfRunning(t *testing.T) {
 	b := newBackend()
 
 	// act
-	checked := b.CheckImage(t.TempDir())
 	ran := b.Run(context.Background(), backend.Spec{})
 
 	// assert
-	assert.ErrorIs(t, checked, errNoBackend)
 	assert.ErrorIs(t, ran, errNoBackend)
 }

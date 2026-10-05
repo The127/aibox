@@ -23,15 +23,8 @@ type dependencies struct {
 	stdinIsTerminal func() bool
 	lookupEnv       func(name string) (string, bool)
 	gitIdentity     func(dir string) gitconfig.Identity
-	backend         imageBackend
+	backend         backend.Backend
 	edit            func(editor, path string) error
-}
-
-// imageBackend is the backend that runs the VM, which can also say whether an
-// image folder holds what it needs.
-type imageBackend interface {
-	backend.Backend
-	CheckImage(dir string) error
 }
 
 // ExitCode is the code aibox ends with after the error: the code of the

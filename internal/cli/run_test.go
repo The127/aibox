@@ -22,17 +22,8 @@ type fakeLaunch struct {
 	called bool
 	spec   backend.Spec
 	err    error
-	// image is what the fake was asked to check, and imageErr what it says
-	image    string
-	imageErr error
 	// refuse is a host the fake reports as refused while it runs
 	refuse string
-}
-
-func (f *fakeLaunch) CheckImage(dir string) error {
-	f.image = dir
-
-	return f.imageErr
 }
 
 func (f *fakeLaunch) Run(_ context.Context, spec backend.Spec) error {
@@ -225,15 +216,14 @@ func TestRunTakesTheSizeFromTheConfigUnlessAFlagIsGiven(t *testing.T) {
 func TestRunWithoutImage(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	f.launch.imageErr = errors.New("no root disk")
-	image := t.TempDir()
+	image := writeImage(t, t.TempDir(), "vmlinuz")
 
 	// act
 	err := f.run("--image", image)
 
 	// assert
-	require.ErrorIs(t, err, f.launch.imageErr)
-	assert.Equal(t, image, f.launch.image)
+	require.ErrorContains(t, err, filepath.Join(image, "os.ext4"))
+	assert.ErrorContains(t, err, "just install-image")
 	assert.False(t, f.launch.called)
 	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"))
 }

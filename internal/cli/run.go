@@ -14,6 +14,7 @@ import (
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
+	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
 )
@@ -94,7 +95,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		image = filepath.Join(aibox, "image")
 	}
 
-	if err := deps.backend.CheckImage(image); err != nil {
+	if _, _, err := machine.Image(image); err != nil {
 		return err
 	}
 

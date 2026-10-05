@@ -92,18 +92,3 @@ func TestNewBackendRunsTheQEMUAndVirtiofsdOfAnX86Host(t *testing.T) {
 	assert.Equal(t, "/usr/libexec/virtiofsd", b.Virtiofsd)
 	assert.Equal(t, vm.Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, b.Owner) //nolint:gosec // never negative on Linux
 }
-
-func TestBackendChecksThatTheImageHoldsTheKernelAndRootDisk(t *testing.T) {
-	// arrange
-	complete := imageFolder(t, "vmlinuz", "os.ext4")
-	incomplete := imageFolder(t, "os.ext4")
-
-	// act
-	ok := qemuBackend().CheckImage(complete)
-	missing := qemuBackend().CheckImage(incomplete)
-
-	// assert
-	require.NoError(t, ok)
-	require.Error(t, missing)
-	assert.Contains(t, missing.Error(), "vmlinuz")
-}

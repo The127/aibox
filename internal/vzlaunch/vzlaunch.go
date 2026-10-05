@@ -73,13 +73,6 @@ func NewBackend() Backend {
 	}
 }
 
-// CheckImage says whether the folder holds the kernel and the root disk.
-func (b Backend) CheckImage(dir string) error {
-	_, _, err := machine.Image(dir)
-
-	return err
-}
-
 // Run boots the VM of the spec with the proxy and the terminal served to it
 // and returns when it stopped, or once it was stopped because the context
 // ended, the guest did not connect in time or it stayed up after its

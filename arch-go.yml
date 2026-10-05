@@ -196,6 +196,7 @@ dependenciesRules:
         - '**.internal.version$'
         - '**.internal.project$'
         - '**.internal.backend$'
+        - '**.internal.machine$'
         - '**.internal.launch$'
         - '**.internal.vzlaunch$'
         - '**.internal.config$'

@@ -15,9 +15,8 @@ var errNoBackend = errors.New("aibox runs a VM on Linux, and on macOS when built
 
 type noBackend struct{}
 
-func (noBackend) CheckImage(string) error                 { return errNoBackend }
 func (noBackend) Run(context.Context, backend.Spec) error { return errNoBackend }
 
-func newBackend() imageBackend { return noBackend{} }
+func newBackend() backend.Backend { return noBackend{} }
 
 func platformCommands() []*cli.Command { return nil }

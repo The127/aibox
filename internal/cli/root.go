@@ -2,7 +2,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,9 +11,7 @@ import (
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
-	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/version"
-	"github.com/the127/aibox/internal/vsockns"
 )
 
 // dependencies are the host functions the commands call.
@@ -62,7 +59,7 @@ func NewRootCommand() *cli.Command {
 		stdinIsTerminal: func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
 		lookupEnv:       os.LookupEnv,
 		gitIdentity:     gitconfig.Read,
-		backend:         launch.NewBackend(),
+		backend:         newBackend(),
 		edit:            runEditor,
 	})
 }
@@ -72,17 +69,7 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
-		Commands: []*cli.Command{runCommand(deps), configCommand(deps), namespaceCommand()},
-	}
-}
-
-// namespaceCommand is the helper aibox run starts to make the vsock
-// namespace of a VM. It is not for people to call.
-func namespaceCommand() *cli.Command {
-	return &cli.Command{
-		Name:   vsockns.Command,
-		Hidden: true,
-		Action: func(context.Context, *cli.Command) error { return vsockns.Serve() },
+		Commands: append([]*cli.Command{runCommand(deps), configCommand(deps)}, platformCommands()...),
 	}
 }
 

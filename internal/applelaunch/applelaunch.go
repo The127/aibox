@@ -44,6 +44,9 @@ var (
 	ErrNoImage = errors.New("no image for Apple's container tool, build it with just install-container-image or pass --image")
 	// ErrNoBoot is a VM whose guest did not answer in time.
 	ErrNoBoot = errors.New("the VM did not come up")
+	// ErrBusy is a project another run of aibox has, whose state volume a
+	// second VM must not mount, as two kernels on one file system break it.
+	ErrBusy = errors.New("another aibox runs this project")
 )
 
 // Backend runs the VM with the container tool at Program. BootTimeout is how
@@ -102,6 +105,14 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	}
 
 	volume := volumeName(spec.State)
+
+	lock, err := lockProject(spec.State, volume)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = lock.Close() }()
+
 	if err := b.makeVolume(ctx, volume, spec.StateBytes); err != nil {
 		return err
 	}
@@ -193,6 +204,31 @@ func volumeName(state string) string {
 	sum := sha256.Sum256([]byte(state))
 
 	return "aibox-state-" + hex.EncodeToString(sum[:8])
+}
+
+// lockProject locks the project for the run, as launch locks the state disk
+// under QEMU. The disk is a volume of the tool here, so a file next to where
+// the spec places it holds the lock, which ends with the process.
+func lockProject(state, volume string) (*os.File, error) {
+	path := state + ".lock"
+
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // next to the state of the project
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+
+	switch err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); {
+	case errors.Is(err, syscall.EWOULDBLOCK):
+		_ = file.Close()
+
+		return nil, fmt.Errorf("%w and has its state volume %s", ErrBusy, volume)
+	case err != nil:
+		_ = file.Close()
+
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+
+	return file, nil
 }
 
 // makeVolume makes the volume with the size unless it exists. An existing

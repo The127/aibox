@@ -351,3 +351,39 @@ func TestRunEndsWithTheContextWhileItMakesTheVolume(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestRunRefusesASecondRunOfTheProject(t *testing.T) {
+	// arrange
+	f := newFake(t)
+	t.Setenv(fakeRun, "hang")
+	f.backend.BootTimeout = time.Minute
+
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+
+	go func() { first <- f.backend.Run(ctx, f.spec) }()
+
+	for !f.ranTheVM() {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// act
+	err := f.backend.Run(context.Background(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, applelaunch.ErrBusy)
+	assert.ErrorContains(t, err, "another aibox runs this project")
+
+	runs := 0
+
+	for _, call := range f.calls(t) {
+		if strings.HasPrefix(call, "run ") {
+			runs++
+		}
+	}
+
+	assert.Equal(t, 1, runs)
+
+	cancel()
+	assert.ErrorIs(t, <-first, context.Canceled)
+}

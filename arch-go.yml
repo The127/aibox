@@ -33,6 +33,20 @@ dependenciesRules:
         - os/exec
         - net
         - syscall
+  # apple only builds command lines of the container tool. Starting it
+  # happens elsewhere
+  - package: '**.internal.apple$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os
+        - os/exec
+        - net
+        - syscall
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:

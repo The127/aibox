@@ -35,9 +35,10 @@ test:
 cover:
     go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
-# lint
+# lint all code for Linux, and for macOS the host side, which is all that builds there
 lint:
-    golangci-lint run ./...
+    GOOS=linux GOARCH=amd64 golangci-lint run ./...
+    GOOS=darwin GOARCH=arm64 golangci-lint run $(GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}{{{{.Dir}}{{{{end}}' ./cmd/aibox)
 
 # format
 fmt:

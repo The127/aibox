@@ -22,6 +22,7 @@ import (
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/confine"
 	"github.com/the127/aibox/internal/host"
+	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/vm"
@@ -221,7 +222,7 @@ type qemuFiles struct {
 // openFiles opens everything QEMU needs, so that QEMU opens no path itself
 // and a missing file is reported before it starts. The caller closes the
 // extra files once QEMU has them, and the console when the log is done.
-func openFiles(machine vm.Machine, options Options, vhost *os.File) (_ *qemuFiles, err error) {
+func openFiles(m vm.Machine, options Options, vhost *os.File) (_ *qemuFiles, err error) {
 	files := &qemuFiles{}
 	files.numbers.Vhost = files.add(vhost)
 
@@ -239,26 +240,26 @@ func openFiles(machine vm.Machine, options Options, vhost *os.File) (_ *qemuFile
 		return nil, err
 	}
 
-	if files.kernelFD, err = files.open("kernel", machine.Kernel, os.O_RDONLY); err != nil {
+	if files.kernelFD, err = files.open("kernel", m.Kernel, os.O_RDONLY); err != nil {
 		return nil, err
 	}
 
-	if files.numbers.Rootfs, err = files.open("root disk", machine.Rootfs, os.O_RDONLY); err != nil {
+	if files.numbers.Rootfs, err = files.open("root disk", m.Rootfs, os.O_RDONLY); err != nil {
 		return nil, err
 	}
 
-	if files.numbers.StateRead, err = files.open("state disk", machine.State, os.O_RDONLY); err != nil {
+	if files.numbers.StateRead, err = files.open("state disk", m.State, os.O_RDONLY); err != nil {
 		return nil, err
 	}
 
-	state, err := lockedState(machine.State)
+	state, err := machine.LockState(m.State)
 	if err != nil {
 		return nil, err
 	}
 
 	files.numbers.StateWrite = files.add(state)
 
-	for _, share := range machine.Shares {
+	for _, share := range m.Shares {
 		socket, err := connect(share)
 		if err != nil {
 			return nil, err
@@ -276,29 +277,6 @@ func openFiles(machine vm.Machine, options Options, vhost *os.File) (_ *qemuFile
 	files.console = os.NewFile(uintptr(pair[1]), "console")
 
 	return files, nil
-}
-
-// lockedState opens the state disk for writing and locks it. The lock
-// stays with the descriptor QEMU inherits, so a second run of the project
-// fails here instead of writing to the same file system.
-func lockedState(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // the path is the project's state disk
-	if err != nil {
-		return nil, fmt.Errorf("open the state disk: %w", err)
-	}
-
-	switch err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); {
-	case errors.Is(err, unix.EWOULDBLOCK):
-		_ = file.Close()
-
-		return nil, fmt.Errorf("another aibox runs this project and has its state disk %s", path)
-	case err != nil:
-		_ = file.Close()
-
-		return nil, fmt.Errorf("lock the state disk %s: %w", path, err)
-	}
-
-	return file, nil
 }
 
 // open opens the path and returns the number the file has in QEMU.

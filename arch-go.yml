@@ -46,6 +46,16 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the machine prepares what booting the kernel of aibox needs on the
+  # host, whichever VMM boots it
+  - package: '**.internal.machine$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.vm$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:
@@ -75,6 +85,7 @@ dependenciesRules:
       internal:
         - '**.internal.backend$'
         - '**.internal.host$'
+        - '**.internal.machine$'
         - '**.internal.vm$'
         - '**.internal.proxy$'
         - '**.internal.session$'

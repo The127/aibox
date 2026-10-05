@@ -3,7 +3,6 @@ package launch_test
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,75 +37,17 @@ func qemuBackend() launch.Backend {
 	return launch.Backend{QEMU: "qemu", Virtiofsd: "virtiofsd", Owner: vm.Owner{UID: 1234, GID: 100}}
 }
 
-func TestBackendBootsTheKernelAndRootDiskOfTheImage(t *testing.T) {
-	// arrange
-	image := imageFolder(t, "vmlinuz", "os.ext4")
-	state := statePath(t)
-
-	// act
-	machine, _, err := qemuBackend().Prepare(backend.Spec{Image: image, State: state, MemoryMiB: 1024, CPUs: 3, Shell: true})
-
-	// assert
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(image, "vmlinuz"), machine.Kernel)
-	assert.Equal(t, filepath.Join(image, "os.ext4"), machine.Rootfs)
-	assert.Equal(t, state, machine.State)
-	assert.Equal(t, 1024, machine.MemoryMiB)
-	assert.Equal(t, 3, machine.CPUs)
-	assert.True(t, machine.Shell)
-}
-
-func TestBackendNamesTheMissingImageFileAndHowToBuildIt(t *testing.T) {
-	// arrange
-	image := imageFolder(t, "vmlinuz")
-
-	// act
-	_, _, err := qemuBackend().Prepare(backend.Spec{Image: image})
-
-	// assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "os.ext4")
-	assert.Contains(t, err.Error(), "just install-image")
-}
-
-func TestBackendSharesTheProjectAndHomeThenTheMountsByNumberAndMapsTheOwner(t *testing.T) {
-	// arrange
-	image := imageFolder(t, "vmlinuz", "os.ext4")
-	spec := backend.Spec{
-		Image:   image,
-		State:   statePath(t),
-		Project: "/work/project",
-		Home:    "/aibox/home",
-		Mounts: []backend.Mount{
-			{Host: "/h/.claude/skills", Guest: "/home/user/.claude/skills"},
-			{Host: "/sdk/go", Guest: "/opt/go"},
-		},
-	}
-
-	// act
-	machine, _, err := qemuBackend().Prepare(spec)
-
-	// assert
-	require.NoError(t, err)
-	assert.Equal(t, []vm.Share{
-		{Tag: "project", Dir: "/work/project"},
-		{Tag: "home", Dir: "/aibox/home"},
-		{Tag: "mount0", Dir: "/h/.claude/skills", Guest: "/home/user/.claude/skills"},
-		{Tag: "mount1", Dir: "/sdk/go", Guest: "/opt/go"},
-	}, machine.Shares)
-	assert.Equal(t, &vm.Owner{UID: 1234, GID: 100}, machine.Owner)
-}
-
-func TestBackendWithoutMountsSharesOnlyTheProjectAndHome(t *testing.T) {
+func TestBackendMapsTheOwnerInTheShares(t *testing.T) {
 	// arrange
 	image := imageFolder(t, "vmlinuz", "os.ext4")
 
 	// act
-	machine, _, err := qemuBackend().Prepare(backend.Spec{Image: image, State: statePath(t), Project: "/p", Home: "/h"})
+	m, _, err := qemuBackend().Prepare(backend.Spec{Image: image, State: statePath(t), Project: "/p", Home: "/h"})
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []vm.Share{{Tag: "project", Dir: "/p"}, {Tag: "home", Dir: "/h"}}, machine.Shares)
+	assert.Equal(t, &vm.Owner{UID: 1234, GID: 100}, m.Owner)
+	assert.Equal(t, filepath.Join(image, "vmlinuz"), m.Kernel)
 }
 
 func TestBackendPassesTheHostSideOptionsOn(t *testing.T) {
@@ -165,68 +106,4 @@ func TestBackendChecksThatTheImageHoldsTheKernelAndRootDisk(t *testing.T) {
 	require.NoError(t, ok)
 	require.Error(t, missing)
 	assert.Contains(t, missing.Error(), "vmlinuz")
-}
-
-func TestBackendCreatesTheStateDiskAsASparseFileOfTheSize(t *testing.T) {
-	// arrange
-	state := statePath(t)
-
-	// act
-	_, _, err := qemuBackend().Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: state, StateBytes: 1 << 30})
-
-	// assert
-	require.NoError(t, err)
-
-	info, err := os.Stat(state)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1<<30), info.Size())
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-
-	var stat syscall.Stat_t
-	require.NoError(t, syscall.Stat(state, &stat))
-	assert.Less(t, stat.Blocks*512, int64(1<<20), "the file takes up space before anything was written")
-}
-
-func TestBackendSizesAnEmptyStateDisk(t *testing.T) {
-	// arrange
-	state := statePath(t)
-	require.NoError(t, os.WriteFile(state, nil, 0o600))
-
-	// act
-	_, _, err := qemuBackend().Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: state, StateBytes: 1 << 30})
-
-	// assert
-	require.NoError(t, err)
-
-	info, err := os.Stat(state)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1<<30), info.Size())
-}
-
-func TestBackendKeepsAnExistingStateDisk(t *testing.T) {
-	// arrange
-	state := statePath(t)
-	require.NoError(t, os.WriteFile(state, []byte("data of the project"), 0o600))
-
-	// act
-	_, _, err := qemuBackend().Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: state, StateBytes: 1 << 30})
-
-	// assert
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(state) //nolint:gosec // the path is a temp file of the test
-	require.NoError(t, err)
-	assert.Equal(t, "data of the project", string(content))
-}
-
-func TestBackendCreatesNoStateDiskForAnIncompleteImage(t *testing.T) {
-	// arrange
-	state := statePath(t)
-
-	// act
-	_, _, err := qemuBackend().Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz"), State: state, StateBytes: 1 << 30})
-
-	// assert
-	require.Error(t, err)
-	assert.NoFileExists(t, state)
 }

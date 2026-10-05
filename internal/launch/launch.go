@@ -21,9 +21,9 @@ import (
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/confine"
+	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/sandbox"
-	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/vm"
 	"github.com/the127/aibox/internal/vsockns"
 )
@@ -182,50 +182,32 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	logged := logConsole(files.console, options.ConsoleLog, options.Stderr)
 
-	stopProxy := serveProxy(ctx, vsock.Proxy, options)
+	stopProxy := host.ServeProxy(ctx, forGuest(vsock.Proxy), options.Proxy, options.Stderr)
 	defer stopProxy()
 
 	machine.ProxyPort = vsock.ProxyPort
 
-	stopTerminal := serveTerminal(ctx, vsock.Terminal, options)
+	stopTerminal := host.ServeTerminal(ctx, forGuest(vsock.Terminal), host.Session{
+		Stdin:    options.Stdin,
+		Stdout:   options.Stdout,
+		Env:      options.Env,
+		EndDelay: options.SessionEndDelay,
+	})
 	machine.TerminalPort = vsock.TerminalPort
 
 	err = runQEMU(ctx, machine, files, options)
 
 	<-logged
 
-	ended := stopTerminal()
-
-	switch {
-	case err != nil:
-		return err
-	case !ended.attached && options.ConsoleLog != "":
-		return fmt.Errorf("%w, see %s", ErrNoTerminal, options.ConsoleLog)
-	case !ended.attached:
-		return ErrNoTerminal
-	case ended.err != nil:
-		return ended.err
-	case ended.code != 0:
-		return &ExitError{Code: ended.code}
-	}
-
-	return nil
+	return host.Result(err, stopTerminal(), options.ConsoleLog)
 }
 
 // ErrNoTerminal is a VM that ended before the command in it connected,
 // which the console log usually explains.
-var ErrNoTerminal = errors.New("the VM ended before its terminal came up")
+var ErrNoTerminal = host.ErrNoTerminal
 
 // ExitError is a command in the VM that ended with a code other than 0.
 type ExitError = backend.ExitError
-
-// outcome is how the terminal session went: whether the VM connected,
-// the exit code of the command in it, and why the session broke off.
-type outcome struct {
-	attached bool
-	code     int
-	err      error
-}
 
 // qemuFiles are the files QEMU inherits beyond its standard three, in the
 // order of their numbers in QEMU, and aibox's end of the console pair.
@@ -432,78 +414,6 @@ func startDaemons(shares []vm.Share, owner *vm.Owner, options Options) (<-chan e
 	}
 
 	return died, stop, nil
-}
-
-// serveProxy serves the proxy to the VM on the listener until the returned
-// function is called, which also waits for the proxy to stop.
-func serveProxy(ctx context.Context, listener net.Listener, options Options) func() {
-	ctx, cancel := context.WithCancel(ctx)
-	done := make(chan error, 1)
-
-	go func() { done <- proxy.Serve(ctx, forGuest(listener), options.Proxy) }()
-
-	return func() {
-		cancel()
-
-		if err := <-done; err != nil {
-			_, _ = fmt.Fprintf(options.Stderr, "aibox: the proxy stopped: %v\n", err)
-		}
-	}
-}
-
-// serveTerminal runs the session of the VM on the terminal of the person
-// until the returned function is called. That function lets the session
-// end, waits for the terminal to be restored and reports how it went.
-func serveTerminal(ctx context.Context, listener net.Listener, options Options) func() outcome {
-	ctx, cancel := context.WithCancel(ctx)
-	done := make(chan outcome, 1)
-
-	go func() { done <- attach(ctx, forGuest(listener), options) }()
-
-	return func() outcome {
-		_ = listener.Close()
-
-		select {
-		case ended := <-done:
-			return ended
-		case <-time.After(options.SessionEndDelay):
-			cancel()
-
-			return <-done
-		}
-	}
-}
-
-// attach waits for the VM to connect and runs the session on the terminal
-// of the person. It reports whether the VM connected and the exit code of
-// the command. The connection is closed when the context ends.
-func attach(ctx context.Context, listener net.Listener, options Options) outcome {
-	conn, err := listener.Accept()
-	if err != nil {
-		return outcome{}
-	}
-
-	defer func() { _ = conn.Close() }()
-
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-
-	client, restore, err := session.NewClient(options.Stdin, options.Stdout)
-	if err != nil {
-		return outcome{attached: true, err: fmt.Errorf("prepare the terminal: %w", err)}
-	}
-
-	client.Env = options.Env
-
-	code, err := client.Attach(conn)
-
-	restore()
-
-	if err != nil && ctx.Err() == nil {
-		return outcome{attached: true, err: err}
-	}
-
-	return outcome{attached: true, code: code}
 }
 
 // runQEMU starts QEMU, confines aibox itself, since QEMU was the last

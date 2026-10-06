@@ -138,11 +138,32 @@ The hosts the VM may reach. The proxy refuses everything else.
 - `example.com` allows port 443, `example.com:8443` another port.
 - `*.example.com` matches every subdomain of `example.com`, but not
   `example.com` itself.
-- `preset:NAME` stands for the hosts a tool needs. The presets are `go`,
-  `npm`, `pypi`, `cargo`, `github` and `docker`.
+- `preset:NAME` stands for the hosts a tool needs, see the table below.
 - A name that resolves into the host's own networks, such as loopback,
   link-local or private addresses, is refused, unless the list names that
   address itself.
+
+A new config allows the hosts Claude Code needs, and nothing else:
+
+| Host | Why |
+|---|---|
+| `api.anthropic.com` | the Claude API |
+| `claude.ai` | login with a claude.ai account |
+| `claude.com` | the sign-in page redirects through here |
+| `platform.claude.com` | login tokens |
+| `mcp-proxy.anthropic.com` | MCP connectors of a claude.ai account |
+| `code.claude.com` | documentation lookups |
+
+The presets:
+
+| Preset | Hosts |
+|---|---|
+| `preset:go` | `proxy.golang.org`, `sum.golang.org`, `storage.googleapis.com`, `vuln.go.dev`, `dl.google.com`, `go.dev` |
+| `preset:npm` | `registry.npmjs.org`, `registry.yarnpkg.com`, `nodejs.org` |
+| `preset:pypi` | `pypi.org`, `files.pythonhosted.org` |
+| `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org` |
+| `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
+| `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
 
 ### memory, cpus
 

@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -742,17 +743,55 @@ func startLoopback(network Network, proxyPort uint32, ports []uint16, console io
 			return fmt.Errorf("listen for the host on %s: %w", address, err)
 		}
 
-		dial := func() (net.Conn, error) { return connectLoopback(network, proxyPort, port) }
+		log := &quiet{w: console}
+		dial := func() (net.Conn, error) {
+			conn, err := connectLoopback(network, proxyPort, port)
+			if err == nil {
+				log.reset()
+			}
+
+			return conn, err
+		}
 
 		// the forwarder lives as long as the VM
 		go func() {
-			if err := forward(context.Background(), listener, dial, console, ""); err != nil {
+			if err := forward(context.Background(), listener, dial, log, ""); err != nil {
 				say(console, "aibox: the forwarder of %s stopped: %v\n", address, err)
 			}
 		}()
 	}
 
 	return nil
+}
+
+// quiet passes a message on unless it is the one it passed last, so that a
+// client that keeps trying a port whose server is down cannot fill the
+// console. A reset lets the next message through, so that the next outage
+// shows too.
+type quiet struct {
+	mu   sync.Mutex
+	w    io.Writer
+	last string
+}
+
+func (q *quiet) Write(b []byte) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if string(b) == q.last {
+		return len(b), nil
+	}
+
+	q.last = string(b)
+
+	return q.w.Write(b)
+}
+
+func (q *quiet) reset() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.last = ""
 }
 
 // connectLoopback asks the proxy on the host with CONNECT for the port on

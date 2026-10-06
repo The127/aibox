@@ -31,8 +31,8 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 // ProxyPort and TerminalPort are the vsock ports of the proxy and the
 // terminal session on the host, and 0 leaves the port off the kernel
 // command line. Loopback are the ports on the loopback of the host the VM
-// reaches through the proxy. Owner is the host user the VM user stands for in the shares,
-// and nil leaves the ids as they are.
+// reaches through the proxy. Owner is the host user the VM user stands for
+// in the shares, and nil leaves the ids as they are.
 type Machine struct {
 	Kernel       string
 	Rootfs       string

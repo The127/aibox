@@ -646,29 +646,28 @@ func TestPortsAreTheDistinctPortsOfTheAllowList(t *testing.T) {
 
 func TestLoopbackPortsAreThePortsOfTheEntriesOnTheLoopback(t *testing.T) {
 	// arrange
-	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "localhost:3000", "example.com:8080", "10.0.0.5:22", "127.0.0.1:64422", "127.0.0.1"}
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "example.com:8080", "10.0.0.5:22", "127.0.0.2:9000", "127.0.0.1:64422", "127.0.0.1"}
 
 	// act
 	ports := hosts.LoopbackPorts()
 
 	// assert
-	assert.Equal(t, []uint16{443, 3000, 8080, 64422}, ports)
+	assert.Equal(t, []uint16{443, 8080, 64422}, ports)
 }
 
 func TestPinned(t *testing.T) {
 	// arrange
-	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "127.0.0.1:8080", "localhost:3000", "example.com:9000"}
-	v4, v6 := net.IPv4(127, 0, 0, 1), net.IPv6loopback
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "127.0.0.2:9000", "example.com:9000"}
 
 	tests := []struct {
 		host, port string
 		want       []net.IP
 	}{
-		{"localhost", "64422", []net.IP{v4}},
-		{"LOCALHOST.", "64422", []net.IP{v4}},
-		{"localhost", "8080", []net.IP{v6, v4}},
-		{"localhost", "3000", []net.IP{v4, v6}},
+		{"localhost", "64422", []net.IP{net.IPv4(127, 0, 0, 1)}},
+		{"LOCALHOST.", "64422", []net.IP{net.IPv4(127, 0, 0, 1)}},
+		{"localhost", "8080", []net.IP{net.IPv6loopback}},
 		{"localhost", "9000", nil},
+		{"localhost", "443", nil},
 		{"example.com", "9000", nil},
 		{"127.0.0.1", "64422", nil},
 	}
@@ -686,17 +685,70 @@ func TestPinned(t *testing.T) {
 
 func TestAllowsLocalhostOnTheLoopbackPorts(t *testing.T) {
 	// arrange
-	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "*.localhost:22"}
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "*.localhost:22", "127.0.0.2:9000"}
 
 	// act and assert
 	assert.True(t, hosts.Allows("localhost", "64422"))
 	assert.True(t, hosts.Allows("localhost", "8080"))
 	assert.False(t, hosts.Allows("localhost", "22"))
+	assert.False(t, hosts.Allows("localhost", "9000"))
 	assert.False(t, hosts.Allows("localhost", "443"))
 }
 
+func TestLoadRejectsAnEntryForLocalhost(t *testing.T) {
+	for _, entry := range []string{"localhost", "localhost:8123", "LocalHost.:8123"} {
+		t.Run(entry, func(t *testing.T) {
+			// arrange
+			path := write(t, "allow:\n  - "+entry+"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrLocalhost)
+		})
+	}
+}
+
+func TestLoadRejectsAnUnspecifiedAddress(t *testing.T) {
+	for _, entry := range []string{"0.0.0.0:8123", "\"[::]:8123\"", "0.0.0.0"} {
+		t.Run(entry, func(t *testing.T) {
+			// arrange
+			path := write(t, "allow:\n  - "+entry+"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrUnspecified)
+		})
+	}
+}
+
+func TestLoadRejectsAPortOnBothAddressesOfTheLoopback(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - 127.0.0.1:8123\n  - \"[::1]:8123\"\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrLoopbackTwice)
+}
+
+func TestLoadAcceptsTheSameLoopbackEntryTwice(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - 127.0.0.1:8123\n  - 127.0.0.1:8123\n  - \"[::1]:8080\"\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.NoError(t, err)
+}
+
 func TestLoadRejectsTheProxyPortOnTheLoopback(t *testing.T) {
-	for _, entry := range []string{"127.0.0.1:3128", "localhost:3128", "\"[::1]:3128\""} {
+	for _, entry := range []string{"127.0.0.1:3128", "\"[::1]:3128\""} {
 		t.Run(entry, func(t *testing.T) {
 			// arrange
 			path := write(t, "allow:\n  - "+entry+"\n")

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -379,7 +380,11 @@ func hostProxy(t *testing.T, answer string) (func() (net.Conn, error), <-chan st
 				request = append(request, b[0])
 			}
 
-			requests <- string(request)
+			// the tests look at the first request only
+			select {
+			case requests <- string(request):
+			default:
+			}
 
 			_, _ = io.WriteString(hostSide, answer)
 		}()
@@ -429,6 +434,50 @@ func TestRunClosesAClientOfAPortTheProxyRefuses(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return strings.Contains(sys.consoleOutput(), `the proxy answered "HTTP/1.1 403 Forbidden" for localhost:64422`)
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestRunTellsTheConsoleAboutARefusedPortOnlyOnce(t *testing.T) {
+	// arrange
+	proxy, _ := hostProxy(t, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321 aibox.loopback=64422", proxyPort: 4321, proxy: proxy}
+	require.NoError(t, guest.Run(sys))
+
+	// act
+	for range 3 {
+		client := dialWithDeadline(t, sys.listeners["127.0.0.1:64422"].Addr().String())
+		_, err := io.ReadAll(client)
+		require.NoError(t, err)
+	}
+
+	// assert
+	message := `the proxy answered "HTTP/1.1 502 Bad Gateway" for localhost:64422`
+	assert.Eventually(t, func() bool { return strings.Contains(sys.consoleOutput(), message) }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, 1, strings.Count(sys.consoleOutput(), message))
+}
+
+func TestRunTellsTheConsoleAboutARefusalAgainAfterASuccess(t *testing.T) {
+	// arrange
+	refused, _ := hostProxy(t, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+	accepted, _ := hostProxy(t, "HTTP/1.1 200 Connection Established\r\n\r\n")
+	answers := []func() (net.Conn, error){refused, accepted, refused}
+
+	var calls atomic.Int32
+
+	proxy := func() (net.Conn, error) { return answers[calls.Add(1)-1]() }
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321 aibox.loopback=64422", proxyPort: 4321, proxy: proxy}
+	require.NoError(t, guest.Run(sys))
+
+	// act
+	for range answers {
+		client := dialWithDeadline(t, sys.listeners["127.0.0.1:64422"].Addr().String())
+		_ = client.(*net.TCPConn).CloseWrite()
+		_, err := io.ReadAll(client)
+		require.NoError(t, err)
+	}
+
+	// assert
+	message := `the proxy answered "HTTP/1.1 502 Bad Gateway" for localhost:64422`
+	assert.Eventually(t, func() bool { return strings.Count(sys.consoleOutput(), message) == 2 }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestRunListensOnTheLoopbackPortsOnlyWithAProxy(t *testing.T) {

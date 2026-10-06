@@ -142,9 +142,8 @@ The hosts the VM may reach. The proxy refuses everything else.
 - A name that resolves into the host's own networks, such as loopback,
   link-local or private addresses, is refused, unless the list names that
   address itself.
-- `127.0.0.1:8123`, `[::1]:8123` or `localhost:8123` for both is a port on
-  the loopback of your machine. See
-  [Ports of your machine](#ports-of-your-machine).
+- `127.0.0.1:8123` or `[::1]:8123` is a port on the loopback of your
+  machine. See [Ports of your machine](#ports-of-your-machine).
 
 A new config allows the hosts Claude Code needs, and nothing else:
 
@@ -182,9 +181,13 @@ allow:
 claude mcp add -t http my-server http://127.0.0.1:8123/mcp
 ```
 
-- The VM has IPv4 only. Each such port is at `127.0.0.1` and `localhost` in
-  the VM, and leads to the addresses the entries name for it on your
-  machine: `127.0.0.1`, `::1`, or both for `localhost`.
+- Write the address the server listens on, `127.0.0.1` or `[::1]`. The VM
+  has IPv4 only, so the port is at `127.0.0.1` and `localhost` in the VM
+  either way, and one port can be allowed on only one of the two.
+- `localhost` is not allowed as an entry. It stands for both addresses, and
+  any user on your machine could listen on the one the server does not.
+  `0.0.0.0` and `::` are not allowed either, since they lead to the
+  loopback too.
 - It works for any protocol over TCP, also for programs that do not use the
   proxy.
 - A program in the VM cannot listen on such a port itself.

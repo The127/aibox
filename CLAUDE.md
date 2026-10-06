@@ -1,7 +1,7 @@
 # aibox
 
 aibox runs Claude Code inside a QEMU microVM, with the project folder shared
-into the VM over virtio-fs. See README.md for the design.
+into the VM over virtio-fs. See docs/design.md for the design.
 
 ## Commits
 

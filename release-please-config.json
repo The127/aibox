@@ -5,7 +5,8 @@
       "release-type": "go",
       "package-name": "aibox",
       "include-component-in-tag": false,
-      "bump-minor-pre-major": true
+      "bump-minor-pre-major": true,
+      "pull-request-title-pattern": "chore: release ${version}"
     }
   }
 }

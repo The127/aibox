@@ -193,12 +193,13 @@ func TestGuestWordsTellTheGuestItsSettingsPortsAndMounts(t *testing.T) {
 	m.ProxyPort = 1025
 	m.TerminalPort = 1024
 	m.Shares = append(m.Shares, vm.Share{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"})
+	m.Loopback = []uint16{3000, 64422}
 
 	// act
 	words := m.GuestWords()
 
 	// assert
-	assert.Equal(t, []string{"aibox.shell", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go"}, words)
+	assert.Equal(t, []string{"aibox.shell", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go", "aibox.loopback=3000,64422"}, words)
 }
 
 func TestGuestWordsOfAPlainMachineAreNone(t *testing.T) {

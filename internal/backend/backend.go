@@ -50,6 +50,9 @@ type Spec struct {
 	// shuts aibox itself off from every other port.
 	Proxy proxy.Options
 	Ports []uint16
+	// Loopback are the ports on the loopback of the host that the proxy
+	// lets the VM reach. The VM has them on its own loopback.
+	Loopback []uint16
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string

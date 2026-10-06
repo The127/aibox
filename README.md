@@ -142,6 +142,8 @@ The hosts the VM may reach. The proxy refuses everything else.
 - A name that resolves into the host's own networks, such as loopback,
   link-local or private addresses, is refused, unless the list names that
   address itself.
+- `127.0.0.1:8123` or `[::1]:8123` is a port on the loopback of your
+  machine. See [Ports of your machine](#ports-of-your-machine).
 
 A new config allows the hosts Claude Code needs, and nothing else:
 
@@ -164,6 +166,39 @@ The presets:
 | `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org` |
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
+
+### Ports of your machine
+
+A server that listens on the loopback of your machine, such as a local MCP
+server, is reached from the VM at the same address once you allow it:
+
+```yaml
+allow:
+  - 127.0.0.1:8123
+```
+
+```
+claude mcp add -t http my-server http://127.0.0.1:8123/mcp
+```
+
+- Write the address the server listens on, `127.0.0.1` or `[::1]`. The VM
+  has IPv4 only, so the port is at `127.0.0.1` and `localhost` in the VM
+  either way, and one port can be allowed on only one of the two.
+- `localhost` is not allowed as an entry. It stands for both addresses, and
+  any user on your machine could listen on the one the server does not.
+  `0.0.0.0` and `::` are not allowed either, since they lead to the
+  loopback too.
+- It works for any protocol over TCP, also for programs that do not use the
+  proxy.
+- A program in the VM cannot listen on such a port itself.
+- Port 3128 cannot be allowed on the loopback, because the VM has its proxy
+  there.
+
+Such a server runs as you on your machine, outside the VM, and does what
+the VM asks of it. An MCP server of an IDE, for example, often has no login
+and can run commands and change files outside the project, so allowing its
+port lets the VM out. Allow a port only for a server you would let do what
+the VM asks.
 
 ### memory, cpus
 

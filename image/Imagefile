@@ -72,6 +72,7 @@ COPY --from=tools /out/uidmap/ /
 RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group subuid subgid /etc/
+COPY hosts nsswitch.conf /etc/
 # podman's defaults: a container shares the network of the VM, and images
 # are not checked for signatures, since the allow list of the proxy already
 # says where they may come from

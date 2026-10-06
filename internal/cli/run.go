@@ -151,10 +151,12 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		Env:         env,
 		Proxy: proxy.Options{
 			Allow:     cfg.Allow.Allows,
+			Pinned:    cfg.Allow.Pinned,
 			OnRefused: proxy.RefusalLog(log),
 			Hint:      "Add it to " + p.Config + " to allow it.",
 		},
 		Ports:      cfg.Allow.Ports(),
+		Loopback:   cfg.Allow.LoopbackPorts(),
 		ConsoleLog: p.ConsoleLog,
 		Stdin:      os.Stdin,
 		Stdout:     os.Stdout,

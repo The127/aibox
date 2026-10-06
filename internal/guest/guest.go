@@ -6,6 +6,7 @@
 package guest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/tunnel"
@@ -53,6 +55,17 @@ const (
 
 	// where Claude Code finds the proxy inside the VM
 	guestProxyAddress = "127.0.0.1:3128"
+
+	// the init listens on loopbackAddress for each port on the loopback of
+	// the host and asks the proxy for it under loopbackName, which the proxy
+	// knows as the loopback addresses the allow list names
+	loopbackAddress = "127.0.0.1"
+	loopbackName    = "localhost"
+
+	// how long the proxy may take to answer a CONNECT, and how long its
+	// answer may be
+	connectTimeout = 30 * time.Second
+	maxReplyBytes  = 4096
 )
 
 var (
@@ -64,6 +77,11 @@ var (
 	// ErrBadMountWord is an aibox.mount word that is not a share tag and an
 	// absolute path joined by a colon.
 	ErrBadMountWord = errors.New("not tag:path with an absolute path")
+	// ErrBadLoopback is an aibox.loopback word that is not TCP ports joined
+	// by commas.
+	ErrBadLoopback = errors.New("not TCP ports joined by commas")
+
+	errLongReply = errors.New("the answer is too long")
 )
 
 // imagePath is where the programs of the image are. The PATH the host
@@ -71,13 +89,15 @@ var (
 const imagePath = "/usr/local/bin:/usr/bin:/bin"
 
 // Options come from the kernel command line. Mounts are the shares of the
-// host that are mounted read-only where the host says.
+// host that are mounted read-only where the host says. Loopback are the
+// ports on the loopback of the host the VM may reach through the proxy.
 type Options struct {
 	Console      string
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
+	Loopback     []uint16
 }
 
 // Mount is a share of the host and the path the VM mounts it on.
@@ -255,6 +275,13 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.TerminalPort = port(key, value)
 		case "aibox.mount":
 			mount(value)
+		case "aibox.loopback":
+			ports, err := parseLoopback(value)
+			if err != nil {
+				errs = append(errs, err)
+			}
+
+			options.Loopback = ports
 		}
 	}
 
@@ -270,6 +297,22 @@ func parseMount(value string) (Mount, error) {
 	}
 
 	return Mount{Tag: tag, Path: filepath.Clean(path)}, nil
+}
+
+// parseLoopback reads TCP ports joined by commas.
+func parseLoopback(value string) ([]uint16, error) {
+	var ports []uint16
+
+	for text := range strings.SplitSeq(value, ",") {
+		port, err := strconv.ParseUint(text, 10, 16)
+		if err != nil || port == 0 {
+			return nil, fmt.Errorf("aibox.loopback=%q: %w", value, ErrBadLoopback)
+		}
+
+		ports = append(ports, uint16(port))
+	}
+
+	return ports, nil
 }
 
 // parsePort reads a vsock port. 0 and the highest value are not ports a
@@ -408,15 +451,28 @@ func splitVariables(own, requested []string) (accepted, rejected []string) {
 	return accepted, rejected
 }
 
+// badGateway is what a client of the proxy forwarder gets when the proxy
+// on the host cannot be reached.
+const badGateway = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+
 // Forward joins each client of the listener with a connection from dial. A
 // client whose dial fails gets a 502 and the failure goes to the log. Forward
 // returns when the context ends.
 func Forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, error), log io.Writer) error {
+	return forward(ctx, listener, dial, log, badGateway)
+}
+
+// forward joins each client of the listener with a connection from dial. A
+// client whose dial fails gets the failure text, if any, and is closed.
+func forward(ctx context.Context, listener net.Listener, dial func() (net.Conn, error), log io.Writer, failure string) error {
 	return tunnel.Serve(ctx, listener, func(ctx context.Context, client net.Conn) {
 		host, err := dial()
 		if err != nil {
-			say(log, "aibox: connect to the proxy on the host: %v\n", err)
-			_, _ = io.WriteString(client, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+			say(log, "aibox: %v\n", err)
+
+			if failure != "" {
+				_, _ = io.WriteString(client, failure)
+			}
 
 			return
 		}
@@ -528,6 +584,10 @@ func setup(sys System) (*os.File, Options, error) {
 
 	if options.ProxyPort != 0 {
 		if err := startProxy(sys, options.ProxyPort, console); err != nil {
+			return console, options, err
+		}
+
+		if err := startLoopback(sys, options.ProxyPort, options.Loopback, console); err != nil {
 			return console, options, err
 		}
 	}
@@ -650,7 +710,14 @@ func startProxy(network Network, port uint32, console io.Writer) error {
 		return fmt.Errorf("listen for the proxy on %s: %w", guestProxyAddress, err)
 	}
 
-	dial := func() (net.Conn, error) { return network.DialHost(port) }
+	dial := func() (net.Conn, error) {
+		conn, err := network.DialHost(port)
+		if err != nil {
+			return nil, fmt.Errorf("connect to the proxy on the host: %w", err)
+		}
+
+		return conn, nil
+	}
 
 	// the forwarder lives as long as the VM
 	go func() {
@@ -660,6 +727,92 @@ func startProxy(network Network, port uint32, console io.Writer) error {
 	}()
 
 	return nil
+}
+
+// startLoopback listens on the loopback of the VM on each port on the
+// loopback of the host and tunnels each connection through the proxy to
+// that port. A client the proxy turns away is closed, since it may speak
+// anything.
+func startLoopback(network Network, proxyPort uint32, ports []uint16, console io.Writer) error {
+	for _, port := range ports {
+		address := net.JoinHostPort(loopbackAddress, strconv.Itoa(int(port)))
+
+		listener, err := network.Listen(address)
+		if err != nil {
+			return fmt.Errorf("listen for the host on %s: %w", address, err)
+		}
+
+		dial := func() (net.Conn, error) { return connectLoopback(network, proxyPort, port) }
+
+		// the forwarder lives as long as the VM
+		go func() {
+			if err := forward(context.Background(), listener, dial, console, ""); err != nil {
+				say(console, "aibox: the forwarder of %s stopped: %v\n", address, err)
+			}
+		}()
+	}
+
+	return nil
+}
+
+// connectLoopback asks the proxy on the host with CONNECT for the port on
+// its loopback and returns the tunnel once the proxy agrees.
+func connectLoopback(network Network, proxyPort uint32, port uint16) (net.Conn, error) {
+	target := net.JoinHostPort(loopbackName, strconv.Itoa(int(port)))
+
+	conn, err := network.DialHost(proxyPort)
+	if err != nil {
+		return nil, fmt.Errorf("connect to the proxy on the host for %s: %w", target, err)
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(connectTimeout))
+
+	status, err := askProxy(conn, target)
+	if err != nil {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("ask the proxy for %s: %w", target, err)
+	}
+
+	if !strings.HasPrefix(status, "HTTP/1.1 200 ") && !strings.HasPrefix(status, "HTTP/1.0 200 ") {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("the proxy answered %q for %s", status, target)
+	}
+
+	_ = conn.SetDeadline(time.Time{})
+
+	return conn, nil
+}
+
+// askProxy sends the CONNECT request and returns the status line of the
+// answer. It reads the answer up to its end and not a byte further, since
+// the server behind the tunnel may speak first.
+func askProxy(conn net.Conn, target string) (string, error) {
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+		return "", err
+	}
+
+	var (
+		reply []byte
+		b     [1]byte
+	)
+
+	for !bytes.HasSuffix(reply, []byte("\r\n\r\n")) {
+		if len(reply) >= maxReplyBytes {
+			return "", errLongReply
+		}
+
+		if _, err := io.ReadFull(conn, b[:]); err != nil {
+			return "", err
+		}
+
+		reply = append(reply, b[0])
+	}
+
+	status, _, _ := strings.Cut(string(reply), "\r\n")
+
+	return status, nil
 }
 
 // serve connects to the terminal on the host and serves the session on it.

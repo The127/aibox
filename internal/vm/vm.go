@@ -30,8 +30,9 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 // on a second disk. Shell boots it into a shell instead of Claude Code.
 // ProxyPort and TerminalPort are the vsock ports of the proxy and the
 // terminal session on the host, and 0 leaves the port off the kernel
-// command line. Owner is the host user the VM user stands for in the
-// shares, and nil leaves the ids as they are.
+// command line. Loopback are the ports on the loopback of the host the VM
+// reaches through the proxy. Owner is the host user the VM user stands for in the shares,
+// and nil leaves the ids as they are.
 type Machine struct {
 	Kernel       string
 	Rootfs       string
@@ -42,6 +43,7 @@ type Machine struct {
 	Shell        bool
 	ProxyPort    uint32
 	TerminalPort uint32
+	Loopback     []uint16
 	Owner        *Owner
 }
 
@@ -156,8 +158,8 @@ func (m Machine) Cmdline(start string) string {
 }
 
 // GuestWords are the words of the kernel command line that tell the guest
-// its settings, the vsock ports of the host and the mounts of the host,
-// whichever VMM boots it.
+// its settings, the vsock ports of the host, the mounts of the host and the
+// ports on the loopback of the host it may reach, whichever VMM boots it.
 func (m Machine) GuestWords() []string {
 	var words []string
 	if m.Shell {
@@ -176,6 +178,15 @@ func (m Machine) GuestWords() []string {
 		if share.Guest != "" {
 			words = append(words, "aibox.mount="+share.Tag+":"+share.Guest)
 		}
+	}
+
+	if len(m.Loopback) > 0 {
+		ports := make([]string, len(m.Loopback))
+		for i, port := range m.Loopback {
+			ports[i] = strconv.FormatUint(uint64(port), 10)
+		}
+
+		words = append(words, "aibox.loopback="+strings.Join(ports, ","))
 	}
 
 	return words

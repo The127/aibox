@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -641,6 +642,102 @@ func TestPortsAreTheDistinctPortsOfTheAllowList(t *testing.T) {
 
 	// assert
 	assert.Equal(t, []uint16{22, 443, 8443}, ports)
+}
+
+func TestLoopbackPortsAreThePortsOfTheEntriesOnTheLoopback(t *testing.T) {
+	// arrange
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "localhost:3000", "example.com:8080", "10.0.0.5:22", "127.0.0.1:64422", "127.0.0.1"}
+
+	// act
+	ports := hosts.LoopbackPorts()
+
+	// assert
+	assert.Equal(t, []uint16{443, 3000, 8080, 64422}, ports)
+}
+
+func TestPinned(t *testing.T) {
+	// arrange
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "127.0.0.1:8080", "localhost:3000", "example.com:9000"}
+	v4, v6 := net.IPv4(127, 0, 0, 1), net.IPv6loopback
+
+	tests := []struct {
+		host, port string
+		want       []net.IP
+	}{
+		{"localhost", "64422", []net.IP{v4}},
+		{"LOCALHOST.", "64422", []net.IP{v4}},
+		{"localhost", "8080", []net.IP{v6, v4}},
+		{"localhost", "3000", []net.IP{v4, v6}},
+		{"localhost", "9000", nil},
+		{"example.com", "9000", nil},
+		{"127.0.0.1", "64422", nil},
+	}
+
+	for _, test := range tests {
+		t.Run(test.host+":"+test.port, func(t *testing.T) {
+			// act
+			addresses := hosts.Pinned(test.host, test.port)
+
+			// assert
+			assert.Equal(t, test.want, addresses)
+		})
+	}
+}
+
+func TestAllowsLocalhostOnTheLoopbackPorts(t *testing.T) {
+	// arrange
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "*.localhost:22"}
+
+	// act and assert
+	assert.True(t, hosts.Allows("localhost", "64422"))
+	assert.True(t, hosts.Allows("localhost", "8080"))
+	assert.False(t, hosts.Allows("localhost", "22"))
+	assert.False(t, hosts.Allows("localhost", "443"))
+}
+
+func TestLoadRejectsTheProxyPortOnTheLoopback(t *testing.T) {
+	for _, entry := range []string{"127.0.0.1:3128", "localhost:3128", "\"[::1]:3128\""} {
+		t.Run(entry, func(t *testing.T) {
+			// arrange
+			path := write(t, "allow:\n  - "+entry+"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrProxyPort)
+		})
+	}
+}
+
+func TestLoadAcceptsTheProxyPortElsewhere(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - proxy.example:3128\n")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.NoError(t, err)
+}
+
+func TestLoadRejectsLoopbackPortsTheKernelCommandLineCannotCarry(t *testing.T) {
+	// arrange
+	var content strings.Builder
+
+	content.WriteString("allow:\n")
+
+	for port := range 200 {
+		fmt.Fprintf(&content, "  - 127.0.0.1:%d\n", 10000+port)
+	}
+
+	path := write(t, content.String())
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrCmdlineFull)
 }
 
 func TestAllows(t *testing.T) {

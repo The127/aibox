@@ -36,14 +36,15 @@ var withTerminal = fmt.Sprintf("console=hvc0 aibox.terminal=%d", terminalPort)
 func TestParseCmdline(t *testing.T) {
 	// arrange
 	tests := map[string]guest.Options{
-		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
-		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
-		"root=/dev/vda":                        {Console: "/dev/console"},
-		"console=ttyS0 aibox.shell=1 panic=-1": {Console: "/dev/ttyS0", Shell: true},
-		"console=tty0 console=ttyS0,115200n8":  {Console: "/dev/ttyS0"},
-		"console= quiet":                       {Console: "/dev/console"},
-		"console=ttyS0 aibox.proxy=4321":       {Console: "/dev/ttyS0", ProxyPort: 4321},
-		"console=hvc0 aibox.terminal=5432":     {Console: "/dev/hvc0", TerminalPort: 5432},
+		"root=/dev/vda rw console=ttyS0 quiet":   {Console: "/dev/ttyS0"},
+		"console=hvc0 aibox.shell":               {Console: "/dev/hvc0", Shell: true},
+		"root=/dev/vda":                          {Console: "/dev/console"},
+		"console=ttyS0 aibox.shell=1 panic=-1":   {Console: "/dev/ttyS0", Shell: true},
+		"console=tty0 console=ttyS0,115200n8":    {Console: "/dev/ttyS0"},
+		"console= quiet":                         {Console: "/dev/console"},
+		"console=ttyS0 aibox.proxy=4321":         {Console: "/dev/ttyS0", ProxyPort: 4321},
+		"console=hvc0 aibox.terminal=5432":       {Console: "/dev/hvc0", TerminalPort: 5432},
+		"console=hvc0 aibox.loopback=64422,3000": {Console: "/dev/hvc0", Loopback: []uint16{64422, 3000}},
 		"console=hvc0 aibox.mount=mount0:/opt/go aibox.mount=mount1:/opt/bin": {
 			Console: "/dev/hvc0",
 			Mounts:  []guest.Mount{{Tag: "mount0", Path: "/opt/go"}, {Tag: "mount1", Path: "/opt/bin"}},
@@ -89,6 +90,19 @@ func TestParseCmdlineRejectsABadPort(t *testing.T) {
 				assert.Equal(t, guest.Options{Console: "/dev/ttyS0"}, options)
 			})
 		}
+	}
+}
+
+func TestParseCmdlineRejectsBadLoopbackPorts(t *testing.T) {
+	for _, value := range []string{"", "x", "0", "65536", "80,", "80,,443", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			// act
+			options, err := guest.ParseCmdline("console=hvc0 aibox.loopback=" + value)
+
+			// assert
+			assert.ErrorIs(t, err, guest.ErrBadLoopback)
+			assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
+		})
 	}
 }
 
@@ -340,6 +354,93 @@ func TestRunStartsTheForwarderWhenThereIsAProxy(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(answer), "HTTP/1.1 502"), string(answer))
 	assert.Eventually(t, func() bool { return slices.Contains(sys.callsCopy(), "dial host 4321") }, 5*time.Second, 10*time.Millisecond)
+}
+
+// hostProxy is the proxy on the host for one connection. It reads the
+// CONNECT request into the channel and writes the answer.
+func hostProxy(t *testing.T, answer string) (func() (net.Conn, error), <-chan string) {
+	t.Helper()
+
+	requests := make(chan string, 1)
+
+	return func() (net.Conn, error) {
+		hostSide, guestSide := net.Pipe()
+		t.Cleanup(func() { _ = hostSide.Close() })
+
+		go func() {
+			var request []byte
+
+			b := make([]byte, 1)
+			for !strings.HasSuffix(string(request), "\r\n\r\n") {
+				if _, err := hostSide.Read(b); err != nil {
+					return
+				}
+
+				request = append(request, b[0])
+			}
+
+			requests <- string(request)
+
+			_, _ = io.WriteString(hostSide, answer)
+		}()
+
+		return guestSide, nil
+	}, requests
+}
+
+func TestRunTunnelsALoopbackPortOfTheHostThroughTheProxy(t *testing.T) {
+	// arrange
+	proxy, requests := hostProxy(t, "HTTP/1.1 200 Connection Established\r\n\r\nhello from the host")
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321 aibox.loopback=64422", proxyPort: 4321, proxy: proxy}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+
+	listener, ok := sys.listeners["127.0.0.1:64422"]
+	require.True(t, ok, "listens on the same port of its own loopback")
+
+	client := dialWithDeadline(t, listener.Addr().String())
+
+	// the server behind the tunnel speaks first, and its bytes reach the
+	// client even though they came with the answer of the proxy
+	greeting := make([]byte, len("hello from the host"))
+	_, err = io.ReadFull(client, greeting)
+	require.NoError(t, err)
+	assert.Equal(t, "hello from the host", string(greeting))
+	assert.Equal(t, "CONNECT localhost:64422 HTTP/1.1\r\nHost: localhost:64422\r\n\r\n", <-requests)
+}
+
+func TestRunClosesAClientOfAPortTheProxyRefuses(t *testing.T) {
+	// arrange
+	proxy, _ := hostProxy(t, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.proxy=4321 aibox.loopback=64422", proxyPort: 4321, proxy: proxy}
+	require.NoError(t, guest.Run(sys))
+
+	// act
+	client := dialWithDeadline(t, sys.listeners["127.0.0.1:64422"].Addr().String())
+	answer, err := io.ReadAll(client)
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, answer, "the client may not speak HTTP, so it gets nothing")
+	assert.Eventually(t, func() bool {
+		return strings.Contains(sys.consoleOutput(), `the proxy answered "HTTP/1.1 403 Forbidden" for localhost:64422`)
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestRunListensOnTheLoopbackPortsOnlyWithAProxy(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.loopback=64422"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.callsCopy(), "listen 127.0.0.1:64422")
 }
 
 func TestRunPowersOffWhenTheLoopbackStaysDown(t *testing.T) {
@@ -869,7 +970,12 @@ type fakeSystem struct {
 	failDelegate error
 	startedIn    string
 	// files are the paths that exist
-	files        []string
+	files []string
+	// listeners are the listeners of Listen by the address asked for
+	listeners map[string]net.Listener
+	// proxy answers a DialHost of proxyPort, the proxy on the host
+	proxyPort    uint32
+	proxy        func() (net.Conn, error)
 	failLoopback error
 	failListen   error
 	failOpen     error
@@ -1043,11 +1149,23 @@ func (s *fakeSystem) Listen(address string) (net.Listener, error) {
 	s.t.Cleanup(func() { _ = listener.Close() })
 	s.listener = listener
 
+	s.mu.Lock()
+	if s.listeners == nil {
+		s.listeners = map[string]net.Listener{}
+	}
+
+	s.listeners[address] = listener
+	s.mu.Unlock()
+
 	return listener, nil
 }
 
 func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 	s.record(fmt.Sprintf("dial host %d", port))
+
+	if s.proxy != nil && port == s.proxyPort {
+		return s.proxy()
+	}
 
 	if port != terminalPort {
 		return nil, errors.New("no host in the test")

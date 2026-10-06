@@ -339,6 +339,44 @@ func TestServeDialsAListedAddressEvenOnTheHostItself(t *testing.T) {
 	assert.Equal(t, "HTTP/1.1 200 Connection Established", status)
 }
 
+func TestServeDialsThePinnedAddressesOfAName(t *testing.T) {
+	// arrange
+	target := echoAfterEOF(t)
+	_, port, err := net.SplitHostPort(target)
+	require.NoError(t, err)
+
+	address := serve(t, proxy.Options{
+		Resolve: func(context.Context, string) ([]net.IP, error) { return nil, errors.New("asked DNS") },
+		Pinned: func(host, p string) []net.IP {
+			if host == "localhost" && p == port {
+				return []net.IP{net.IPv4(127, 0, 0, 1)}
+			}
+
+			return nil
+		},
+	})
+
+	// act
+	status, _ := connect(t, address, net.JoinHostPort("localhost", port))
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", status)
+}
+
+func TestServeResolvesANameWithoutPinnedAddresses(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Resolve: resolveTo("127.0.0.1"),
+		Pinned:  func(string, string) []net.IP { return nil },
+	})
+
+	// act
+	status, _ := connect(t, address, "evil.example:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
+}
+
 func TestServeReportsANameItCannotResolve(t *testing.T) {
 	// arrange
 	address := serve(t, proxy.Options{Resolve: func(context.Context, string) ([]net.IP, error) {

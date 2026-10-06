@@ -1,0 +1,3 @@
+# The VM has IPv4 only. The init listens on 127.0.0.1 for each port on the
+# loopback of the host that the allow list names.
+127.0.0.1	localhost

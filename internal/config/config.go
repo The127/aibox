@@ -33,6 +33,15 @@ var ErrDiskTooLarge = errors.New("must be at most 1048576 GiB")
 // to 1 EiB, and the number of bytes has to fit the size of a file.
 const MaxDiskGiB = 1 << 20
 
+// ErrProxyPort is an allow entry on the loopback with the port the proxy of
+// the VM listens on, 127.0.0.1:3128 inside the VM.
+var ErrProxyPort = errors.New("the VM has its proxy on this port of its loopback")
+
+// proxyPort is the port of the proxy on the loopback of the VM. It has to
+// match guestProxyAddress in internal/guest, which this package cannot
+// import.
+const proxyPort = "3128"
+
 // ErrUnknownPreset is a preset entry that names no known preset.
 var ErrUnknownPreset = errors.New("unknown preset")
 
@@ -72,9 +81,9 @@ var reservedVariables = []string{
 
 var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// ErrCmdlineFull are mounts that together do not fit on the kernel command
-// line.
-var ErrCmdlineFull = errors.New("the mounts do not fit on the kernel command line together")
+// ErrCmdlineFull are mounts and loopback ports that together do not fit on
+// the kernel command line.
+var ErrCmdlineFull = errors.New("the mounts and the loopback ports do not fit on the kernel command line together")
 
 // reservedPaths are what the VM mounts itself, the project share and the
 // kernel file systems, and the folders its programs live in. A mount on,
@@ -88,12 +97,14 @@ var reservedPaths = []string{
 // mount inside is fine, because the home of the VM is a folder of aibox.
 const homePath = "/home/user"
 
-// maxCmdlineBytes is what the mounts may take up together on the kernel
-// command line, which holds 2048 bytes and needs room for the rest.
-// wordBytes is what aibox adds around each entry.
+// maxCmdlineBytes is what the mounts and the loopback ports may take up
+// together on the kernel command line, which holds 2048 bytes and needs
+// room for the rest. wordBytes is what aibox adds around each mount, and
+// portBytes what a loopback port takes at most.
 const (
 	maxCmdlineBytes = 1024
 	wordBytes       = 24
+	portBytes       = 6
 )
 
 // presets maps a preset name to the hosts it allows. An allow entry of the
@@ -286,7 +297,11 @@ const defaultPort = "443"
 const defaultFile = `# The hosts the VM may reach. Everything else is refused by the proxy on
 # the host. An entry allows port 443, host:port allows another port, and
 # *.example.com matches every subdomain of example.com. preset:NAME stands for
-# the hosts a tool needs, with NAME one of PRESETS.
+# the hosts a tool needs, with NAME one of PRESETS. 127.0.0.1:PORT,
+# [::1]:PORT or localhost:PORT for both is a port on the loopback of this
+# machine, which the VM reaches at 127.0.0.1:PORT and localhost:PORT.
+# Whatever listens there runs outside the VM, so allow only servers you
+# would let do what the VM asks of them.
 allow:
   - api.anthropic.com         # the Claude API
   - claude.ai                 # login with a claude.ai account
@@ -450,6 +465,10 @@ func parsePathEntry(text string) (string, error) {
 func fitsCmdline(cfg Config) error {
 	total := 0
 
+	if ports := cfg.Allow.LoopbackPorts(); len(ports) > 0 {
+		total = wordBytes + portBytes*len(ports)
+	}
+
 	for _, m := range cfg.Mounts {
 		total += wordBytes + len(m.Guest)
 	}
@@ -521,6 +540,10 @@ func parseEntry(text string) (entry, error) {
 		return entry{}, fmt.Errorf("allow entry %q: %w", text, ErrBadHost)
 	}
 
+	if e.port == proxyPort && e.loopback() != nil {
+		return entry{}, fmt.Errorf("allow entry %q: %w", text, ErrProxyPort)
+	}
+
 	return e, nil
 }
 
@@ -586,11 +609,83 @@ func (h Hosts) Ports() []uint16 {
 	return slices.Compact(ports)
 }
 
-// Allows reports whether the VM may reach host on port.
+// localhost is the name of the loopback, which stands for both addresses
+// of it.
+const localhost = "localhost"
+
+var loopback = []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+
+// loopback returns the addresses on the loopback of the host the entry
+// stands for, nil for an entry of another host.
+func (e entry) loopback() []net.IP {
+	if e.host == localhost {
+		return loopback
+	}
+
+	if ip := net.ParseIP(e.host); ip != nil && ip.IsLoopback() {
+		return []net.IP{ip}
+	}
+
+	return nil
+}
+
+// LoopbackPorts are the distinct ports of the entries on the loopback of
+// the host, ascending. The VM has them on its own loopback.
+func (h Hosts) LoopbackPorts() []uint16 {
+	var ports []uint16
+
+	for _, text := range h {
+		e, err := parseEntry(text)
+		if err != nil || e.loopback() == nil {
+			continue
+		}
+
+		if port, err := strconv.ParseUint(e.port, 10, 16); err == nil {
+			ports = append(ports, uint16(port))
+		}
+	}
+
+	slices.Sort(ports)
+
+	return slices.Compact(ports)
+}
+
+// Pinned returns the addresses a name stands for without asking DNS. For
+// localhost these are the loopback addresses the entries name with the
+// port. Any other name gets nil.
+func (h Hosts) Pinned(host, port string) []net.IP {
+	if normalize(host) != localhost {
+		return nil
+	}
+
+	var addresses []net.IP
+
+	for _, text := range h {
+		e, err := parseEntry(text)
+		if err != nil || e.port != port {
+			continue
+		}
+
+		for _, ip := range e.loopback() {
+			if !slices.ContainsFunc(addresses, ip.Equal) {
+				addresses = append(addresses, ip)
+			}
+		}
+	}
+
+	return addresses
+}
+
+// Allows reports whether the VM may reach host on port. localhost is
+// allowed on every port of an entry on the loopback.
 func (h Hosts) Allows(host, port string) bool {
 	host = normalize(host)
 	if host == "" {
 		return false
+	}
+
+	if host == localhost {
+		return len(h.Pinned(host, port)) > 0
 	}
 
 	return slices.ContainsFunc(h, func(text string) bool {

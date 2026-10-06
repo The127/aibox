@@ -33,6 +33,10 @@ type Options struct {
 	Hint string
 	// Resolve looks a host name up. Nil uses the system resolver.
 	Resolve func(ctx context.Context, host string) ([]net.IP, error)
+	// Pinned returns the addresses a name stands for without asking DNS,
+	// such as localhost. They are dialed even when they are not public. Nil,
+	// or no addresses, resolves the name as usual.
+	Pinned func(host, port string) []net.IP
 }
 
 // errNotPublic is a name whose addresses all lie in the networks of the
@@ -160,15 +164,25 @@ func refuse(conn net.Conn, target, reason string, options Options) {
 }
 
 // connect reaches the host on the port. An address in the request is dialed
-// as given. A name is resolved here, and only its public addresses are
-// dialed, so that a name cannot lead into the machine's own networks and a
-// changed DNS answer cannot lead elsewhere than the checked address.
+// as given, and so are the pinned addresses of a name. Any other name is
+// resolved here, and only its public addresses are dialed, so that a name
+// cannot lead into the machine's own networks and a changed DNS answer
+// cannot lead elsewhere than the checked address.
 func connect(ctx context.Context, host, port string, options Options) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 
+	var pinned []net.IP
+	if options.Pinned != nil {
+		pinned = options.Pinned(host, port)
+	}
+
 	addresses := []net.IP{net.ParseIP(host)}
-	if addresses[0] == nil {
+
+	switch {
+	case len(pinned) > 0:
+		addresses = pinned
+	case addresses[0] == nil:
 		resolve := options.Resolve
 		if resolve == nil {
 			resolve = lookup

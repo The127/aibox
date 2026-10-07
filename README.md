@@ -135,12 +135,35 @@ hosts, ports and secrets the task does not need.
 
 | Flag | Meaning |
 |---|---|
+| `--file`, `-f` | A file whose text follows the arguments in the prompt, `-` for stdin. |
 | `--model` | The model Claude Code uses. Without it, Claude Code picks its default. |
 | `--max-turns` | The most turns Claude Code takes. |
 | `--max-budget-usd` | The most Claude Code may spend by its own estimate, in US dollars at API prices. See below. |
 | `--timeout` | How long Claude Code may work before it is stopped, 1h by default, at most 30 days. |
 
 `--memory`, `--cpus`, `--image` and `--no-sandbox` work as for `aibox run`.
+
+### Prompt from a file
+
+A plan you wrote can be the prompt. `--file` puts the text of a file after
+the arguments, and `--file -` reads stdin. Without arguments, aibox reads
+the prompt from stdin, unless stdin is a terminal.
+
+```
+aibox task --file plan.md
+aibox task --file plan.md "do only step 2"
+cat plan.md | aibox task
+```
+
+- A relative path, and every link in it, must stay inside the folder you
+  run aibox in, so that a link in a repository cannot make a task read
+  another file of yours. For a plan elsewhere, give an absolute path. An
+  absolute path must not end in a link.
+- The file must be a plain file. For a pipe, use `--file -`.
+- The prompt may be 1 MiB of UTF-8 text, the arguments and the file
+  together.
+- A plan that is not committed reaches the task only as its prompt, not as
+  a file in `/project`.
 
 ### Login
 

@@ -237,3 +237,23 @@ func TestAProxyWhoseVMWentAwayIsNotReportedAsBroken(t *testing.T) {
 	// assert
 	assert.Empty(t, stderr.String())
 }
+
+func TestTheConsoleLogKeepsItsLimitAndTakesTheRest(t *testing.T) {
+	// arrange
+	var log strings.Builder
+
+	w := host.ConsoleLog(&log)
+
+	// act
+	n, err := w.Write([]byte(strings.Repeat("x", host.MaxConsoleLogBytes-1)))
+	require.NoError(t, err)
+	require.Equal(t, host.MaxConsoleLogBytes-1, n)
+
+	n, err = w.Write([]byte("yz"))
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, host.MaxConsoleLogBytes, log.Len())
+	assert.True(t, strings.HasSuffix(log.String(), "xy"))
+}

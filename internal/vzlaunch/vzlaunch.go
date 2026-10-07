@@ -107,7 +107,19 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer func() { _ = devNull.Close() }()
 
-	config, err := configure(m, devNull, console.File)
+	// the VM writes its console into a pipe, so that aibox can cut the log
+	// off at its limit
+	consoleOut, consoleIn, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = consoleOut.Close() }()
+	defer func() { _ = consoleIn.Close() }()
+
+	go func() { _, _ = io.Copy(host.ConsoleLog(console.File), consoleOut) }()
+
+	config, err := configure(m, devNull, consoleIn)
 	if err != nil {
 		return err
 	}

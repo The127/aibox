@@ -141,6 +141,8 @@ func TestReadBundleRefusesWhatIsNoBundleHeader(t *testing.T) {
 		"# v2 git bundle\n-xyz\n\n",
 		"# v2 git bundle\n" + strings.Repeat(head+" refs/heads/x\n", 2000) + "\n",
 		"# v2 git bundle\n" + strings.Repeat("x", 5000) + "\n\n",
+		"# v3 git bundle\n@filter=blob:none\n" + head + " refs/heads/aibox/task\n\n",
+		"# v2 git bundle\n" + head + " refs/heads/aibox/task\n" + base + " refs/heads/aibox/task\n\n",
 	} {
 		// act
 		_, err := task.ReadBundle(strings.NewReader(header))

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -22,11 +23,15 @@ import (
 	"github.com/the127/aibox/internal/task"
 )
 
+// maxTimeout is the longest --timeout, far beyond any task, so that the
+// time to stop the VM cannot overflow.
+const maxTimeout = 30 * 24 * time.Hour
+
 var (
 	errNoPrompt     = errors.New("task needs a prompt, as its arguments")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
 	errNoCommit     = errors.New("task must start in a git repository with a commit")
-	errNoTimeout    = errors.New("--timeout must be at least a second")
+	errNoTimeout    = errors.New("--timeout must be at least a second and at most 30 days")
 )
 
 // taskSlack is how much longer than its timeout a task may take before
@@ -75,12 +80,22 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return errNoPrompt
 	}
 
-	if cmd.Duration("timeout") < time.Second {
+	if cmd.Duration("timeout") < time.Second || cmd.Duration("timeout") > maxTimeout {
 		return errNoTimeout
 	}
 
 	cwd, aibox, err := folders(deps)
 	if err != nil {
+		return err
+	}
+
+	home, err := deps.homeDir()
+	if err != nil {
+		return fmt.Errorf("find the home directory: %w", err)
+	}
+
+	// the history of the repository goes into the VM
+	if err := refuseUnsafeFolder(cwd, home, aibox); err != nil {
 		return err
 	}
 
@@ -119,9 +134,10 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer t.close()
 
-	_, _ = fmt.Fprintf(deps.stderr, "aibox: task %s starts from %s\n", filepath.Base(t.dir), short(base))
+	_, _ = fmt.Fprintf(deps.stderr, "aibox: task %s starts from %s, booting the VM\n", filepath.Base(t.dir), short(base))
 
 	spec := r.spec(cmd)
+	spec.Stderr = deps.stderr
 	spec.State = filepath.Join(t.dir, "state.ext4")
 	spec.RemoveState = true
 	spec.Task = t.share
@@ -133,43 +149,72 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	results, resultsWriter := io.Pipe()
 	spec.Stdout = resultsWriter
 
+	limit := cmd.Duration("timeout") + taskSlack
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, limit)
+	defer cancelTimeout()
+
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
 	received := make(chan error, 1)
+
+	var ran atomic.Bool
 
 	go func() {
 		err := task.Receive(results, t.writers())
-		// the VM learns that the results are refused when it writes more
 		_ = results.CloseWithError(errors.Join(err, io.ErrClosedPipe))
+
+		// a VM whose results are refused would wait for its writes to go
+		// through, so it is stopped
+		if err != nil && !ran.Load() {
+			cancel(err)
+		}
+
 		received <- err
 	}()
 
-	ctx, cancel := context.WithTimeout(ctx, cmd.Duration("timeout")+taskSlack)
-	defer cancel()
-
 	runErr := deps.backend.Run(ctx, spec)
+	ran.Store(true)
 
 	_ = resultsWriter.Close()
 	_ = progress.Close()
 
 	receiveErr := <-received
 
-	// a failed task ends the session with an exit code, and result.json
-	// says why
-	var exit *backend.ExitError
+	// aibox can remove it until it is confined, and the backend removes it
+	// once the VM has it, so it is gone either way
+	_ = os.Remove(spec.State)
 
-	switch {
-	case errors.Is(runErr, context.DeadlineExceeded):
-		runErr = fmt.Errorf("the task took longer than %v and was stopped", cmd.Duration("timeout")+taskSlack)
-	case errors.As(runErr, &exit):
-		runErr = nil
-	}
-
-	if err := errors.Join(runErr, receiveErr); err != nil {
+	if err := outcome(ctx, runErr, receiveErr, limit); err != nil {
 		_, _ = fmt.Fprintln(deps.stdout, t.dir)
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: what the task left is in %s\n", t.dir)
 
 		return err
 	}
 
 	return t.report(deps.stdout, deps.stderr)
+}
+
+// outcome is the one error that says why the run of the task did not
+// deliver its results, if it did not. A refusal of the results is the
+// reason the VM stopped, a VM that failed is the reason the results were
+// cut short. A failed task ends the session with an exit code, and
+// result.json says why. The texts of errors may come from the VM, through
+// SSH, so they are cleaned.
+func outcome(ctx context.Context, runErr, receiveErr error, limit time.Duration) error {
+	var exit *backend.ExitError
+
+	switch {
+	case receiveErr != nil && errors.Is(context.Cause(ctx), receiveErr):
+		return receiveErr
+	case errors.Is(runErr, context.DeadlineExceeded):
+		return fmt.Errorf("the task took longer than %v and was stopped", limit)
+	case errors.As(runErr, &exit), runErr == nil:
+		return receiveErr
+	}
+
+	return errors.New(task.CleanText(runErr.Error()))
 }
 
 // warnings tells the person what the task will not have: the changes not
@@ -300,11 +345,12 @@ func (t *taskRun) report(stdout, stderr io.Writer) error {
 	default:
 		bundle := filepath.Join(t.dir, task.ChangesFile)
 		branch := strings.TrimPrefix(task.Branch, "refs/heads/")
-		say("aibox: the changes end at %s, fetch them with\n  git fetch %s %s:%s-%s\n", short(head), bundle, branch, branch, filepath.Base(t.dir))
+		say("aibox: the changes end at %s, fetch them with\n  git -c transfer.fsckObjects=true fetch %s %s:%s-%s\n", short(head), shellQuote(bundle), branch, branch, filepath.Base(t.dir))
 	}
 
 	// the folder goes to stdout alone, for scripts
 	_, _ = fmt.Fprintln(stdout, t.dir)
+	say("aibox: the results are in %s\n", t.dir)
 
 	switch {
 	case result.Error != "":
@@ -387,6 +433,17 @@ func cut(text string, n int) string {
 	}
 
 	return strings.ToValidUTF8(text[:n], "") + "..."
+}
+
+// shellQuote quotes the path for a shell, unless it needs no quotes.
+func shellQuote(path string) string {
+	if !strings.ContainsFunc(path, func(r rune) bool {
+		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-", r)
+	}) {
+		return path
+	}
+
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
 func short(commit string) string {

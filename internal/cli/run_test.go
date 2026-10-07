@@ -28,7 +28,7 @@ type fakeLaunch struct {
 	// refuse is a host the fake reports as refused while it runs
 	refuse string
 	// vm plays the VM, deadline is when the run had to end
-	vm       func(spec backend.Spec) error
+	vm       func(ctx context.Context, spec backend.Spec) error
 	deadline time.Time
 }
 
@@ -42,7 +42,7 @@ func (f *fakeLaunch) Run(ctx context.Context, spec backend.Spec) error {
 	}
 
 	if f.vm != nil {
-		return f.vm(spec)
+		return f.vm(ctx, spec)
 	}
 
 	return f.err

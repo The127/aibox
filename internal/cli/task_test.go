@@ -64,7 +64,7 @@ func (f *taskFixture) task(args ...string) error {
 func (f *taskFixture) sends(t *testing.T, progress string, results map[string]string, names ...string) {
 	t.Helper()
 
-	f.launch.vm = func(spec backend.Spec) error {
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
 		_, _ = spec.Progress.Write([]byte(progress))
 
 		// a write fails once aibox refuses the results, as the session does
@@ -183,7 +183,8 @@ func TestTaskKeepsTheResultsInItsFolderAndPrintsTheFolder(t *testing.T) {
 	stderr := f.stderr.String()
 	assert.Contains(t, stderr, "aibox: running Claude Code\n")
 	assert.Contains(t, stderr, "aibox: 3 turns in 0s for 0.25 USD, ended by completed\nDone.\n")
-	assert.Contains(t, stderr, "git fetch "+filepath.Join(dir, task.ChangesFile)+" aibox/task:aibox/task-"+filepath.Base(dir))
+	assert.Contains(t, stderr, "git -c transfer.fsckObjects=true fetch "+shellQuote(filepath.Join(dir, task.ChangesFile))+" aibox/task:aibox/task-"+filepath.Base(dir))
+	assert.Contains(t, stderr, "aibox: the results are in "+dir+"\n")
 }
 
 func TestTaskStopsTheVMWellAfterTheTimeoutOfClaudeCode(t *testing.T) {
@@ -255,6 +256,54 @@ func TestTaskRefusesResultsItDoesNotTake(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(f.project(t).Dir, "tasks", "evil"))
 }
 
+func TestTaskStopsAVMWhoseResultsItRefuses(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	stopped := make(chan struct{})
+	f.launch.vm = func(ctx context.Context, spec backend.Spec) error {
+		archive := tar.NewWriter(spec.Stdout)
+		_ = archive.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: "../evil", Size: 1})
+
+		// the VM goes on until it is stopped
+		<-ctx.Done()
+		close(stopped)
+
+		return errors.New("the session broke off")
+	}
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.ErrorIs(t, err, task.ErrBadResults)
+	assert.NotContains(t, err.Error(), "broke off")
+	assert.NotContains(t, err.Error(), "closed pipe")
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the VM was not stopped")
+	}
+}
+
+func TestTaskCleansTheErrorOfTheVM(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.launch.err = errors.New("ssh: disconnect, reason 2: \x1b]52;c;ZXZpbA==\x07")
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.EqualError(t, err, "ssh: disconnect, reason 2: ?]52;c;ZXZpbA==?")
+	assert.NoFileExists(t, f.launch.spec.State)
+}
+
+func TestTaskQuotesThePathInTheFetchCommand(t *testing.T) {
+	assert.Equal(t, "/a/b-1.bundle", shellQuote("/a/b-1.bundle"))
+	assert.Equal(t, `'/a b/it'\''s'`, shellQuote("/a b/it's"))
+}
+
 func TestTaskCleansWhatTheVMPrints(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
@@ -321,9 +370,12 @@ func TestTaskRefusesWhatItCannotRun(t *testing.T) {
 	}{
 		"no prompt":          {args: []string{" "}, want: errNoPrompt.Error()},
 		"a short timeout":    {args: []string{"--timeout", "10ms", "fix it"}, want: errNoTimeout.Error()},
+		"a huge timeout":     {args: []string{"--timeout", "100000h", "fix it"}, want: errNoTimeout.Error()},
+		"no budget":          {args: []string{"--max-budget-usd", "NaN", "fix it"}, want: task.ErrBadSettings.Error()},
+		"the home folder":    {args: []string{"fix it"}, setup: func(f *taskFixture) { f.homeDir = f.cwd }, want: errNotAProject.Error()},
 		"bad settings":       {args: []string{"--max-turns", "-1", "fix it"}, want: task.ErrBadSettings.Error()},
 		"root":               {args: []string{"fix it"}, setup: func(f *taskFixture) { f.deps.uid = func() int { return 0 } }, want: errRoot.Error()},
-		"no git repository":  {args: []string{"fix it"}, setup: func(f *taskFixture) { f.cwd = f.homeDir }, want: errNoCommit.Error()},
+		"no git repository":  {args: []string{"fix it"}, setup: func(f *taskFixture) { f.cwd = filepath.Join(f.homeDir, "elsewhere") }, want: errNoCommit.Error()},
 		"a model for a flag": {args: []string{"--model", "--x", "fix it"}, want: task.ErrBadSettings.Error()},
 	}
 

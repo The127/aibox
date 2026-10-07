@@ -42,7 +42,8 @@ type Spec struct {
 	Shell bool
 	// Task is the host folder of a task the VM runs unattended, shared
 	// read-only. The VM then has neither Project nor Home and no terminal:
-	// Stdout gets the results and Progress what the task is doing.
+	// Stdout gets the results and Progress what the task is doing. It has
+	// the Mounts, which are read-only too.
 	Task     string
 	Progress io.Writer
 	// RemoveState removes the state disk as soon as the VM has it open, so

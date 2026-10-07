@@ -94,6 +94,7 @@ type Bundle struct {
 
 var (
 	bundleSignatures = []string{"# v2 git bundle", "# v3 git bundle"}
+	capabilities     = []string{"@object-format=sha1", "@object-format=sha256"}
 	objectName       = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 )
 
@@ -124,7 +125,11 @@ func ReadBundle(r io.Reader) (Bundle, error) {
 		case line == "":
 			return bundle, nil
 		case strings.HasPrefix(line, "@"):
-			// a capability of a v3 bundle
+			// a v3 bundle names its hash, and git would take a bundle with
+			// other capabilities, such as a filter, for something else
+			if !slices.Contains(capabilities, line) {
+				return Bundle{}, fmt.Errorf("%w: a capability %q", ErrBadBundle, CleanText(line))
+			}
 		case strings.HasPrefix(line, "-"):
 			name, _, _ := strings.Cut(line[1:], " ")
 			if !objectName.MatchString(name) {
@@ -136,6 +141,10 @@ func ReadBundle(r io.Reader) (Bundle, error) {
 			name, ref, ok := strings.Cut(line, " ")
 			if !ok || !objectName.MatchString(name) || ref == "" {
 				return Bundle{}, fmt.Errorf("%w: a line %q", ErrBadBundle, CleanText(line))
+			}
+
+			if _, twice := bundle.Refs[ref]; twice {
+				return Bundle{}, fmt.Errorf("%w: %q twice", ErrBadBundle, CleanText(ref))
 			}
 
 			bundle.Refs[ref] = name

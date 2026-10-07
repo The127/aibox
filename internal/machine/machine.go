@@ -50,7 +50,8 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		{Tag: "home", Dir: spec.Home},
 	}
 
-	// a task has its project and home on the state disk
+	// a task has its project and home on the state disk. It keeps the
+	// mounts, which are where its tools come from.
 	if spec.Task != "" {
 		shares = []vm.Share{{Tag: "task", Dir: spec.Task, ReadOnly: true}}
 	}

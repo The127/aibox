@@ -191,6 +191,9 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		if err := os.Remove(machine.State); err != nil {
 			files.close()
 
+			_ = vsock.Proxy.Close()
+			_ = vsock.Terminal.Close()
+
 			return fmt.Errorf("remove the state disk: %w", err)
 		}
 	}
@@ -361,7 +364,7 @@ func logConsole(console *os.File, path string, stderr io.Writer) <-chan struct{}
 	go func() {
 		defer close(done)
 
-		_, _ = io.Copy(log, console)
+		_, _ = io.Copy(host.ConsoleLog(log), console)
 		_ = console.Close()
 
 		if file, ok := log.(*os.File); ok {

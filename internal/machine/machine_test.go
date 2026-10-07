@@ -101,6 +101,27 @@ func TestPrepareSharesTheProjectAndHomeThenTheMountsByNumber(t *testing.T) {
 	}, m.Shares)
 }
 
+func TestPrepareSharesATaskReadOnlyInsteadOfTheProjectAndHome(t *testing.T) {
+	// arrange
+	spec := backend.Spec{
+		Image:  imageFolder(t, "vmlinuz", "os.ext4"),
+		State:  statePath(t),
+		Task:   "/aibox/tasks/1/share",
+		Mounts: []backend.Mount{{Host: "/sdk/go", Guest: "/opt/go"}},
+	}
+
+	// act
+	m, err := machine.Prepare(spec)
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, m.Task)
+	assert.Equal(t, []vm.Share{
+		{Tag: "task", Dir: "/aibox/tasks/1/share", ReadOnly: true},
+		{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"},
+	}, m.Shares)
+}
+
 func TestPrepareWithoutMountsSharesOnlyTheProjectAndHome(t *testing.T) {
 	// act
 	m, err := machine.Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: statePath(t), Project: "/p", Home: "/h"})

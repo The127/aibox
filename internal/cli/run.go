@@ -45,16 +45,22 @@ func runCommand(deps dependencies) *cli.Command {
 	return &cli.Command{
 		Name:  "run",
 		Usage: "boot the VM with the current folder shared into it",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "the image of this release, or ~/.aibox/image for a build from a checkout"},
-			&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
-			&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
+		Flags: append(vmFlags(),
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
-			&cli.BoolFlag{Name: "no-sandbox", Usage: "run the VM outside its sandbox, to debug it"},
-		},
+		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
 		},
+	}
+}
+
+// vmFlags are the flags of every command that boots the VM.
+func vmFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "the image of this release, or ~/.aibox/image for a build from a checkout"},
+		&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
+		&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
+		&cli.BoolFlag{Name: "no-sandbox", Usage: "run the VM outside its sandbox, to debug it"},
 	}
 }
 
@@ -67,20 +73,9 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return errNoTerminal
 	}
 
-	for _, flag := range []string{"memory", "cpus"} {
-		if cmd.Int(flag) < 1 {
-			return fmt.Errorf("--%s must be at least 1", flag)
-		}
-	}
-
-	cwd, err := deps.getwd()
+	cwd, aibox, err := folders(deps)
 	if err != nil {
-		return fmt.Errorf("find the current folder: %w", err)
-	}
-
-	aibox, err := deps.aiboxDir()
-	if err != nil {
-		return fmt.Errorf("find the aibox folder: %w", err)
+		return err
 	}
 
 	home, err := deps.homeDir()
@@ -92,76 +87,126 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
+	r, err := openProjectRun(ctx, deps, cmd, cwd, aibox)
+	if err != nil {
+		return err
+	}
+
+	defer r.close()
+
+	// the VM has a home of its own, so git there knows nothing of the person
+	if identity := deps.gitIdentity(cwd); identity != (gitconfig.Identity{}) {
+		if err := gitconfig.Write(r.project.Home, identity); err != nil {
+			return err
+		}
+	}
+
+	spec := r.spec(cmd)
+	spec.State = r.project.State
+	spec.Project = cwd
+	spec.Home = r.project.Home
+	spec.Shell = cmd.Bool("shell")
+	spec.ConsoleLog = r.project.ConsoleLog
+	spec.Stdin = os.Stdin
+	spec.Stdout = os.Stdout
+
+	return deps.backend.Run(ctx, spec)
+}
+
+// folders returns the current folder and the aibox folder.
+func folders(deps dependencies) (cwd, aibox string, err error) {
+	if cwd, err = deps.getwd(); err != nil {
+		return "", "", fmt.Errorf("find the current folder: %w", err)
+	}
+
+	if aibox, err = deps.aiboxDir(); err != nil {
+		return "", "", fmt.Errorf("find the aibox folder: %w", err)
+	}
+
+	return cwd, aibox, nil
+}
+
+// projectRun is what booting the VM for the project in the current folder
+// needs, for any command: the image, the folders of the project, its
+// config, the mounts, the variables and the log of refused hosts.
+type projectRun struct {
+	image   string
+	project project.Project
+	config  config.Config
+	mounts  []backend.Mount
+	env     []string
+	log     *os.File
+}
+
+func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
+	for _, flag := range []string{"memory", "cpus"} {
+		if cmd.Int(flag) < 1 {
+			return projectRun{}, fmt.Errorf("--%s must be at least 1", flag)
+		}
+	}
+
 	vmImage := cmd.String("image")
 	if vmImage == "" {
+		var err error
 		if vmImage, err = defaultImage(ctx, deps, filepath.Join(aibox, "image")); err != nil {
-			return err
+			return projectRun{}, err
 		}
 	}
 
 	if _, _, err := machine.Image(vmImage); err != nil {
-		return err
+		return projectRun{}, err
 	}
 
 	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
 	if err != nil {
-		return fmt.Errorf("open the project folder: %w", err)
+		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
 	}
 
 	cfg, err := config.Load(p.Config)
 	if err != nil {
-		return err
+		return projectRun{}, err
 	}
 
 	mounts, err := mountFolders(deps.homeDir, cfg.Mounts)
 	if err != nil {
-		return err
+		return projectRun{}, err
 	}
 
 	env, err := hostVariables(cfg, deps.lookupEnv)
 	if err != nil {
-		return err
-	}
-
-	// the VM has a home of its own, so git there knows nothing of the person
-	if identity := deps.gitIdentity(cwd); identity != (gitconfig.Identity{}) {
-		if err := gitconfig.Write(p.Home, identity); err != nil {
-			return err
-		}
+		return projectRun{}, err
 	}
 
 	log, err := os.OpenFile(p.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("open the log of refused hosts: %w", err)
+		return projectRun{}, fmt.Errorf("open the log of refused hosts: %w", err)
 	}
 
-	defer func() { _ = log.Close() }()
+	return projectRun{image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log}, nil
+}
 
-	return deps.backend.Run(ctx, backend.Spec{
-		Image:       vmImage,
-		State:       p.State,
-		StateBytes:  stateBytes(cfg),
-		MemoryMiB:   flagOrConfig(cmd, "memory", cfg.Memory),
-		CPUs:        flagOrConfig(cmd, "cpus", cfg.CPUs),
-		Project:     cwd,
-		Home:        p.Home,
-		Mounts:      mounts,
-		Shell:       cmd.Bool("shell"),
+func (r projectRun) close() { _ = r.log.Close() }
+
+// spec is the part of the spec that every command fills the same way.
+func (r projectRun) spec(cmd *cli.Command) backend.Spec {
+	return backend.Spec{
+		Image:       r.image,
+		StateBytes:  stateBytes(r.config),
+		MemoryMiB:   flagOrConfig(cmd, "memory", r.config.Memory),
+		CPUs:        flagOrConfig(cmd, "cpus", r.config.CPUs),
+		Mounts:      r.mounts,
 		Unsandboxed: cmd.Bool("no-sandbox"),
-		Env:         env,
+		Env:         r.env,
 		Proxy: proxy.Options{
-			Allow:     cfg.Allow.Allows,
-			Pinned:    cfg.Allow.Pinned,
-			OnRefused: proxy.RefusalLog(log),
-			Hint:      "Add it to " + p.Config + " to allow it.",
+			Allow:     r.config.Allow.Allows,
+			Pinned:    r.config.Allow.Pinned,
+			OnRefused: proxy.RefusalLog(r.log),
+			Hint:      "Add it to " + r.project.Config + " to allow it.",
 		},
-		Ports:      cfg.Allow.Ports(),
-		Loopback:   cfg.Allow.LoopbackPorts(),
-		ConsoleLog: p.ConsoleLog,
-		Stdin:      os.Stdin,
-		Stdout:     os.Stdout,
-		Stderr:     os.Stderr,
-	})
+		Ports:    r.config.Allow.Ports(),
+		Loopback: r.config.Allow.LoopbackPorts(),
+		Stderr:   os.Stderr,
+	}
 }
 
 // maxPathBytes is what the PATH for the VM may be long. The session carries

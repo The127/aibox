@@ -126,6 +126,11 @@ type Processes interface {
 	// Kill ends every process in the cgroup and the cgroups below it, and
 	// returns once they are gone.
 	Kill(cgroup string) error
+	// Mkdir makes the folder and its parents, if missing.
+	Mkdir(path string) error
+	// Delegate makes the cgroup, if missing, and gives it to the user, so
+	// that the user can make cgroups below it.
+	Delegate(cgroup string) error
 }
 
 // System is what Run needs from the kernel.
@@ -133,8 +138,6 @@ type System interface {
 	Network
 	Processes
 	Mount(source, target, fstype string, flags uintptr, data string) error
-	// Mkdir makes the folder and its parents, if missing.
-	Mkdir(path string) error
 	// Chmod sets the mode of the file. The error wraps fs.ErrNotExist when
 	// there is no such file.
 	Chmod(path string, mode os.FileMode) error
@@ -154,9 +157,6 @@ type System interface {
 	Sethostname(name string) error
 	// Controllers turns the cgroup controllers on for the cgroups below.
 	Controllers(cgroup string) error
-	// Delegate makes the cgroup, if missing, and gives it to the user, so
-	// that the user can make cgroups below it.
-	Delegate(cgroup string) error
 	Halt() error
 	// Stderr is the standard error the init started with, the console of
 	// the kernel.

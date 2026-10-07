@@ -221,3 +221,30 @@ func TestCmdlineStartsWithWhatTheVMMNeedsAndEndsWithTheWordsOfTheGuest(t *testin
 	// assert
 	assert.Equal(t, "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=1 aibox.shell", line)
 }
+
+func TestGuestWordsTellTheGuestToRunATask(t *testing.T) {
+	// arrange
+	m := machine()
+	m.Task = true
+	m.Shares = []vm.Share{{Tag: "task", Dir: "/aibox/tasks/1/share", ReadOnly: true}}
+
+	// act
+	words := m.GuestWords()
+
+	// assert
+	assert.Equal(t, []string{"aibox.task"}, words, "the guest knows where to mount the task share")
+}
+
+func TestVirtiofsdArgsServeAReadOnlyShareReadOnly(t *testing.T) {
+	for _, share := range []vm.Share{
+		{Tag: "task", Dir: "/aibox/tasks/1/share", Socket: "/run/task.sock", ReadOnly: true},
+		{Tag: "mount0", Dir: "/sdk/go", Socket: "/run/mount0.sock", Guest: "/opt/go"},
+	} {
+		// act
+		args := share.VirtiofsdArgs(nil)
+
+		// assert
+		assert.True(t, share.IsReadOnly())
+		assert.Contains(t, args, "--readonly")
+	}
+}

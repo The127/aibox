@@ -53,6 +53,11 @@ type Options struct {
 	Stdin     *os.File
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// Progress gets the standard error of a session without a terminal,
+	// which a task has. Nil runs the session on the terminal.
+	Progress io.Writer
+	// RemoveState removes the state disk once QEMU has it open.
+	RemoveState bool
 	// SocketTimeout is how long virtiofsd may take to create its socket.
 	// Zero means ten seconds.
 	SocketTimeout time.Duration
@@ -180,6 +185,19 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		return err
 	}
 
+	// QEMU gets the disk by its descriptor, which keeps the file until
+	// the VM is gone
+	if options.RemoveState {
+		if err := os.Remove(machine.State); err != nil {
+			files.close()
+
+			_ = vsock.Proxy.Close()
+			_ = vsock.Terminal.Close()
+
+			return fmt.Errorf("remove the state disk: %w", err)
+		}
+	}
+
 	defer files.close()
 
 	logged := logConsole(files.console, options.ConsoleLog, options.Stderr)
@@ -192,6 +210,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 	stopTerminal := host.ServeTerminal(ctx, forGuest(vsock.Terminal), host.Session{
 		Stdin:    options.Stdin,
 		Stdout:   options.Stdout,
+		Errors:   options.Progress,
 		Env:      options.Env,
 		EndDelay: options.SessionEndDelay,
 	})
@@ -345,7 +364,7 @@ func logConsole(console *os.File, path string, stderr io.Writer) <-chan struct{}
 	go func() {
 		defer close(done)
 
-		_, _ = io.Copy(log, console)
+		_, _ = io.Copy(host.ConsoleLog(log), console)
 		_ = console.Close()
 
 		if file, ok := log.(*os.File); ok {

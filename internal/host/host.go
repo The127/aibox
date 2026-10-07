@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/the127/aibox/internal/backend"
@@ -27,10 +28,13 @@ var ErrNoTerminal = errors.New("the VM ended before its terminal came up")
 
 // Session is the terminal of the person on Stdin and Stdout, and the
 // variables for the command in the VM, as NAME=value. EndDelay is how long
-// the session may go on after the VM stopped, to show its last output.
+// the session may go on after the VM stopped, to show its last output. With
+// Errors the session has no terminal: the command gets no input, what it
+// prints goes to Stdout and its standard error to Errors.
 type Session struct {
 	Stdin    *os.File
 	Stdout   io.Writer
+	Errors   io.Writer
 	Env      []string
 	EndDelay time.Duration
 }
@@ -99,6 +103,17 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
+	if s.Errors != nil {
+		client := session.Exec{In: strings.NewReader(""), Out: s.Stdout, Errors: s.Errors, Env: s.Env}
+
+		code, err := client.Run(conn)
+		if err != nil && ctx.Err() == nil {
+			return Outcome{attached: true, err: err}
+		}
+
+		return Outcome{attached: true, code: code}
+	}
+
 	client, restore, err := session.NewClient(s.Stdin, s.Stdout)
 	if err != nil {
 		return Outcome{attached: true, err: fmt.Errorf("prepare the terminal: %w", err)}
@@ -115,6 +130,37 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	}
 
 	return Outcome{attached: true, code: code}
+}
+
+// MaxConsoleLogBytes is how much of the console of a VM goes into its log.
+const MaxConsoleLogBytes = 16 << 20
+
+// ConsoleLog passes the first MaxConsoleLogBytes on to w and drops the
+// rest, so that the VM cannot fill the disk of the host through its
+// console. It never fails, so that the console is read to its end.
+func ConsoleLog(w io.Writer) io.Writer {
+	return &capped{w: w, left: MaxConsoleLogBytes}
+}
+
+type capped struct {
+	w    io.Writer
+	left int64
+}
+
+func (c *capped) Write(b []byte) (int, error) {
+	n := len(b)
+
+	if int64(len(b)) > c.left {
+		b = b[:c.left]
+	}
+
+	c.left -= int64(len(b))
+
+	if len(b) > 0 {
+		_, _ = c.w.Write(b)
+	}
+
+	return n, nil
 }
 
 // Result is how the run ended: the error of the VM itself, a VM that never

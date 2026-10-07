@@ -34,6 +34,8 @@ type dependencies struct {
 	imageDigest func(arch string) (string, bool)
 	// fetchImage downloads the image of the release into dir
 	fetchImage func(ctx context.Context, version, arch, digest, dir string) error
+	// stdout and stderr are where a task reports
+	stdout, stderr io.Writer
 }
 
 // ExitCode is the code aibox ends with after the error: the code of the
@@ -66,6 +68,8 @@ func NewRootCommand() *cli.Command {
 		version:         version.Get,
 		imageDigest:     image.Digest,
 		fetchImage:      image.Fetcher{BaseURL: image.ReleasesURL, Client: image.NewClient(), Progress: showProgress(os.Stderr)}.Fetch,
+		stdout:          os.Stdout,
+		stderr:          os.Stderr,
 	})
 }
 
@@ -74,7 +78,7 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
-		Commands: append([]*cli.Command{runCommand(deps), configCommand(deps)}, platformCommands()...),
+		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), configCommand(deps)}, platformCommands()...),
 	}
 }
 

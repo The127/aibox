@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -76,7 +77,7 @@ func (s Settings) Check() error {
 	switch {
 	case s.MaxTurns < 0:
 		return fmt.Errorf("%w: maxTurns is %d", ErrBadSettings, s.MaxTurns)
-	case s.MaxBudgetUSD < 0:
+	case s.MaxBudgetUSD < 0 || math.IsNaN(s.MaxBudgetUSD) || math.IsInf(s.MaxBudgetUSD, 0):
 		return fmt.Errorf("%w: maxBudgetUSD is %g", ErrBadSettings, s.MaxBudgetUSD)
 	case s.TimeoutSeconds < 0:
 		return fmt.Errorf("%w: timeoutSeconds is %d", ErrBadSettings, s.TimeoutSeconds)

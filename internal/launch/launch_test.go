@@ -819,3 +819,32 @@ func TestRunReturnsWhileStdinStaysOpen(t *testing.T) {
 		t.Fatal("Run did not return after QEMU exited")
 	}
 }
+
+func TestRunRemovesTheStateDiskOnceQEMUHasItWhenAsked(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+	options := f.options()
+	options.RemoveState = true
+
+	// act
+	err := launch.Run(context.Background(), m, options)
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.NoFileExists(t, m.State)
+	assert.FileExists(t, filepath.Join(f.records, "qemu"), "QEMU ran with the disk")
+}
+
+func TestRunKeepsTheStateDisk(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+
+	// act
+	err := launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.FileExists(t, m.State)
+}

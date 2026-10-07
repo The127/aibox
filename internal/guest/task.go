@@ -36,9 +36,9 @@ const (
 	// root, so the results still fit when the task has filled the disk.
 	outDir = stateMount + "/out"
 
-	maxTranscriptBytes = 256 << 20
-	maxLogBytes        = 1 << 20
-	maxChangesBytes    = 1 << 30
+	maxTranscriptBytes = task.MaxTranscriptBytes
+	maxLogBytes        = task.MaxLogBytes
+	maxChangesBytes    = task.MaxChangesBytes
 	maxGitBytes        = 64 << 10
 	maxResultBytes     = 64 << 10
 	// what git printed goes into the result and to the terminal of the
@@ -81,6 +81,8 @@ type taskRun struct {
 	gitTimeout time.Duration
 	// gitDeadline is when the git steps of the current phase must be done
 	gitDeadline time.Time
+	// cgroups counts the cgroups of the steps
+	cgroups int
 	// archive is where the results go out, each as soon as it is complete
 	archive *tar.Writer
 	result  task.Result
@@ -290,11 +292,16 @@ func (t *taskRun) claude(settings task.Settings) error {
 
 	defer log.close()
 
+	cgroup, err := t.newCgroup(true)
+	if err != nil {
+		return err
+	}
+
 	var last lastLine
 
 	run := &step{
 		cmd:     t.command(claude, args...),
-		cgroup:  sessionCgroup,
+		cgroup:  cgroup,
 		timeout: time.Duration(settings.TimeoutSeconds) * time.Second,
 		stdin:   prompt,
 		stdout:  io.MultiWriter(transcript, &last),
@@ -419,11 +426,16 @@ func (t *taskRun) runGit(cmd *exec.Cmd, stdout io.Writer) error {
 		return fmt.Errorf("%w: %v", errGitTime, t.gitTimeout)
 	}
 
+	cgroup, err := t.newCgroup(false)
+	if err != nil {
+		return err
+	}
+
 	var stderr bytes.Buffer
 
 	run := &step{
 		cmd:     cmd,
-		cgroup:  stepCgroup,
+		cgroup:  cgroup,
 		timeout: left,
 		stdout:  stdout,
 		stderr:  &limited{w: &stderr, left: maxGitBytes},
@@ -614,6 +626,26 @@ func (t *taskRun) execute(s *step) (int, error) {
 	copies.Wait()
 
 	return code, nil
+}
+
+// newCgroup makes a new cgroup for the next step: one the user may make
+// cgroups below, or one of root's for a step of aibox. A cgroup that was
+// killed through cgroup.kill kills every process started into it later,
+// at least on Linux 6.18 and 7.2, so no step reuses one.
+func (t *taskRun) newCgroup(user bool) (string, error) {
+	t.cgroups++
+	name := "step" + strconv.Itoa(t.cgroups)
+
+	create, cgroup := t.sys.Mkdir, stepCgroup+"/"+name
+	if user {
+		create, cgroup = t.sys.Delegate, userCgroup+"/"+name
+	}
+
+	if err := create(cgroup); err != nil {
+		return "", fmt.Errorf("make the cgroup %s: %w", cgroup, err)
+	}
+
+	return cgroup, nil
 }
 
 // endAll kills every process of the user and of the steps of aibox.

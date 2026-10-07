@@ -104,6 +104,54 @@ func TestTheTerminalShowsTheSessionAndEndsWithItsExitCode(t *testing.T) {
 	assert.Contains(t, screen.String(), "hello from the VM")
 }
 
+// pipedProcess is a command without a terminal that prints to its
+// standard output and its standard error.
+type pipedProcess struct {
+	process
+
+	stderr io.Reader
+}
+
+func (p *pipedProcess) Stderr() io.Reader { return p.stderr }
+func (p *pipedProcess) CloseInput() error { return nil }
+
+func TestASessionWithoutATerminalKeepsStandardErrorApart(t *testing.T) {
+	// arrange
+	listener := listen(t)
+	out, errs := &syncBuffer{}, &syncBuffer{}
+	end := host.ServeTerminal(context.Background(), listener, host.Session{Stdout: out, Errors: errs, EndDelay: 5 * time.Second})
+
+	requests := make(chan session.Request, 1)
+	served := make(chan error, 1)
+
+	go func() {
+		conn, err := net.Dial("tcp", listener.Addr().String())
+		if err != nil {
+			served <- err
+
+			return
+		}
+
+		defer func() { _ = conn.Close() }()
+
+		served <- session.Serve(conn, func(request session.Request) (session.Process, error) {
+			requests <- request
+
+			return &pipedProcess{process: process{output: strings.NewReader("results"), code: 1}, stderr: strings.NewReader("progress")}, nil
+		})
+	}()
+
+	// act
+	require.NoError(t, <-served)
+	ended := end()
+
+	// assert
+	assert.Equal(t, &backend.ExitError{Code: 1}, host.Result(nil, ended, ""))
+	assert.False(t, (<-requests).Terminal)
+	assert.Equal(t, "results", out.String())
+	assert.Equal(t, "progress", errs.String())
+}
+
 func TestASessionThatEndsWellIsNoError(t *testing.T) {
 	// arrange
 	listener := listen(t)
@@ -188,4 +236,24 @@ func TestAProxyWhoseVMWentAwayIsNotReportedAsBroken(t *testing.T) {
 
 	// assert
 	assert.Empty(t, stderr.String())
+}
+
+func TestTheConsoleLogKeepsItsLimitAndTakesTheRest(t *testing.T) {
+	// arrange
+	var log strings.Builder
+
+	w := host.ConsoleLog(&log)
+
+	// act
+	n, err := w.Write([]byte(strings.Repeat("x", host.MaxConsoleLogBytes-1)))
+	require.NoError(t, err)
+	require.Equal(t, host.MaxConsoleLogBytes-1, n)
+
+	n, err = w.Write([]byte("yz"))
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, host.MaxConsoleLogBytes, log.Len())
+	assert.True(t, strings.HasSuffix(log.String(), "xy"))
 }

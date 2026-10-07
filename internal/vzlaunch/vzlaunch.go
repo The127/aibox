@@ -40,6 +40,9 @@ const (
 	defaultPowerOffWait = 10 * time.Second
 	// stopTimeout is how long a VM may take to stop once told to.
 	stopTimeout = 10 * time.Second
+	// consoleDrainTimeout is how long the console log waits for the end
+	// of the console once the VM is gone.
+	consoleDrainTimeout = time.Second
 )
 
 var (
@@ -107,7 +110,16 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer func() { _ = devNull.Close() }()
 
-	config, err := configure(m, devNull, console.File)
+	// the VM writes its console into a pipe, so that aibox can cut the log
+	// off at its limit
+	consoleIn, finishConsole, err := pipeConsole(host.ConsoleLog(console.File), consoleDrainTimeout)
+	if err != nil {
+		return err
+	}
+
+	defer finishConsole()
+
+	config, err := configure(m, devNull, consoleIn)
 	if err != nil {
 		return err
 	}
@@ -142,6 +154,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	stopTerminal := host.ServeTerminal(ctx, terminal, host.Session{
 		Stdin:    spec.Stdin,
 		Stdout:   spec.Stdout,
+		Errors:   spec.Progress,
 		Env:      spec.Env,
 		EndDelay: b.SessionEndDelay,
 	})
@@ -155,6 +168,15 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	if err := console.keep(); err != nil {
 		_, _ = fmt.Fprintf(spec.Stderr, "aibox: %v\n", err)
+	}
+
+	// the VM has the disk open, which keeps the file until it is gone
+	if spec.RemoveState {
+		if err := os.Remove(m.State); err != nil {
+			err = errors.Join(fmt.Errorf("remove the state disk: %w", err), stop(v, v.StateChangedNotify()))
+
+			return host.Result(err, stopTerminal(), spec.ConsoleLog)
+		}
 	}
 
 	// aibox needs nothing else of the machine once the VM runs, as on Linux
@@ -392,7 +414,7 @@ func addDisks(config *vz.VirtualMachineConfiguration, m vm.Machine) error {
 // it at a path of its own. Virtualization.framework enforces that on the
 // host, as virtiofsd does on Linux.
 func readOnly(share vm.Share) bool {
-	return share.Guest != ""
+	return share.IsReadOnly()
 }
 
 // addShares shares each folder by its tag.
@@ -422,6 +444,39 @@ func addShares(config *vz.VirtualMachineConfiguration, shares []vm.Share) error 
 	config.SetDirectorySharingDevicesVirtualMachineConfiguration(devices)
 
 	return nil
+}
+
+// pipeConsole returns the end of a pipe for the VM to write its console
+// into, and copies what comes out of the pipe to log. finish closes the
+// pipe once the VM is gone. The last lines of the console tell most when
+// the VM failed, so the copy goes on until the VM let go of the pipe too,
+// or for wait at most.
+func pipeConsole(log io.Writer, wait time.Duration) (*os.File, func(), error) {
+	out, in, err := os.Pipe()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	copied := make(chan struct{})
+
+	go func() {
+		defer close(copied)
+
+		_, _ = io.Copy(log, out)
+	}()
+
+	finish := func() {
+		_ = in.Close()
+
+		select {
+		case <-copied:
+		case <-time.After(wait):
+		}
+
+		_ = out.Close()
+	}
+
+	return in, finish, nil
 }
 
 // consoleLog is where the console of the VM goes. It is a file of its own

@@ -122,8 +122,14 @@ aibox task --model sonnet "fix the flaky test in internal/proxy"
 
 A task can use everything the config gives it, and nobody stops it. It can
 reach every host on the allow list, and every port of your machine that the
-allow list names, and it can use every secret of `env`. With `GITHUB_TOKEN` and `preset:github`, for example,
-it can push to your repositories. Text it reads, in the project or from the
+allow list names, and it can use every secret of `env`. With `GITHUB_TOKEN`
+and `preset:github`, for example, it can push to your repositories. Claude
+Code is told to push or open a pull request only when your prompt asks for
+it, only to a repository whose URL your prompt names, and only to a new
+branch, but nothing enforces that. A pushed branch or pull request can start
+the CI of the repository, with its secrets. What Claude Code says it
+published is its own word, and aibox logs only the hosts the proxy refused,
+not the ones it let through. Text it reads, in the project or from the
 network, can steer it. So before you run a task, take out of the config the
 hosts, ports and secrets the task does not need.
 

@@ -27,7 +27,8 @@ const RootCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet"
 const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk and keeps its state
-// on a second disk. Shell boots it into a shell instead of Claude Code.
+// on a second disk. Shell boots it into a shell instead of Claude Code, Task
+// runs the task of the task share unattended.
 // ProxyPort and TerminalPort are the vsock ports of the proxy and the
 // terminal session on the host, and 0 leaves the port off the kernel
 // command line. Loopback are the ports on the loopback of the host the VM
@@ -41,6 +42,7 @@ type Machine struct {
 	CPUs         int
 	Shares       []Share
 	Shell        bool
+	Task         bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Loopback     []uint16
@@ -79,12 +81,19 @@ type Owner struct {
 
 // Share is a host folder that virtiofsd serves to the VM. The guest mounts it
 // by its tag. Guest is set for a share beyond the project and the home: the
-// path the guest mounts it on, read-only.
+// path the guest mounts it on, read-only. ReadOnly makes a share read-only
+// that the guest knows where to mount by its tag.
 type Share struct {
-	Tag    string
-	Dir    string
-	Socket string
-	Guest  string
+	Tag      string
+	Dir      string
+	Socket   string
+	Guest    string
+	ReadOnly bool
+}
+
+// IsReadOnly tells whether the VM may only read the share.
+func (s Share) IsReadOnly() bool {
+	return s.ReadOnly || s.Guest != ""
 }
 
 // the fdsets of the files that QEMU opens by path again
@@ -166,6 +175,10 @@ func (m Machine) GuestWords() []string {
 		words = append(words, "aibox.shell")
 	}
 
+	if m.Task {
+		words = append(words, "aibox.task")
+	}
+
 	if m.ProxyPort != 0 {
 		words = append(words, "aibox.proxy="+strconv.FormatUint(uint64(m.ProxyPort), 10))
 	}
@@ -202,7 +215,7 @@ func (s Share) VirtiofsdArgs(owner *Owner) []string {
 
 	// the VM cannot change the folder, and a change on the host may wait for
 	// the next run, so names and attributes are cached for the whole run
-	if s.Guest != "" {
+	if s.IsReadOnly() {
 		args = append(args, "--readonly", "--cache=always")
 	}
 

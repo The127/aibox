@@ -36,9 +36,9 @@ const (
 	// root, so the results still fit when the task has filled the disk.
 	outDir = stateMount + "/out"
 
-	maxTranscriptBytes = 256 << 20
-	maxLogBytes        = 1 << 20
-	maxChangesBytes    = 1 << 30
+	maxTranscriptBytes = task.MaxTranscriptBytes
+	maxLogBytes        = task.MaxLogBytes
+	maxChangesBytes    = task.MaxChangesBytes
 	maxGitBytes        = 64 << 10
 	maxResultBytes     = 64 << 10
 	// what git printed goes into the result and to the terminal of the

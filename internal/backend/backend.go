@@ -40,6 +40,15 @@ type Spec struct {
 	Mounts []Mount
 	// Shell opens a shell in the VM instead of Claude Code.
 	Shell bool
+	// Task is the host folder of a task the VM runs unattended, shared
+	// read-only. The VM then has neither Project nor Home and no terminal:
+	// Stdout gets the results and Progress what the task is doing.
+	Task     string
+	Progress io.Writer
+	// RemoveState removes the state disk as soon as the VM has it open, so
+	// that it is gone with the VM. aibox can remove no file once the VM
+	// runs.
+	RemoveState bool
 	// Unsandboxed runs the VM without the protection the host puts around
 	// it, to debug it.
 	Unsandboxed bool
@@ -57,7 +66,7 @@ type Spec struct {
 	// throws it away.
 	ConsoleLog string
 	// Stdin and Stdout are the terminal of the person, Stderr is where the
-	// messages of aibox go.
+	// messages of aibox go. A task has no Stdin.
 	Stdin  *os.File
 	Stdout io.Writer
 	Stderr io.Writer

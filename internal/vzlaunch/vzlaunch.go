@@ -142,6 +142,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	stopTerminal := host.ServeTerminal(ctx, terminal, host.Session{
 		Stdin:    spec.Stdin,
 		Stdout:   spec.Stdout,
+		Errors:   spec.Progress,
 		Env:      spec.Env,
 		EndDelay: b.SessionEndDelay,
 	})
@@ -155,6 +156,15 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	if err := console.keep(); err != nil {
 		_, _ = fmt.Fprintf(spec.Stderr, "aibox: %v\n", err)
+	}
+
+	// the VM has the disk open, which keeps the file until it is gone
+	if spec.RemoveState {
+		if err := os.Remove(m.State); err != nil {
+			err = errors.Join(fmt.Errorf("remove the state disk: %w", err), stop(v, v.StateChangedNotify()))
+
+			return host.Result(err, stopTerminal(), spec.ConsoleLog)
+		}
 	}
 
 	// aibox needs nothing else of the machine once the VM runs, as on Linux
@@ -392,7 +402,7 @@ func addDisks(config *vz.VirtualMachineConfiguration, m vm.Machine) error {
 // it at a path of its own. Virtualization.framework enforces that on the
 // host, as virtiofsd does on Linux.
 func readOnly(share vm.Share) bool {
-	return share.Guest != ""
+	return share.IsReadOnly()
 }
 
 // addShares shares each folder by its tag.

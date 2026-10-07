@@ -212,6 +212,7 @@ dependenciesRules:
         - '**.internal.gitconfig$'
         - '**.internal.image$'
         - '**.internal.vsockns$'
+        - '**.internal.task$'
   # the task says what the host and the VM exchange for a task and knows
   # nothing else
   - package: '**.internal.task$'

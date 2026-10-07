@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/the127/aibox/internal/backend"
@@ -27,10 +28,13 @@ var ErrNoTerminal = errors.New("the VM ended before its terminal came up")
 
 // Session is the terminal of the person on Stdin and Stdout, and the
 // variables for the command in the VM, as NAME=value. EndDelay is how long
-// the session may go on after the VM stopped, to show its last output.
+// the session may go on after the VM stopped, to show its last output. With
+// Errors the session has no terminal: the command gets no input, what it
+// prints goes to Stdout and its standard error to Errors.
 type Session struct {
 	Stdin    *os.File
 	Stdout   io.Writer
+	Errors   io.Writer
 	Env      []string
 	EndDelay time.Duration
 }
@@ -98,6 +102,17 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
+
+	if s.Errors != nil {
+		client := session.Exec{In: strings.NewReader(""), Out: s.Stdout, Errors: s.Errors, Env: s.Env}
+
+		code, err := client.Run(conn)
+		if err != nil && ctx.Err() == nil {
+			return Outcome{attached: true, err: err}
+		}
+
+		return Outcome{attached: true, code: code}
+	}
 
 	client, restore, err := session.NewClient(s.Stdin, s.Stdout)
 	if err != nil {

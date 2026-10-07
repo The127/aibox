@@ -56,16 +56,18 @@ func (b Backend) prepare(spec backend.Spec) (vm.Machine, Options, error) {
 	m.Owner = &b.Owner
 
 	options := Options{
-		QEMU:       b.QEMU,
-		Virtiofsd:  b.Virtiofsd,
-		Stdin:      spec.Stdin,
-		Stdout:     spec.Stdout,
-		Stderr:     spec.Stderr,
-		ConsoleLog: spec.ConsoleLog,
-		Ports:      spec.Ports,
-		Proxy:      spec.Proxy,
-		Env:        spec.Env,
-		NoSandbox:  spec.Unsandboxed,
+		QEMU:        b.QEMU,
+		Virtiofsd:   b.Virtiofsd,
+		Stdin:       spec.Stdin,
+		Stdout:      spec.Stdout,
+		Stderr:      spec.Stderr,
+		Progress:    spec.Progress,
+		RemoveState: spec.RemoveState,
+		ConsoleLog:  spec.ConsoleLog,
+		Ports:       spec.Ports,
+		Proxy:       spec.Proxy,
+		Env:         spec.Env,
+		NoSandbox:   spec.Unsandboxed,
 	}
 
 	return m, options, nil

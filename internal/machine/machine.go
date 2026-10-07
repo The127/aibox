@@ -50,6 +50,11 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		{Tag: "home", Dir: spec.Home},
 	}
 
+	// a task has its project and home on the state disk
+	if spec.Task != "" {
+		shares = []vm.Share{{Tag: "task", Dir: spec.Task, ReadOnly: true}}
+	}
+
 	// the guest learns the path of a mount from the kernel command line, so
 	// the tag only has to be unique
 	for i, mount := range spec.Mounts {
@@ -64,6 +69,7 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		CPUs:      spec.CPUs,
 		Shares:    shares,
 		Shell:     spec.Shell,
+		Task:      spec.Task != "",
 		Loopback:  spec.Loopback,
 	}, nil
 }

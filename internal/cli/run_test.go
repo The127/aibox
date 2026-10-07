@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,14 +27,22 @@ type fakeLaunch struct {
 	err    error
 	// refuse is a host the fake reports as refused while it runs
 	refuse string
+	// vm plays the VM, deadline is when the run had to end
+	vm       func(spec backend.Spec) error
+	deadline time.Time
 }
 
-func (f *fakeLaunch) Run(_ context.Context, spec backend.Spec) error {
+func (f *fakeLaunch) Run(ctx context.Context, spec backend.Spec) error {
 	f.called = true
 	f.spec = spec
+	f.deadline, _ = ctx.Deadline()
 
 	if f.refuse != "" {
 		spec.Proxy.OnRefused(f.refuse)
+	}
+
+	if f.vm != nil {
+		return f.vm(spec)
 	}
 
 	return f.err
@@ -60,6 +70,8 @@ type fixture struct {
 	fetched []fetch
 	editor  *fakeEditor
 	deps    dependencies
+	// stdout and stderr are where a task reports
+	stdout, stderr bytes.Buffer
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -89,6 +101,7 @@ func newFixture(t *testing.T) *fixture {
 			return nil
 		},
 	}
+	f.deps.stdout, f.deps.stderr = &f.stdout, &f.stderr
 	f.version = "(devel)"
 	f.digests = map[string]string{runtime.GOARCH: "the digest"}
 

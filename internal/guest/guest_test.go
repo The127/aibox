@@ -1269,16 +1269,18 @@ func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 
 	defer func() { _ = listener.Close() }()
 
+	guestSide, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(s.t, err)
+	s.t.Cleanup(func() { _ = guestSide.Close() })
+
+	// the connection is accepted before the listener closes, since closing
+	// a listener resets the connections it has not accepted yet
+	hostSide, err := listener.Accept()
+	require.NoError(s.t, err)
+
 	s.attached = make(chan attachResult, 1)
 
 	go func() {
-		hostSide, err := listener.Accept()
-		if err != nil {
-			s.attached <- attachResult{err: err}
-
-			return
-		}
-
 		defer func() { _ = hostSide.Close() }()
 
 		if s.noTerminal {
@@ -1293,10 +1295,6 @@ func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 		code, err := client.Attach(hostSide)
 		s.attached <- attachResult{code: code, err: err}
 	}()
-
-	guestSide, err := net.Dial("tcp", listener.Addr().String())
-	require.NoError(s.t, err)
-	s.t.Cleanup(func() { _ = guestSide.Close() })
 
 	return guestSide, nil
 }

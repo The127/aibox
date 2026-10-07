@@ -25,11 +25,13 @@ type dependencies struct {
 	homeDir         func() (string, error)
 	uid             func() int
 	stdinIsTerminal func() bool
-	lookupEnv       func(name string) (string, bool)
-	gitIdentity     func(dir string) gitconfig.Identity
-	backend         backend.Backend
-	edit            func(editor, path string) error
-	version         func() string
+	// stdin is where a task reads its prompt from
+	stdin       io.Reader
+	lookupEnv   func(name string) (string, bool)
+	gitIdentity func(dir string) gitconfig.Identity
+	backend     backend.Backend
+	edit        func(editor, path string) error
+	version     func() string
 	// imageDigest is the digest of the image this aibox was released with
 	imageDigest func(arch string) (string, bool)
 	// fetchImage downloads the image of the release into dir
@@ -61,6 +63,7 @@ func NewRootCommand() *cli.Command {
 		homeDir:         os.UserHomeDir,
 		uid:             os.Getuid,
 		stdinIsTerminal: func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
+		stdin:           os.Stdin,
 		lookupEnv:       os.LookupEnv,
 		gitIdentity:     gitconfig.Read,
 		backend:         newBackend(),

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -413,4 +415,156 @@ func TestTaskRefusesWhatItCannotRun(t *testing.T) {
 			assert.False(t, f.launch.called)
 		})
 	}
+}
+
+// prompt is what the task got as its prompt.
+func (f *taskFixture) prompt(t *testing.T) string {
+	t.Helper()
+
+	prompt, err := os.ReadFile(filepath.Join(f.launch.spec.Task, task.PromptFile))
+	require.NoError(t, err)
+
+	return string(prompt)
+}
+
+func TestTaskTakesItsPromptFromAFileAfterTheArguments(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.succeeds(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "plan.md"), []byte("\n# Plan\n\n1. one\n"), 0o600))
+
+	// act
+	err := f.task("--file", "plan.md", "do only", "step 1")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "do only step 1\n\n# Plan\n\n1. one\n", f.prompt(t))
+}
+
+func TestTaskTakesItsPromptFromAFileAlone(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.succeeds(t)
+	plan := filepath.Join(t.TempDir(), "plan.md")
+	require.NoError(t, os.WriteFile(plan, []byte("# Plan\n"), 0o600))
+
+	// act
+	err := f.task("-f", plan)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "# Plan\n", f.prompt(t))
+}
+
+func TestTaskTakesItsPromptFromStdin(t *testing.T) {
+	tests := map[string]struct {
+		args     []string
+		terminal bool
+		want     string
+	}{
+		"without arguments":         {want: "the plan\n"},
+		"with --file -":             {args: []string{"--file", "-", "review"}, terminal: true, want: "review\n\nthe plan\n"},
+		"not with arguments":        {args: []string{"fix it"}, want: "fix it\n"},
+		"not when it is a terminal": {args: []string{"fix it"}, terminal: true, want: "fix it\n"},
+		"not with a file":           {args: []string{"--file", "plan.md"}, want: "# Plan\n"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newTaskFixture(t)
+			f.succeeds(t)
+			f.deps.stdin = strings.NewReader("the plan\n")
+			f.deps.stdinIsTerminal = func() bool { return test.terminal }
+			require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "plan.md"), []byte("# Plan\n"), 0o600))
+
+			// act
+			err := f.task(test.args...)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, test.want, f.prompt(t))
+		})
+	}
+}
+
+func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
+	tests := map[string]struct {
+		args     []string
+		stdin    string
+		terminal bool
+		want     string
+	}{
+		"no arguments on a terminal": {terminal: true, want: errNoPrompt.Error()},
+		"an empty stdin":             {stdin: " \n", want: errNoPrompt.Error()},
+		"a missing file":             {args: []string{"--file", "missing.md"}, want: "read the prompt"},
+		"a link":                     {args: []string{"--file", "link.md"}, want: "read the prompt"},
+		"a file in a linked folder":  {args: []string{"--file", "linked/secret"}, want: "read the prompt"},
+		"a file above the folder":    {args: []string{"--file", "../secret"}, want: "read the prompt"},
+		"a folder":                   {args: []string{"--file", "."}, want: errNoPromptFile.Error()},
+		"a FIFO":                     {args: []string{"--file", "fifo"}, want: errNoPromptFile.Error()},
+		"too long a prompt":          {stdin: strings.Repeat("x", maxPromptBytes+1), want: errLongPrompt.Error()},
+		"too long with whitespace":   {stdin: strings.Repeat(" ", maxPromptBytes+1) + "fix it", want: errLongPrompt.Error()},
+		"too long with arguments":    {args: []string{"--file", "-", "fix it"}, stdin: strings.Repeat("x", maxPromptBytes-1), want: errLongPrompt.Error()},
+		"no UTF-8":                   {stdin: "fix \xff", want: errNoText.Error()},
+		"no UTF-8 in a file":         {args: []string{"--file", "latin1.md"}, want: errNoText.Error()},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newTaskFixture(t)
+			f.deps.stdin = strings.NewReader(test.stdin)
+			f.deps.stdinIsTerminal = func() bool { return test.terminal }
+
+			secret := filepath.Join(t.TempDir(), "secret")
+			require.NoError(t, os.WriteFile(secret, []byte("secret\n"), 0o600))
+			require.NoError(t, os.Symlink(secret, filepath.Join(f.cwd, "link.md")))
+			require.NoError(t, os.Symlink(filepath.Dir(secret), filepath.Join(f.cwd, "linked")))
+			require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.cwd), "secret"), []byte("secret\n"), 0o600))
+			require.NoError(t, syscall.Mkfifo(filepath.Join(f.cwd, "fifo"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "latin1.md"), []byte("caf\xe9\n"), 0o600))
+
+			// act
+			err := f.task(test.args...)
+
+			// assert
+			require.ErrorContains(t, err, test.want)
+			assert.False(t, f.launch.called)
+		})
+	}
+}
+
+func TestTaskTakesAPromptOfTheMostItMayHave(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.succeeds(t)
+	f.deps.stdin = strings.NewReader(strings.Repeat("x", maxPromptBytes))
+	f.deps.stdinIsTerminal = func() bool { return false }
+
+	// act
+	err := f.task()
+
+	// assert
+	require.NoError(t, err)
+	assert.Len(t, f.prompt(t), maxPromptBytes+1)
+	assert.Contains(t, f.stderr.String(), "aibox: reading the prompt from stdin\n")
+}
+
+func TestTaskStopsWaitingForStdinWhenCanceled(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	stdin, _ := io.Pipe()
+	f.deps.stdin = stdin
+	f.deps.stdinIsTerminal = func() bool { return false }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	// act
+	err := newRootCommand(f.deps).Run(ctx, []string{"aibox", "task", "--image", f.image})
+
+	// assert
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.False(t, f.launch.called)
 }

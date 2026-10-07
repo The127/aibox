@@ -58,7 +58,7 @@ func taskCommand(deps dependencies) *cli.Command {
 		Usage:     "run Claude Code unattended on the last commit, in a VM of its own, and keep its commits as a git bundle",
 		ArgsUsage: "[PROMPT]",
 		Flags: append(vmFlags(),
-			&cli.StringFlag{Name: "file", Aliases: []string{"f"}, Usage: "read the prompt from this file, after the arguments, - for stdin. Without arguments, aibox reads stdin unless it is a terminal"},
+			&cli.StringFlag{Name: "file", Aliases: []string{"f"}, TakesFile: true, Usage: "read the prompt from this file, after the arguments, - for stdin. Without arguments, aibox reads stdin unless it is a terminal"},
 			&cli.StringFlag{Name: "model", Usage: "the model Claude Code uses", DefaultText: "the default of Claude Code"},
 			&cli.IntFlag{Name: "max-turns", Usage: "the most turns Claude Code takes", DefaultText: "no limit"},
 			&cli.FloatFlag{Name: "max-budget-usd", Usage: "the most Claude Code may spend by its own estimate, in US dollars at API prices", DefaultText: "no limit"},

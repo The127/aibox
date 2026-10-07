@@ -122,3 +122,40 @@ func TestBlankFailsForAMissingDisk(t *testing.T) {
 	// assert
 	require.Error(t, err)
 }
+
+func TestKillEndsEveryProcessOfTheCgroup(t *testing.T) {
+	// arrange
+	cgroup := filepath.Join("/sys/fs/cgroup", "aibox-test-"+filepath.Base(t.TempDir()))
+	if err := os.Mkdir(cgroup, 0o750); err != nil {
+		t.Skipf("no cgroup to test in: %v", err)
+	}
+
+	t.Cleanup(func() { _ = os.Remove(cgroup) })
+
+	cmd := exec.Command("sh", "-c", "sleep 100 & sleep 100")
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	_, err := guest.Linux{}.Start(cmd, cgroup)
+	require.NoError(t, err)
+
+	// act
+	err = guest.Linux{}.Kill(cgroup)
+
+	// assert
+	require.NoError(t, err)
+
+	procs, err := os.ReadFile(filepath.Join(cgroup, "cgroup.procs")) //nolint:gosec // the cgroup is the test's own
+	require.NoError(t, err)
+	assert.Empty(t, string(procs))
+
+	var exit *exec.ExitError
+	require.ErrorAs(t, cmd.Wait(), &exit)
+	assert.Equal(t, syscall.SIGKILL, exit.Sys().(syscall.WaitStatus).Signal()) //nolint:forcetypeassert // Sys is a WaitStatus on Linux
+}
+
+func TestKillFailsForAFolderThatIsNotACgroup(t *testing.T) {
+	// act
+	err := guest.Linux{}.Kill(t.TempDir())
+
+	// assert
+	assert.Error(t, err)
+}

@@ -78,6 +78,7 @@ COPY hosts nsswitch.conf /etc/
 # says where they may come from
 COPY containers/ /etc/containers/
 COPY aibox.md /etc/aibox/prompt.md
+COPY task.md /etc/aibox/task.md
 COPY aibox-init /sbin/init
 
 OUTPUT rootfs os.ext4

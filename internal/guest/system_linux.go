@@ -10,8 +10,10 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
@@ -213,6 +215,39 @@ func (Linux) Delegate(cgroup string) error {
 	}
 
 	return nil
+}
+
+// killTimeout is how long Kill waits for the processes of the cgroup to
+// end.
+const killTimeout = 10 * time.Second
+
+var errStillPopulated = errors.New("processes are left after the kill")
+
+// Kill ends every process in the cgroup and below with cgroup.kill, and
+// waits until cgroup.events says the cgroup is empty.
+func (Linux) Kill(cgroup string) error {
+	if err := os.WriteFile(cgroup+"/cgroup.kill", []byte("1"), 0); err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(killTimeout)
+
+	for {
+		events, err := os.ReadFile(cgroup + "/cgroup.events") //nolint:gosec // the cgroup is fixed
+		if err != nil {
+			return err
+		}
+
+		if !slices.Contains(strings.Split(string(events), "\n"), "populated 1") {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return errStillPopulated
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // Wait waits for any child to exit and returns its PID and exit code. A

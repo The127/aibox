@@ -212,6 +212,20 @@ dependenciesRules:
         - '**.internal.gitconfig$'
         - '**.internal.image$'
         - '**.internal.vsockns$'
+  # the task says what the host and the VM exchange for a task and knows
+  # nothing else
+  - package: '**.internal.task$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os
+        - os/exec
+        - net
+        - syscall
   # the guest is the init of the VM. It knows nothing of the host side
   - package: '**.internal.guest$'
     shouldOnlyDependsOn:
@@ -219,6 +233,7 @@ dependenciesRules:
         - '**.internal.tunnel$'
         - '**.internal.vm$'
         - '**.internal.session$'
+        - '**.internal.task$'
     shouldNotDependsOn:
       internal:
         - '**.cmd.**'

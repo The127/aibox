@@ -354,7 +354,6 @@ func TestTaskReturnsTheErrorOfTheVM(t *testing.T) {
 func TestTaskWarnsAboutWhatTheTaskWillNotHave(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
-	require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "README"), []byte("changed\n"), 0o600))
 	f.succeeds(t)
 
 	// act
@@ -362,7 +361,6 @@ func TestTaskWarnsAboutWhatTheTaskWillNotHave(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "changes not committed are not part of it")
 	assert.Contains(t, f.stderr.String(), "Claude Code needs CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY")
 }
 
@@ -567,4 +565,110 @@ func TestTaskStopsWaitingForStdinWhenCanceled(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.False(t, f.launch.called)
+}
+
+// inputHead is the commit the bundle of the input has as its HEAD.
+func (f *taskFixture) inputHead(t *testing.T) string {
+	t.Helper()
+
+	heads := f.git(t, "bundle", "list-heads", filepath.Join(f.launch.spec.Task, task.InputBundle))
+
+	return strings.TrimSpace(heads)
+}
+
+func TestTaskStartsFromTheCommitOfFrom(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.git(t, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "two")
+	f.git(t, "tag", "start", f.base)
+	refs := f.git(t, "for-each-ref")
+	f.succeeds(t)
+
+	// act
+	err := f.task("--from", "start", "fix it")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, f.base+" HEAD", f.inputHead(t))
+	assert.Contains(t, f.stderr.String(), "starts from refs/tags/start ("+short(f.base)+")")
+	assert.Equal(t, refs, f.git(t, "for-each-ref"))
+	assert.NoDirExists(t, filepath.Join(f.taskDir(t), "input.git"))
+}
+
+func TestTaskStartsFromHEAD(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "README"), []byte("changed\n"), 0o600))
+	f.succeeds(t)
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, f.base+" HEAD", f.inputHead(t))
+	assert.Contains(t, f.stderr.String(), "starts from the last commit "+short(f.base)+",")
+}
+
+func TestTaskRunsNoFilterOfTheProject(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	f.git(t, "config", "filter.x.clean", "touch "+marker+"; cat")
+	require.NoError(t, os.WriteFile(filepath.Join(f.cwd, ".git", "info", "attributes"), []byte("* filter=x\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "README"), []byte("jello\n"), 0o600))
+	f.succeeds(t)
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, marker)
+}
+
+func TestTaskStartsFromTheCommitOfAnAnnotatedTag(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.git(t, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "tag", "--annotate", "--message", "start", "start")
+	f.succeeds(t)
+
+	// act
+	err := f.task("--from", "start", "fix it")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, f.base+" HEAD", f.inputHead(t))
+}
+
+func TestTaskRefusesAShallowClone(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.git(t, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "two")
+	shallow := filepath.Join(f.homeDir, "shallow")
+	f.git(t, "clone", "--quiet", "--depth", "1", "file://"+f.cwd, shallow)
+	f.cwd = shallow
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.ErrorIs(t, err, errShallow)
+	assert.False(t, f.launch.called)
+}
+
+func TestTaskRefusesAFromThatIsNoCommit(t *testing.T) {
+	for _, from := range []string{"missing", "", "--help", "HEAD^{tree}"} {
+		t.Run(from, func(t *testing.T) {
+			// arrange
+			f := newTaskFixture(t)
+
+			// act
+			err := f.task("--from", from, "fix it")
+
+			// assert
+			require.ErrorIs(t, err, errNoCommit)
+			assert.False(t, f.launch.called)
+		})
+	}
 }

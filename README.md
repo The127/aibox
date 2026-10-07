@@ -104,10 +104,13 @@ git bundle, for you to review.
 aibox task --model sonnet "fix the flaky test in internal/proxy"
 ```
 
-- The VM gets a clone of `HEAD` with all its history, not your folder. A file
-  you deleted in an earlier commit is still in that history. Changes you have
-  not committed, files git ignores, other branches and stashes are not part
-  of the task. aibox warns about changes you have not committed.
+- The VM gets a clone of `HEAD` with all its history, not your folder.
+  `--from` names another branch, tag or commit to start from. Whatever it
+  names goes into the VM with all its history, a stash or a commit you reset
+  away too. A file you deleted in an earlier commit is still in that
+  history. Changes you have not committed, files git ignores, and other
+  branches and stashes that `--from` does not name are not part of the task.
+  A shallow clone is refused, since it lacks the history.
 - Claude Code works on the branch `aibox/task` with all permissions, since
   nobody is there to approve them. Git has your name and email from your git
   config. What Claude Code leaves uncommitted, apart from files git ignores,
@@ -135,6 +138,7 @@ hosts, ports and secrets the task does not need.
 
 | Flag | Meaning |
 |---|---|
+| `--from` | The branch, tag or commit the task starts from, `HEAD` by default. |
 | `--file`, `-f` | A file whose text follows the arguments in the prompt, `-` for stdin. |
 | `--model` | The model Claude Code uses. Without it, Claude Code picks its default. |
 | `--max-turns` | The most turns Claude Code takes. |

@@ -69,6 +69,9 @@ type taskProcesses struct {
 	running *exec.Cmd
 	started []startedIn
 	kills   []string
+	// made are the cgroups made, delegated the ones given to the user
+	made      []string
+	delegated []string
 	// failKill fails every kill, failKillAfter the kills after the command
 	// of that path
 	failKill      error
@@ -132,6 +135,25 @@ func (p *taskProcesses) Kill(cgroup string) error {
 	for _, s := range p.started {
 		_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
 	}
+
+	return nil
+}
+
+func (p *taskProcesses) Mkdir(path string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.made = append(p.made, path)
+
+	return nil
+}
+
+func (p *taskProcesses) Delegate(cgroup string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.made = append(p.made, cgroup)
+	p.delegated = append(p.delegated, cgroup)
 
 	return nil
 }
@@ -445,7 +467,7 @@ func TestTaskDoesNotWaitForWhatClaudeCodeLeftHoldingItsOutput(t *testing.T) {
 	assert.Equal(t, "done\n", string(r.files[task.TranscriptFile]))
 }
 
-func TestTaskRunsTheStepsOfAiboxInACgroupOfItsOwn(t *testing.T) {
+func TestTaskRunsEachStepInANewCgroup(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t, "echo left > left\n")
 
@@ -455,13 +477,19 @@ func TestTaskRunsTheStepsOfAiboxInACgroupOfItsOwn(t *testing.T) {
 	// assert
 	require.Equal(t, 0, code, r.result.Error)
 
+	var cgroups []string
+
 	for _, s := range f.processes.startedCopy() {
-		want := "/sys/fs/cgroup/aibox"
+		parent := "/sys/fs/cgroup/aibox/"
 		if s.cmd.Path == f.claude {
-			want = "/sys/fs/cgroup/user/session"
+			parent = "/sys/fs/cgroup/user/"
+			assert.Contains(t, f.processes.delegated, s.cgroup, "the user may make cgroups below the one of Claude Code")
 		}
 
-		assert.Equal(t, want, s.cgroup, s.cmd.Args)
+		assert.True(t, strings.HasPrefix(s.cgroup, parent), "%s runs in %s", s.cmd.Args, s.cgroup)
+		assert.Contains(t, f.processes.made, s.cgroup)
+		assert.NotContains(t, cgroups, s.cgroup, "a killed cgroup kills what starts in it")
+		cgroups = append(cgroups, s.cgroup)
 	}
 }
 

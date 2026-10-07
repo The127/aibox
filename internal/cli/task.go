@@ -35,7 +35,8 @@ var (
 	errNoText       = errors.New("the prompt is not UTF-8 text")
 	errNoPromptFile = errors.New("the file of the prompt must be a plain file, use --file - for a pipe")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
-	errNoCommit     = errors.New("task must start in a git repository with a commit")
+	errNoCommit     = errors.New("task must start in a git repository, from a commit")
+	errShallow      = errors.New("a shallow clone lacks history the task needs, git fetch --unshallow fetches it")
 	errNoTimeout    = errors.New("--timeout must be at least a second and at most 30 days")
 )
 
@@ -59,6 +60,7 @@ func taskCommand(deps dependencies) *cli.Command {
 		ArgsUsage: "[PROMPT]",
 		Flags: append(vmFlags(),
 			&cli.StringFlag{Name: "file", Aliases: []string{"f"}, TakesFile: true, Usage: "read the prompt from this file, after the arguments, - for stdin. Without arguments, aibox reads stdin unless it is a terminal"},
+			&cli.StringFlag{Name: "from", Usage: "the branch, tag or commit the task starts from", Value: "HEAD"},
 			&cli.StringFlag{Name: "model", Usage: "the model Claude Code uses", DefaultText: "the default of Claude Code"},
 			&cli.IntFlag{Name: "max-turns", Usage: "the most turns Claude Code takes", DefaultText: "no limit"},
 			&cli.FloatFlag{Name: "max-budget-usd", Usage: "the most Claude Code may spend by its own estimate, in US dollars at API prices", DefaultText: "no limit"},
@@ -108,9 +110,16 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	base, err := gitOutput(cwd, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
+	from := cmd.String("from")
+
+	base, err := gitOutput(cwd, "rev-parse", "--verify", "--end-of-options", from+"^{commit}")
 	if err != nil {
-		return fmt.Errorf("%w: %w", errNoCommit, err)
+		return fmt.Errorf("%w: %s: %w", errNoCommit, from, err)
+	}
+
+	// a bundle of a shallow clone would miss the history the clone has not
+	if shallow, err := gitOutput(cwd, "rev-parse", "--is-shallow-repository"); err != nil || shallow != "false" {
+		return errShallow
 	}
 
 	prompt, err := readPrompt(ctx, deps, cmd, cwd)
@@ -139,7 +148,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer r.close()
 
-	warnings(deps.stderr, cwd, r.env)
+	warnings(deps.stderr, r.env)
 
 	t, err := newTaskRun(r.project.Dir, cwd, base, prompt, settings)
 	if err != nil {
@@ -148,7 +157,16 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer t.close()
 
-	_, _ = fmt.Fprintf(deps.stderr, "aibox: task %s starts from %s, booting the VM\n", filepath.Base(t.dir), short(base))
+	// the full name, since a name may stand for a tag or a ref that a VM
+	// wrote into .git as well as for the branch the person means
+	start := "the last commit " + short(base)
+	if name, err := gitOutput(cwd, "rev-parse", "--verify", "--symbolic-full-name", "--end-of-options", from); err == nil && name != "" && name != "HEAD" && from != "HEAD" {
+		start = fmt.Sprintf("%s (%s)", task.CleanLine(name), short(base))
+	} else if head, _ := gitOutput(cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); head != base {
+		start = short(base)
+	}
+
+	_, _ = fmt.Fprintf(deps.stderr, "aibox: task %s starts from %s, booting the VM\n", filepath.Base(t.dir), start)
 
 	spec := r.spec(cmd)
 	spec.Stderr = deps.stderr
@@ -355,13 +373,11 @@ func readPromptFile(ctx context.Context, stdin io.Reader, cwd, name string) (str
 	}
 }
 
-// warnings tells the person what the task will not have: the changes not
-// yet committed, and a login when the config passes no credential.
-func warnings(stderr io.Writer, cwd string, env []string) {
-	if status, err := gitOutput(cwd, "status", "--porcelain"); err == nil && status != "" {
-		_, _ = fmt.Fprintln(stderr, "aibox: the task starts from the last commit, changes not committed are not part of it")
-	}
-
+// warnings tells the person when the config passes no credential, since a
+// task starts with no login. It does not look for changes not committed:
+// git status may run a filter of .git/config, which the VM may have
+// written.
+func warnings(stderr io.Writer, env []string) {
 	if !slices.ContainsFunc(env, func(variable string) bool {
 		name, _, _ := strings.Cut(variable, "=")
 
@@ -404,8 +420,8 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 	}
 
 	bundle := filepath.Join(t.share, task.InputBundle)
-	if _, err := gitOutput(cwd, "bundle", "create", "--quiet", bundle, "HEAD"); err != nil {
-		return nil, fmt.Errorf("bundle the last commit: %w", err)
+	if err := bundleCommit(cwd, base, bundle, filepath.Join(t.dir, "input.git")); err != nil {
+		return nil, fmt.Errorf("bundle the commit the task starts from: %w", err)
 	}
 
 	if err := os.Chmod(bundle, 0o644); err != nil { //nolint:gosec // the VM reads it
@@ -424,6 +440,41 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 	}
 
 	return t, nil
+}
+
+// bundleCommit writes a bundle of the commit and its history, whose HEAD is
+// the commit. git bundles refs only, so the bundle comes from an empty
+// repository in tmp that borrows the objects of the project. The project
+// gets no new ref, and a commit made there meanwhile changes nothing.
+func bundleCommit(cwd, commit, bundle, tmp string) error {
+	gitDir, err := gitOutput(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = os.RemoveAll(tmp) }()
+
+	// the repository runs no hooks, neither of a template nor of the config
+	if _, err := gitOutput(cwd, "init", "--quiet", "--bare", "--template=", tmp); err != nil {
+		return err
+	}
+
+	alternates := filepath.Join(tmp, "objects", "info", "alternates")
+	if err := os.WriteFile(alternates, []byte(filepath.Join(gitDir, "objects")+"\n"), 0o600); err != nil {
+		return err
+	}
+
+	for _, args := range [][]string{
+		{"update-ref", "refs/heads/input", commit},
+		{"symbolic-ref", "HEAD", "refs/heads/input"},
+		{"bundle", "create", "--quiet", bundle, "HEAD"},
+	} {
+		if _, err := gitOutput(cwd, append([]string{"--git-dir", tmp}, args...)...); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // taskID is the time the task starts and a random part, so that tasks
@@ -598,8 +649,11 @@ func readAll(file *os.File) ([]byte, error) {
 }
 
 // gitOutput runs git in the folder and returns what it printed, trimmed.
+// The .git of the project is the VM's to write, so git runs no hooks and
+// no fsmonitor from it. Filters it cannot turn off, so aibox runs no git
+// command that reads the working tree, such as status.
 func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...) //nolint:gosec // the arguments are aibox's own
+	cmd := exec.Command("git", append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}, args...)...) //nolint:gosec // the arguments are aibox's own
 	cmd.Dir = dir
 
 	var stderr bytes.Buffer

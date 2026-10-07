@@ -67,10 +67,13 @@ goes into `console.log` in the project's aibox folder.
 `aibox task` boots the same VM without a terminal. The kernel command line
 tells the init that it runs a task.
 
-- The host writes the prompt, the settings and a bundle of `HEAD` into the
-  folder of the task, which the VM gets as a read-only share. The project
-  folder and the home of the project are not shared. The mounts of the
-  config and the skills of the person are, read-only as for `aibox run`.
+- The host writes the prompt, the settings and a bundle of the commit the
+  task starts from into the folder of the task, which the VM gets as a
+  read-only share. git bundles refs only, so the bundle comes from an empty
+  repository that borrows the objects of the project and has the commit as
+  its `HEAD`. The project gets no new ref. The project folder and the home
+  of the project are not shared. The mounts of the config and the skills of
+  the person are, read-only as for `aibox run`.
 - Each task gets a new state disk, which the init formats. The home and the
   project are folders on it. The host removes the file as soon as the VM has
   it open, so the disk is gone when the VM is. Tasks do not lock the project,

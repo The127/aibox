@@ -454,10 +454,15 @@ func message(text string) string {
 		text = text[:maxMessageBytes] + "..."
 	}
 
-	lines := strings.Split(strings.ToValidUTF8(text, "?"), "\n")
+	var lines []string
 
-	for i, line := range lines {
-		lines[i] = strings.Map(func(r rune) rune {
+	for line := range strings.SplitSeq(strings.ToValidUTF8(text, "?"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		lines = append(lines, strings.Map(func(r rune) rune {
 			if r == '\t' {
 				return ' '
 			}
@@ -467,11 +472,14 @@ func message(text string) string {
 			}
 
 			return r
-		}, strings.TrimSpace(line))
+		}, line))
 	}
 
 	return strings.Join(lines, " | ")
 }
+
+// killedCode is the exit code a SIGKILL gives, from Wait of the System.
+const killedCode = 128 + int(syscall.SIGKILL)
 
 // step is a command of the task: the cgroup it runs in, how long it may
 // take, if there is a limit, and where its input comes from and its output
@@ -502,12 +510,15 @@ func (s *step) expire(endAll func() error) {
 	_ = endAll()
 }
 
-// finish marks the step as finished, once a running expire is done.
-func (s *step) finish() {
+// finish marks the step as finished with the exit code, once a running
+// expire is done. A limit that came only after the command had exited by
+// itself did not end it.
+func (s *step) finish(code int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.finished = true
+	s.timedOut = s.timedOut && code == killedCode
 }
 
 // execute runs the step until it exits and returns its exit code. What the
@@ -576,7 +587,7 @@ func (t *taskRun) execute(s *step) (int, error) {
 	}
 
 	code, waitErr := reap(t.sys, pid)
-	s.finish()
+	s.finish(code)
 
 	if err := t.endAll(); err != nil || waitErr != nil {
 		// a process that is left may hold the pipes open

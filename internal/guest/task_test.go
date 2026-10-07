@@ -102,8 +102,13 @@ func (p *taskProcesses) Wait() (int, int, error) {
 
 	err := running.Wait()
 
+	// a signal gives 128 plus its number, like Wait of the System
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
+		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return running.Process.Pid, 128 + int(status.Signal()), nil
+		}
+
 		return running.Process.Pid, exit.ExitCode(), nil
 	}
 
@@ -585,15 +590,17 @@ func TestTaskShowsWhatGitPrintedOnOneLineWithoutControlCharacters(t *testing.T) 
 	// assert
 	require.Equal(t, 0, code, r.result.Error)
 	require.Len(t, r.result.Warnings, 1)
-	assert.Contains(t, r.result.Warnings[0], "?]52;c;ZXZpbA==?done | aibox: fake | ")
+	assert.Contains(t, r.result.Warnings[0], "?]52;c;ZXZpbA==?done | aibox: fake")
 	assert.NotContains(t, f.progress.String(), "\x1b")
 	assert.NotContains(t, f.progress.String(), "\naibox: fake")
 }
 
 func TestTaskStopsTheGitStepsAfterTheirTime(t *testing.T) {
 	// arrange
+	// the steps before Claude Code have the same time, which they need far
+	// less of
 	f := newTaskFixture(t, `FILTER='sleep 100'`+evilFilter)
-	f.gitTimeout = time.Second
+	f.gitTimeout = 3 * time.Second
 
 	// act
 	code, r := f.run()

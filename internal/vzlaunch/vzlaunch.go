@@ -112,31 +112,12 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	// the VM writes its console into a pipe, so that aibox can cut the log
 	// off at its limit
-	consoleOut, consoleIn, err := os.Pipe()
+	consoleIn, finishConsole, err := pipeConsole(host.ConsoleLog(console.File), consoleDrainTimeout)
 	if err != nil {
 		return err
 	}
 
-	copied := make(chan struct{})
-
-	go func() {
-		defer close(copied)
-
-		_, _ = io.Copy(host.ConsoleLog(console.File), consoleOut)
-	}()
-
-	// the last lines of the console tell most when the VM failed, so the
-	// copy goes on until the VM let go of the pipe too, or for a moment
-	defer func() {
-		_ = consoleIn.Close()
-
-		select {
-		case <-copied:
-		case <-time.After(consoleDrainTimeout):
-		}
-
-		_ = consoleOut.Close()
-	}()
+	defer finishConsole()
 
 	config, err := configure(m, devNull, consoleIn)
 	if err != nil {
@@ -463,6 +444,39 @@ func addShares(config *vz.VirtualMachineConfiguration, shares []vm.Share) error 
 	config.SetDirectorySharingDevicesVirtualMachineConfiguration(devices)
 
 	return nil
+}
+
+// pipeConsole returns the end of a pipe for the VM to write its console
+// into, and copies what comes out of the pipe to log. finish closes the
+// pipe once the VM is gone. The last lines of the console tell most when
+// the VM failed, so the copy goes on until the VM let go of the pipe too,
+// or for wait at most.
+func pipeConsole(log io.Writer, wait time.Duration) (*os.File, func(), error) {
+	out, in, err := os.Pipe()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	copied := make(chan struct{})
+
+	go func() {
+		defer close(copied)
+
+		_, _ = io.Copy(log, out)
+	}()
+
+	finish := func() {
+		_ = in.Close()
+
+		select {
+		case <-copied:
+		case <-time.After(wait):
+		}
+
+		_ = out.Close()
+	}
+
+	return in, finish, nil
 }
 
 // consoleLog is where the console of the VM goes. It is a file of its own

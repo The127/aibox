@@ -172,9 +172,9 @@ func (b Bundle) Check(base string) (string, error) {
 	return head, nil
 }
 
-// CleanText makes text from the VM safe to show on a terminal: control and
-// format characters but the newline become ?, and so do bytes that are no
-// UTF-8.
+// CleanText makes text from the VM safe to show on a terminal: a CRLF
+// becomes a newline, a tab a space, other control and format characters
+// become ?, and so do bytes that are no UTF-8.
 func CleanText(text string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '\n' {
@@ -190,7 +190,7 @@ func CleanText(text string) string {
 		}
 
 		return r
-	}, strings.ToValidUTF8(text, "?"))
+	}, strings.ReplaceAll(strings.ToValidUTF8(text, "?"), "\r\n", "\n"))
 }
 
 // CleanLine is CleanText on one line: the lines of the text are joined
@@ -214,8 +214,9 @@ func Indent(text, prefix string) string {
 // longer line is dropped.
 const maxLineBytes = 4096
 
-// LineCleaner passes text on line by line, each cleaned with CleanText.
-// Close passes on a last line without its newline.
+// LineCleaner passes text on line by line, each cleaned with CleanText,
+// and takes a CRLF for a newline. Close passes on a last line without its
+// newline.
 type LineCleaner struct {
 	w    io.Writer
 	line []byte
@@ -248,7 +249,7 @@ func (c *LineCleaner) Write(b []byte) (int, error) {
 }
 
 func (c *LineCleaner) flush() error {
-	line := CleanText(string(c.line)) + "\n"
+	line := CleanText(strings.TrimSuffix(string(c.line), "\r")) + "\n"
 	c.line = c.line[:0]
 
 	_, err := io.WriteString(c.w, line)

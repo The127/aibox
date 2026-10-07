@@ -254,3 +254,28 @@ func TestCleanLineJoinsTheLines(t *testing.T) {
 func TestIndentIndentsEveryLine(t *testing.T) {
 	assert.Equal(t, "  | one\n  | aibox: two?", task.Indent("one\naibox: two\x1b\n", "  | "))
 }
+
+func TestCleanTextTakesACRLFForANewline(t *testing.T) {
+	assert.Equal(t, "one\ntwo?three", task.CleanText("one\r\ntwo\rthree"))
+}
+
+func TestCleanLineJoinsCRLFLines(t *testing.T) {
+	assert.Equal(t, "one | two", task.CleanLine("one\r\ntwo\r\n\r\n"))
+}
+
+func TestLineCleanerTakesACRLFForANewline(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	c := task.NewLineCleaner(&out)
+
+	// act
+	_, err := c.Write([]byte("one\r\ntwo\r"))
+	require.NoError(t, err)
+	_, err = c.Write([]byte("\nthree\rfour\n"))
+	require.NoError(t, err)
+	require.NoError(t, c.Close())
+
+	// assert
+	assert.Equal(t, "one\ntwo\nthree?four\n", out.String())
+}

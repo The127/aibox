@@ -51,7 +51,7 @@ func taskCommand(deps dependencies) *cli.Command {
 		Flags: append(vmFlags(),
 			&cli.StringFlag{Name: "model", Usage: "the model Claude Code uses", DefaultText: "the default of Claude Code"},
 			&cli.IntFlag{Name: "max-turns", Usage: "the most turns Claude Code takes", DefaultText: "no limit"},
-			&cli.FloatFlag{Name: "max-budget-usd", Usage: "the most Claude Code may spend, in US dollars", DefaultText: "no limit"},
+			&cli.FloatFlag{Name: "max-budget-usd", Usage: "the most Claude Code may spend by its own estimate, in US dollars at API prices", DefaultText: "no limit"},
 			&cli.DurationFlag{Name: "timeout", Usage: "how long Claude Code may work before it is stopped", Value: time.Hour},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -414,7 +414,7 @@ func summary(result task.Result) string {
 	}
 
 	if json.Unmarshal(result.ClaudeResult, &last) == nil && last.Type == "result" {
-		fmt.Fprintf(&b, "aibox: %d turns in %s for %.2f USD", last.Turns, time.Duration(last.Duration)*time.Millisecond, last.Cost)
+		fmt.Fprintf(&b, "aibox: %d turns in %s, about %.2f USD at API prices", last.Turns, time.Duration(last.Duration)*time.Millisecond, last.Cost)
 
 		if last.Reason != "" {
 			fmt.Fprintf(&b, ", ended by %s", task.CleanLine(last.Reason))

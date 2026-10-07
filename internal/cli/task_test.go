@@ -182,7 +182,7 @@ func TestTaskKeepsTheResultsInItsFolderAndPrintsTheFolder(t *testing.T) {
 
 	stderr := f.stderr.String()
 	assert.Contains(t, stderr, "aibox: running Claude Code\n")
-	assert.Contains(t, stderr, "aibox: 3 turns in 0s for 0.25 USD, ended by completed\n  | Done.\n")
+	assert.Contains(t, stderr, "aibox: 3 turns in 0s, about 0.25 USD at API prices, ended by completed\n  | Done.\n")
 	assert.Contains(t, stderr, "git -c transfer.fsckObjects=true fetch "+shellQuote(filepath.Join(dir, task.ChangesFile))+" aibox/task:aibox/task-"+filepath.Base(dir))
 	assert.Contains(t, stderr, "aibox: the results are in "+dir+"\n")
 }

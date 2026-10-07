@@ -94,6 +94,130 @@ restarts. The messages of the kernel and the init go into `console.log`, and
 the hosts the proxy refused into `proxy.log`, both in the folder of the
 project below `~/.aibox/projects`.
 
+## Tasks
+
+`aibox task` runs Claude Code unattended on the last commit of the project,
+in a VM that is thrown away afterwards. The commits it makes come back as a
+git bundle, for you to review.
+
+```
+aibox task --model sonnet "fix the flaky test in internal/proxy"
+```
+
+- The VM gets a clone of `HEAD` with all its history, not your folder. A file
+  you deleted in an earlier commit is still in that history. Changes you have
+  not committed, files git ignores, other branches and stashes are not part
+  of the task. aibox warns about changes you have not committed.
+- Claude Code works on the branch `aibox/task` with all permissions, since
+  nobody is there to approve them. Git has your name and email from your git
+  config. What Claude Code leaves uncommitted, apart from files git ignores,
+  aibox commits in one more commit by `aibox <aibox@localhost>`.
+- The VM starts with an empty home and an empty disk, and both are thrown
+  away at the end. Your skills in `~/.claude/skills` are mounted read-only,
+  as for `aibox run`. Other tasks and `aibox run` never see the home or the
+  disk, so several tasks can run at once.
+- The project config applies as for `aibox run`: `allow`, `mounts`, `path`,
+  `env`, `memory`, `cpus` and `disk`. Hosts the proxy refused go into the
+  `proxy.log` of the project.
+
+A task can use everything the config gives it, and nobody stops it. It can
+reach every host on the allow list, and every port of your machine that the
+allow list names, and it can use every secret of `env`. With `GITHUB_TOKEN`
+and `preset:github`, for example, it can push to your repositories. Claude
+Code is told to push or open a pull request only when your prompt asks for
+it, only to a repository whose URL your prompt names, and only to a new
+branch, but nothing enforces that. A pushed branch or pull request can start
+the CI of the repository, with its secrets. What Claude Code says it
+published is its own word, and aibox logs only the hosts the proxy refused,
+not the ones it let through. Text it reads, in the project or from the
+network, can steer it. So before you run a task, take out of the config the
+hosts, ports and secrets the task does not need.
+
+| Flag | Meaning |
+|---|---|
+| `--model` | The model Claude Code uses. Without it, Claude Code picks its default. |
+| `--max-turns` | The most turns Claude Code takes. |
+| `--max-budget-usd` | The most Claude Code may spend by its own estimate, in US dollars at API prices. See below. |
+| `--timeout` | How long Claude Code may work before it is stopped, 1h by default, at most 30 days. |
+
+`--memory`, `--cpus`, `--image` and `--no-sandbox` work as for `aibox run`.
+
+### Login
+
+The empty home has no login, so Claude Code logs in with a variable that the
+`env` of the project config passes from your shell:
+
+- `ANTHROPIC_API_KEY`, a key of the Claude Console. Usage is billed to it.
+- `CLAUDE_CODE_OAUTH_TOKEN`, a token of your claude.ai subscription that
+  `claude setup-token` makes.
+
+```yaml
+env:
+  - CLAUDE_CODE_OAUTH_TOKEN
+```
+
+aibox never stores the token. It passes on the value your shell has when the
+task starts. In the VM, Claude Code and every program the task runs can read
+it. A task that text has steered can send it to a host of the allow list, or
+write it into a commit or the transcript. Use a token or key for tasks only,
+so that you can revoke it on its own.
+
+Whether unattended tasks are fine on your subscription is your own risk. See
+Anthropic's [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+page. For many tasks, or tasks for a team, use an API key.
+
+### Results
+
+At the end aibox prints how the task went, the last message of Claude Code
+and the command that fetches the changes into a branch of your repository:
+
+```
+aibox: Claude Code exited with 0
+aibox: 4 turns in 8.321s, about 0.05 USD at API prices, ended by completed
+  | I added a "Purpose" section to the README and committed it as f3572af.
+aibox: the changes end at f3572af8c6df, fetch them with
+  git -c transfer.fsckObjects=true fetch .../changes.bundle aibox/task:aibox/task-20261007-170916-259e07
+```
+
+The commits are untrusted until you have read them, like a pull request from
+a stranger. Their authors prove nothing, since the task can set any author.
+
+- Fetch them with the command aibox prints. aibox prints it only after it
+  checked that the bundle carries `aibox/task` and nothing else, and needs no
+  commit but the one the task started from. The fetch only adds that branch.
+- Read the whole change with `git diff <commit> aibox/task-…`, whatever
+  the single commits look like. Take `<commit>` from the first line aibox
+  prints, `aibox: task … starts from …`, not from `result.json`, which the
+  VM writes. That is the commit aibox checked the bundle against.
+- Checking out, merging or rebasing the branch puts its files into your
+  folder. Then everything in [What the VM writes](#what-the-vm-writes)
+  applies.
+
+The cost is Claude Code's own estimate, from the tokens it used at the list
+prices of the API. With an API key it is close to what you are billed. With
+a subscription you are not billed this amount, and the task counts against
+the limits of your plan instead. `--max-budget-usd` caps the same estimate,
+for Claude Code alone. Programs the task starts, such as another `claude`,
+do not count. The only limit on time or spending that aibox enforces itself is `--timeout`. With an API key,
+give the key a spend limit in the Console.
+
+Each task has a folder `tasks/<start time>-<id>` in the folder of the
+project below `~/.aibox/projects`. aibox prints the folder on stdout, for
+scripts.
+
+| File | What it holds |
+|---|---|
+| `changes.bundle` | The commits, empty when the task made none. |
+| `result.json` | What the VM reports: the commit the task started from and the one it ended at, the exit code of Claude Code, whether it ran out of time, whether aibox committed leftovers, the files that were cut, warnings, the error of a failed step, and the last line of Claude Code with the cost and the turns. |
+| `transcript.jsonl` | Everything Claude Code did, as `stream-json`, cut at 256 MiB. |
+| `claude.log` | What Claude Code wrote to standard error, cut at 1 MiB. |
+| `console.log` | The messages of the kernel and the init of the VM. |
+| `share/` | The prompt, the settings and the bundle of the commit the task started from, with all its history. |
+
+aibox exits with 1 when the task did not finish. Claude Code failed or ran
+out of time, a step in the VM failed, the VM was stopped, or the VM sent
+results aibox does not take. The folder then holds what the task left.
+
 ## Project config
 
 Each project has its settings in `~/.aibox/projects/<escaped path>/config.yaml`,

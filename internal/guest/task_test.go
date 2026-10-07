@@ -8,16 +8,21 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/guest"
+	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/task"
 )
 
@@ -56,49 +61,89 @@ func readResults(t *testing.T, r io.Reader) results {
 }
 
 // taskProcesses runs the commands of a task for real, as the user of the
-// test, one after the other.
+// test, one after the other. Each runs in a process group of its own, which
+// a kill ends in place of the cgroups.
 type taskProcesses struct {
-	running  *exec.Cmd
-	started  []*exec.Cmd
-	kills    int
-	failKill error
+	mu      sync.Mutex
+	running *exec.Cmd
+	started []startedIn
+	kills   []string
+	// failKill fails every kill, failKillAfter the kills after the command
+	// of that path
+	failKill      error
+	failKillAfter string
 }
 
-func (p *taskProcesses) Start(cmd *exec.Cmd, _ string) (int, error) {
+type startedIn struct {
+	cmd    *exec.Cmd
+	cgroup string
+}
+
+func (p *taskProcesses) Start(cmd *exec.Cmd, cgroup string) (int, error) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.running = cmd
-	p.started = append(p.started, cmd)
+	p.started = append(p.started, startedIn{cmd, cgroup})
 
 	return cmd.Process.Pid, nil
 }
 
 func (p *taskProcesses) Wait() (int, int, error) {
-	err := p.running.Wait()
+	p.mu.Lock()
+	running := p.running
+	p.mu.Unlock()
+
+	err := running.Wait()
 
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		return p.running.Process.Pid, exit.ExitCode(), nil
+		return running.Process.Pid, exit.ExitCode(), nil
 	}
 
-	return p.running.Process.Pid, 0, err
+	return running.Process.Pid, 0, err
 }
 
-func (p *taskProcesses) Kill(string) error {
-	p.kills++
+func (p *taskProcesses) Kill(cgroup string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	return p.failKill
+	p.kills = append(p.kills, cgroup)
+
+	if p.failKill != nil {
+		return p.failKill
+	}
+
+	if p.failKillAfter != "" && p.running.Path == p.failKillAfter {
+		return errors.New("still populated")
+	}
+
+	for _, s := range p.started {
+		_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
+	}
+
+	return nil
+}
+
+func (p *taskProcesses) startedCopy() []startedIn {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return slices.Clone(p.started)
 }
 
 // claudeCalls are the commands that ran Claude Code.
 func (p *taskProcesses) claudeCalls(claude string) []*exec.Cmd {
 	var calls []*exec.Cmd
 
-	for _, cmd := range p.started {
-		if cmd.Path == claude {
-			calls = append(calls, cmd)
+	for _, s := range p.startedCopy() {
+		if s.cmd.Path == claude {
+			calls = append(calls, s.cmd)
 		}
 	}
 
@@ -114,6 +159,7 @@ type taskFixture struct {
 	input     string
 	project   string
 	out       string
+	home      string
 	claude    string
 	base      string
 	processes *taskProcesses
@@ -130,11 +176,12 @@ func newTaskFixture(t *testing.T, script string) *taskFixture {
 		input:     filepath.Join(dir, "input"),
 		project:   filepath.Join(dir, "project"),
 		out:       filepath.Join(dir, "out"),
+		home:      filepath.Join(dir, "home"),
 		claude:    filepath.Join(dir, "claude"),
 		processes: &taskProcesses{},
 	}
 
-	for _, d := range []string{f.source, f.input, f.project} {
+	for _, d := range []string{f.source, f.input, f.project, f.home} {
 		require.NoError(t, os.Mkdir(d, 0o750))
 	}
 
@@ -156,15 +203,16 @@ func (f *taskFixture) writeInput(name, content string) {
 	require.NoError(f.t, os.WriteFile(filepath.Join(f.input, name), []byte(content), 0o600))
 }
 
-// env keeps git away from the configuration of the machine.
-func (f *taskFixture) env() []string {
-	return append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "HOME="+f.t.TempDir())
+// env keeps git away from the configuration of the machine. The task has
+// a home of its own.
+func (f *taskFixture) env(home string) []string {
+	return append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "XDG_CONFIG_HOME="+home, "HOME="+home)
 }
 
 func (f *taskFixture) gitIn(dir string, args ...string) string {
 	cmd := exec.Command("git", args...) //nolint:gosec // the arguments are the test's own
 	cmd.Dir = dir
-	cmd.Env = f.env()
+	cmd.Env = append(f.env(f.t.TempDir()), "GIT_CONFIG_GLOBAL=/dev/null")
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(f.t, err, string(out))
@@ -182,7 +230,7 @@ func (f *taskFixture) command(name string, args ...string) *exec.Cmd {
 
 	cmd := exec.Command(name, args...) //nolint:gosec // the programs are the test's own
 	cmd.Dir = f.project
-	cmd.Env = f.env()
+	cmd.Env = f.env(f.home)
 
 	return cmd
 }
@@ -366,7 +414,45 @@ func TestTaskEndsWhatEachStepLeftRunning(t *testing.T) {
 
 	// assert
 	require.Equal(t, 0, code, r.result.Error)
-	assert.Equal(t, len(f.processes.started), f.processes.kills)
+
+	var want []string
+	for range f.processes.started {
+		want = append(want, "/sys/fs/cgroup/user", "/sys/fs/cgroup/aibox")
+	}
+
+	assert.Equal(t, want, f.processes.kills)
+}
+
+func TestTaskDoesNotWaitForWhatClaudeCodeLeftHoldingItsOutput(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, "sleep 100 &\necho done\n")
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, "done\n", string(r.files[task.TranscriptFile]))
+}
+
+func TestTaskRunsTheStepsOfAiboxInACgroupOfItsOwn(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, "echo left > left\n")
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+
+	for _, s := range f.processes.startedCopy() {
+		want := "/sys/fs/cgroup/aibox"
+		if s.cmd.Path == f.claude {
+			want = "/sys/fs/cgroup/user/session"
+		}
+
+		assert.Equal(t, want, s.cgroup, s.cmd.Args)
+	}
 }
 
 func TestTaskStopsWhenWhatWasLeftRunningCannotBeEnded(t *testing.T) {
@@ -380,8 +466,111 @@ func TestTaskStopsWhenWhatWasLeftRunningCannotBeEnded(t *testing.T) {
 	// assert
 	assert.Equal(t, 1, code)
 	assert.Equal(t, []string{"result.json"}, r.names)
+	assert.Contains(t, r.result.Error, "could not be ended")
 	assert.Contains(t, r.result.Error, "still populated")
 	assert.Nil(t, r.result.ClaudeExitCode)
+}
+
+func TestTaskSendsTheTranscriptWhenWhatClaudeCodeLeftCannotBeEnded(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, "echo '{\"type\":\"result\"}'\nexit 2\n")
+	f.processes.failKillAfter = f.claude
+
+	// act
+	code, r := f.run()
+
+	// assert
+	assert.Equal(t, 1, code)
+	assert.Equal(t, []string{"transcript.jsonl", "claude.log", "result.json"}, r.names)
+	assert.Equal(t, "{\"type\":\"result\"}\n", string(r.files[task.TranscriptFile]))
+	require.NotNil(t, r.result.ClaudeExitCode)
+	assert.Equal(t, 2, *r.result.ClaudeExitCode)
+	assert.Contains(t, r.result.Error, "run Claude Code: what the step left running could not be ended")
+}
+
+func TestTaskStopsClaudeCodeAfterTheTimeoutAndSendsItsWork(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `
+git commit --quiet --allow-empty --message "before the timeout"
+sleep 100
+`)
+	f.writeInput(task.SettingsFile, `{"timeoutSeconds":1}`)
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	assert.True(t, r.result.TimedOut)
+	assert.Equal(t, "before the timeout by aibox\n", f.fetch(r))
+	assert.Contains(t, f.progress.String(), "Claude Code ran out of time")
+}
+
+func TestTaskCommitsUnderTheGitIdentityOfTheSettings(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `git commit --quiet --allow-empty --message "mine"`+"\n")
+	f.writeInput(task.SettingsFile, `{"gitName":"Some One","gitEmail":"someone@example.com"}`)
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, "mine by Some One\n", f.fetch(r))
+}
+
+func TestTaskLeavesTheTaskNoRemote(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, "git remote > remotes\n")
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	f.fetch(r)
+	assert.Empty(t, f.gitIn(f.source, "show", "changes:remotes"))
+}
+
+func TestTaskSendsTheLastLineOfClaudeCodeAsItsResult(t *testing.T) {
+	tests := map[string]string{
+		"echo '{\"type\":\"system\"}'\necho '{\"type\":\"result\",\"total_cost_usd\":0.5}'\n": `{"type":"result","total_cost_usd":0.5}`,
+		"printf '{\"type\":\"result\"}'\n":                     `{"type":"result"}`,
+		"echo '{\"type\":\"result\"}'\necho 'Not logged in'\n": "",
+		"": "",
+	}
+
+	for script, want := range tests {
+		t.Run(script, func(t *testing.T) {
+			// arrange
+			f := newTaskFixture(t, script)
+
+			// act
+			code, r := f.run()
+
+			// assert
+			require.Equal(t, 0, code, r.result.Error)
+			assert.Equal(t, want, string(r.result.ClaudeResult))
+		})
+	}
+}
+
+func TestTaskShowsWhatGitPrintedWithoutControlCharacters(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `
+printf '#!/bin/sh\nprintf "\\033]52;c;ZXZpbA==\\007done\\n" >&2\nexit 1\n' > .git/hooks/prepare-commit-msg
+chmod +x .git/hooks/prepare-commit-msg
+echo left > left
+`)
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	require.Len(t, r.result.Warnings, 1)
+	assert.Contains(t, r.result.Warnings[0], "?]52;c;ZXZpbA==?done")
+	assert.NotContains(t, f.progress.String(), "\x1b")
 }
 
 func TestTaskFailsWithBadSettings(t *testing.T) {
@@ -391,6 +580,10 @@ func TestTaskFailsWithBadSettings(t *testing.T) {
 		`{"model":"--dangerously-skip-permissions"}`,
 		`{"model":"opus sonnet"}`,
 		`{"unknown":1}`,
+		`{"timeoutSeconds":-1}`,
+		`{"gitName":"a\nb"}`,
+		`{"gitEmail":"a b@example.com"}`,
+		`{} {}`,
 		`not json`,
 	} {
 		t.Run(settings, func(t *testing.T) {
@@ -436,4 +629,59 @@ func TestTaskFailsWhenThePromptIsMissing(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, r.result.Error, "open the prompt")
 	assert.Empty(t, f.processes.claudeCalls(f.claude))
+}
+
+func TestTaskSendsItsResultsAndWhatItDoesOverASession(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, "echo fixed > README\n")
+	guestSide, hostSide := tcpPair(t)
+
+	served := make(chan error, 1)
+
+	go func() {
+		served <- session.Serve(guestSide, func(session.Request) (session.Process, error) {
+			return guest.StartTask(f.processes, f.command, f.input, f.out), nil
+		})
+	}()
+
+	var out, progress bytes.Buffer
+
+	client := session.Exec{In: strings.NewReader(""), Out: &out, Errors: &progress}
+
+	// act
+	code, err := client.Run(hostSide)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 0, code)
+
+	r := readResults(t, &out)
+	assert.Equal(t, []string{"transcript.jsonl", "claude.log", "changes.bundle", "result.json"}, r.names)
+	assert.Contains(t, progress.String(), "aibox: cloning the input\n")
+	assert.Contains(t, progress.String(), "aibox: bundling the changes\n")
+	require.NoError(t, <-served)
+}
+
+// tcpPair is a connection over the loopback. net.Pipe does not do, since
+// both ends of SSH write before they read.
+func tcpPair(t *testing.T) (net.Conn, net.Conn) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	defer func() { _ = listener.Close() }()
+
+	dialed, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+
+	accepted, err := listener.Accept()
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = dialed.Close()
+		_ = accepted.Close()
+	})
+
+	return accepted, dialed
 }

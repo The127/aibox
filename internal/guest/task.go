@@ -16,7 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/task"
@@ -30,34 +32,47 @@ const (
 	gitPath    = "/usr/bin/git"
 
 	// outDir is where the init keeps the results until it sends them. It is
-	// on the state disk and only root may enter it.
+	// on the state disk and only root may enter it. ext4 keeps blocks for
+	// root, so the results still fit when the task has filled the disk.
 	outDir = stateMount + "/out"
 
 	maxTranscriptBytes = 256 << 20
 	maxLogBytes        = 1 << 20
 	maxChangesBytes    = 1 << 30
 	maxGitBytes        = 64 << 10
+	maxResultBytes     = 64 << 10
+	// what git printed goes into the result and to the terminal of the
+	// person, cut to this
+	maxMessageBytes = 2 << 10
 
-	// aibox commits what the task left uncommitted under its own name
-	leftoversIdentity = "aibox"
-	leftoversEmail    = "aibox@localhost"
-	leftoversMessage  = "aibox: what the task left uncommitted"
+	// gitTimeout is how long a step of git may take. The task could make
+	// one hang with its own git config.
+	gitTimeout = 10 * time.Minute
+
+	// aibox commits what the task left uncommitted under its own name, and
+	// the commits of the task too when the host gave no identity
+	aiboxName        = "aibox"
+	aiboxEmail       = "aibox@localhost"
+	leftoversMessage = "aibox: what the task left uncommitted"
 )
 
 var (
-	errNotACommit = errors.New("git did not print a commit")
-	commitPattern = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+	errNotACommit  = errors.New("git did not print a commit")
+	errLeftRunning = errors.New("what the step left running could not be ended")
+	errTrailing    = errors.New("data after the settings")
+	commitPattern  = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 )
 
 // taskRun is a task on its way. Its commands run as the user, set up by
 // command, and the init keeps their output in out, where the user cannot
 // change it.
 type taskRun struct {
-	sys      Processes
-	command  func(name string, args ...string) *exec.Cmd
-	input    string
-	out      string
-	progress io.Writer
+	sys        Processes
+	command    func(name string, args ...string) *exec.Cmd
+	input      string
+	out        string
+	progress   io.Writer
+	gitTimeout time.Duration
 	// files are the complete results in out, in the order they go out
 	files  []string
 	result task.Result
@@ -69,9 +84,10 @@ func newTask(sys Processes, options Options, request session.Request) *taskRun {
 		command: func(name string, args ...string) *exec.Cmd {
 			return userCommand(options, request, "dumb", name, args...)
 		},
-		input:    taskDir,
-		out:      outDir,
-		progress: io.Discard,
+		input:      taskDir,
+		out:        outDir,
+		progress:   io.Discard,
+		gitTimeout: gitTimeout,
 	}
 }
 
@@ -107,11 +123,20 @@ func (t *taskRun) steps() error {
 		return fmt.Errorf("make %s: %w", t.out, err)
 	}
 
+	if err := t.setIdentity(settings); err != nil {
+		return fmt.Errorf("set the git identity: %w", err)
+	}
+
 	t.say("aibox: cloning the input\n")
 
 	bundle := filepath.Join(t.input, task.InputBundle)
 	if err := t.git(nil, "-c", "advice.detachedHead=false", "clone", "--quiet", "--", bundle, "."); err != nil {
 		return fmt.Errorf("clone the input: %w", err)
+	}
+
+	// the bundle is no remote the task can use
+	if err := t.git(nil, "remote", "remove", "origin"); err != nil {
+		return fmt.Errorf("remove the remote of the input: %w", err)
 	}
 
 	branch := strings.TrimPrefix(task.Branch, "refs/heads/")
@@ -128,12 +153,9 @@ func (t *taskRun) steps() error {
 
 	t.say("aibox: running Claude Code\n")
 
-	code, err := t.claude(settings)
-	if err != nil {
+	if err := t.claude(settings); err != nil {
 		return fmt.Errorf("run Claude Code: %w", err)
 	}
-
-	t.result.ClaudeExitCode = &code
 
 	if err := t.commitLeftovers(); err != nil {
 		warning := fmt.Sprintf("commit what the task left uncommitted: %v", err)
@@ -165,6 +187,25 @@ func (t *taskRun) steps() error {
 	return t.bundle(base)
 }
 
+// setIdentity puts the git identity of the task into the git config of the
+// home.
+func (t *taskRun) setIdentity(settings task.Settings) error {
+	name, email := settings.GitName, settings.GitEmail
+	if name == "" {
+		name = aiboxName
+	}
+
+	if email == "" {
+		email = aiboxEmail
+	}
+
+	if err := t.git(nil, "config", "--global", "user.name", name); err != nil {
+		return err
+	}
+
+	return t.git(nil, "config", "--global", "user.email", email)
+}
+
 // readSettings reads task.json. A field the VM does not know is an error,
 // since the host would expect it to count.
 func readSettings(path string) (task.Settings, error) {
@@ -182,12 +223,17 @@ func readSettings(path string) (task.Settings, error) {
 		return task.Settings{}, fmt.Errorf("read %s: %w: %w", task.SettingsFile, task.ErrBadSettings, err)
 	}
 
+	if decoder.More() {
+		return task.Settings{}, fmt.Errorf("read %s: %w: %w", task.SettingsFile, task.ErrBadSettings, errTrailing)
+	}
+
 	return settings, settings.Check()
 }
 
-// claude runs Claude Code on the prompt and keeps what it prints. Its exit
-// code is part of the result, not a failure of the task.
-func (t *taskRun) claude(settings task.Settings) (int, error) {
+// claude runs Claude Code on the prompt and keeps what it prints, up to
+// the timeout of the settings. Its exit code is part of the result, not a
+// failure of the task.
+func (t *taskRun) claude(settings task.Settings) error {
 	args := []string{
 		"--print",
 		"--output-format", "stream-json",
@@ -210,39 +256,58 @@ func (t *taskRun) claude(settings task.Settings) (int, error) {
 
 	prompt, err := os.Open(filepath.Join(t.input, task.PromptFile))
 	if err != nil {
-		return 0, fmt.Errorf("open the prompt: %w", err)
+		return fmt.Errorf("open the prompt: %w", err)
 	}
 
 	defer func() { _ = prompt.Close() }()
 
 	transcript, err := t.create(task.TranscriptFile, maxTranscriptBytes)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	defer transcript.close()
 
 	log, err := t.create(task.LogFile, maxLogBytes)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	defer log.close()
 
-	code, err := t.execute(t.command(claude, args...), prompt, transcript, log)
-	if err != nil {
-		return 0, err
+	var last lastLine
+
+	run := &step{
+		cmd:     t.command(claude, args...),
+		cgroup:  sessionCgroup,
+		timeout: time.Duration(settings.TimeoutSeconds) * time.Second,
+		stdin:   prompt,
+		stdout:  io.MultiWriter(transcript, &last),
+		stderr:  log,
 	}
 
-	if err := t.keep(transcript); err != nil {
-		return 0, err
+	// what Claude Code printed goes out even when what it left running
+	// could not be ended
+	code, err := t.execute(run)
+	if err != nil && !errors.Is(err, errLeftRunning) {
+		return err
 	}
 
-	if err := t.keep(log); err != nil {
-		return 0, err
+	t.result.ClaudeExitCode = &code
+	t.result.ClaudeResult = last.json()
+	t.result.TimedOut = run.timedOut.Load()
+
+	if t.result.TimedOut {
+		t.say("aibox: Claude Code ran out of time\n")
 	}
 
-	return code, nil
+	for _, o := range []*output{transcript, log} {
+		if err := t.keep(o); err != nil {
+			return err
+		}
+	}
+
+	return err
 }
 
 // commitLeftovers commits what the task left in the working tree, so that
@@ -267,10 +332,10 @@ func (t *taskRun) commitLeftovers() error {
 	// the variables win over any identity the task set up
 	commit := t.command(gitPath, "-c", "commit.gpgSign=false", "commit", "--quiet", "--no-verify", "--message", leftoversMessage)
 	commit.Env = append(commit.Env,
-		"GIT_AUTHOR_NAME="+leftoversIdentity,
-		"GIT_AUTHOR_EMAIL="+leftoversEmail,
-		"GIT_COMMITTER_NAME="+leftoversIdentity,
-		"GIT_COMMITTER_EMAIL="+leftoversEmail,
+		"GIT_AUTHOR_NAME="+aiboxName,
+		"GIT_AUTHOR_EMAIL="+aiboxEmail,
+		"GIT_COMMITTER_NAME="+aiboxName,
+		"GIT_COMMITTER_EMAIL="+aiboxEmail,
 	)
 
 	if err := t.runGit(commit, nil); err != nil {
@@ -324,35 +389,72 @@ func (t *taskRun) git(stdout io.Writer, args ...string) error {
 	return t.runGit(t.command(gitPath, args...), stdout)
 }
 
-// runGit runs a git command. When it fails, the error says what git printed
-// to standard error.
+// runGit runs a git command in the cgroup of aibox. When it fails, the
+// error says what git printed to standard error.
 func (t *taskRun) runGit(cmd *exec.Cmd, stdout io.Writer) error {
 	var stderr bytes.Buffer
 
-	code, err := t.execute(cmd, nil, stdout, &limited{w: &stderr, left: maxGitBytes})
+	code, err := t.execute(&step{
+		cmd:     cmd,
+		cgroup:  stepCgroup,
+		timeout: t.gitTimeout,
+		stdout:  stdout,
+		stderr:  &limited{w: &stderr, left: maxGitBytes},
+	})
 	if err != nil {
 		return err
 	}
 
 	if code != 0 {
-		return fmt.Errorf("git exited with %d: %s", code, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("git exited with %d: %s", code, message(stderr.String()))
 	}
 
 	return nil
 }
 
-// execute runs the command until it exits, with stdin as its input and what
-// it prints going to stdout and stderr, any of them nil for none. What the
-// command left running is killed before its output counts as complete, so
-// that nothing the user runs outlives a step.
-func (t *taskRun) execute(cmd *exec.Cmd, stdin *os.File, stdout, stderr io.Writer) (int, error) {
-	if stdin != nil {
-		cmd.Stdin = stdin
+// message makes what a program of the task printed safe to show: control
+// characters become ?, and a long text is cut.
+func message(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) > maxMessageBytes {
+		text = text[:maxMessageBytes] + "..."
+	}
+
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || (r >= ' ' && r != 0x7f && (r < 0x80 || r > 0x9f) && r != '\uFFFD') {
+			return r
+		}
+
+		return '?'
+	}, strings.ToValidUTF8(text, "?"))
+}
+
+// step is a command of the task: the cgroup it runs in, how long it may
+// take, if there is a limit, and where its input comes from and its output
+// goes, nil for none.
+type step struct {
+	cmd            *exec.Cmd
+	cgroup         string
+	timeout        time.Duration
+	stdin          *os.File
+	stdout, stderr io.Writer
+	timedOut       atomic.Bool
+}
+
+// execute runs the step until it exits and returns its exit code. What the
+// step left running is killed before its output counts as complete, so
+// that nothing the user runs outlives a step. When that fails, the error
+// wraps errLeftRunning and the output so far is complete all the same.
+func (t *taskRun) execute(s *step) (int, error) {
+	cmd := s.cmd
+	if s.stdin != nil {
+		cmd.Stdin = s.stdin
 	}
 
 	var (
-		copies sync.WaitGroup
-		ends   []*os.File
+		copies  sync.WaitGroup
+		readers []*os.File
+		ends    []*os.File
 	)
 
 	closeEnds := func() {
@@ -364,7 +466,7 @@ func (t *taskRun) execute(cmd *exec.Cmd, stdin *os.File, stdout, stderr io.Write
 	for _, output := range []struct {
 		to  io.Writer
 		set *io.Writer
-	}{{stdout, &cmd.Stdout}, {stderr, &cmd.Stderr}} {
+	}{{s.stdout, &cmd.Stdout}, {s.stderr, &cmd.Stderr}} {
 		if output.to == nil {
 			continue
 		}
@@ -379,6 +481,7 @@ func (t *taskRun) execute(cmd *exec.Cmd, stdin *os.File, stdout, stderr io.Write
 
 		*output.set = w
 		ends = append(ends, w)
+		readers = append(readers, r)
 
 		copies.Go(func() {
 			_, _ = io.Copy(output.to, r)
@@ -386,7 +489,7 @@ func (t *taskRun) execute(cmd *exec.Cmd, stdin *os.File, stdout, stderr io.Write
 		})
 	}
 
-	pid, err := t.sys.Start(cmd, sessionCgroup)
+	pid, err := t.sys.Start(cmd, s.cgroup)
 
 	// the command has its own copies of these now
 	closeEnds()
@@ -397,18 +500,43 @@ func (t *taskRun) execute(cmd *exec.Cmd, stdin *os.File, stdout, stderr io.Write
 		return 0, fmt.Errorf("start %s: %w", cmd.Path, err)
 	}
 
+	if s.timeout > 0 {
+		// the user may have moved out of the cgroup of the step
+		timer := time.AfterFunc(s.timeout, func() {
+			s.timedOut.Store(true)
+			_ = t.endAll()
+		})
+		defer timer.Stop()
+	}
+
 	code, err := reap(t.sys, pid)
 	if err != nil {
 		return 0, fmt.Errorf("wait for %s: %w", cmd.Path, err)
 	}
 
-	if err := t.sys.Kill(userCgroup); err != nil {
-		return 0, fmt.Errorf("end what %s left running: %w", cmd.Path, err)
+	if err := t.endAll(); err != nil {
+		// a process that is left may hold the pipes open
+		for _, r := range readers {
+			_ = r.Close()
+		}
+
+		copies.Wait()
+
+		return code, fmt.Errorf("%w: %w", errLeftRunning, err)
 	}
 
 	copies.Wait()
 
+	if s.timedOut.Load() && s.cgroup == stepCgroup {
+		return code, fmt.Errorf("%s took longer than %v", cmd.Path, s.timeout)
+	}
+
 	return code, nil
+}
+
+// endAll kills every process of the user and of the steps of aibox.
+func (t *taskRun) endAll() error {
+	return errors.Join(t.sys.Kill(userCgroup), t.sys.Kill(stepCgroup))
 }
 
 // output is a result on its way into out.
@@ -534,6 +662,55 @@ func (l *limited) Write(b []byte) (int, error) {
 	return n, nil
 }
 
+// lastLine keeps the last line written to it, if it is not longer than
+// maxResultBytes.
+type lastLine struct {
+	line, last []byte
+	long       bool
+}
+
+func (l *lastLine) Write(b []byte) (int, error) {
+	n := len(b)
+
+	for len(b) > 0 {
+		part, rest, ended := bytes.Cut(b, []byte("\n"))
+
+		if len(l.line)+len(part) > maxResultBytes {
+			l.long = true
+		} else {
+			l.line = append(l.line, part...)
+		}
+
+		if !ended {
+			break
+		}
+
+		l.last = nil
+		if !l.long {
+			l.last = bytes.Clone(l.line)
+		}
+
+		l.line, l.long, b = l.line[:0], false, rest
+	}
+
+	return n, nil
+}
+
+// json returns the last line when it is JSON. A line without its newline
+// at the end counts.
+func (l *lastLine) json() json.RawMessage {
+	line := l.last
+	if len(l.line) > 0 && !l.long {
+		line = l.line
+	}
+
+	if len(line) == 0 || !json.Valid(line) {
+		return nil
+	}
+
+	return bytes.Clone(line)
+}
+
 // taskProcess is a task running in the init. Reads return the results as a
 // tar archive, and standard error says what the task is doing.
 type taskProcess struct {
@@ -579,7 +756,8 @@ func (p *taskProcess) Wait() (int, error) {
 	return p.code, nil
 }
 
-// Close ends the reads, which also stops a task whose results nobody takes.
+// Close ends the reads. The task goes on until the VM halts, but it can no
+// longer send anything.
 func (p *taskProcess) Close() error {
 	_ = p.progress.Close()
 

@@ -666,7 +666,21 @@ func TestRunPutsTheHomeAndTheProjectOfATaskOnTheStateDisk(t *testing.T) {
 		"mount /var/lib/aibox/state/project /project",
 		"own /var/lib/aibox/state/local",
 	}, "\n"))
+	assert.Contains(t, sys.calls, "mkdir /sys/fs/cgroup/aibox")
 	assert.Equal(t, mounted{"task", "/var/lib/aibox/task", "virtiofs", syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/task"])
+}
+
+func TestRunPowersOffWhenATaskHasAStateDiskThatIsNotBlank(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.task", formatted: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.ErrorIs(t, err, guest.ErrUsedDisk)
+	assert.NotContains(t, sys.calls, "mount /dev/vdb /var/lib/aibox/state")
+	assert.Equal(t, "halt", lastCall(t, sys))
 }
 
 func TestRunSendsTheResultsOfATaskToTheHost(t *testing.T) {

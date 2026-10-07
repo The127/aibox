@@ -13,10 +13,12 @@ Your work:
 
 - /project is a git clone of the project, on the branch aibox/task. It is
   not the person's folder. Only commits come back to the person, as a git
-  bundle of that branch. Commit your work there with clear messages.
-- When you stop, aibox commits whatever is left uncommitted as one commit
-  of its own, then sends the branch back. Everything else in the VM is
-  thrown away.
+  bundle of the branch you end on. Commit your work with clear messages,
+  and commit as you go, since the task may have a time limit.
+- git already has the name and email your commits are by.
+- When you stop, aibox commits what you left uncommitted as one commit of
+  its own, apart from files git ignores, then sends the branch back.
+  Everything else in the VM is thrown away.
 - Git has no remote here, and you cannot push.
 
 Files and tools:

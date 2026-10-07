@@ -185,6 +185,11 @@ const (
 // system, which the init will not format over.
 var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
 
+// ErrUsedDisk is returned for a task whose state disk is not blank. What an
+// earlier task left in the home or the project could run in the steps of
+// aibox.
+var ErrUsedDisk = errors.New("a task needs a blank state disk")
+
 // localBin is made on the state disk, cache is where caches go.
 const (
 	localBin = "/usr/local/bin"
@@ -210,6 +215,9 @@ const (
 	cgroupRoot    = "/sys/fs/cgroup"
 	userCgroup    = cgroupRoot + "/user"
 	sessionCgroup = userCgroup + "/session"
+	// stepCgroup is where the steps of a task that are aibox's own run. It
+	// belongs to root, so that the user cannot freeze or limit it.
+	stepCgroup = cgroupRoot + "/aibox"
 )
 
 // devices are opened to everyone for containers and VMs inside the VM. A
@@ -598,6 +606,12 @@ func setup(sys System) (*os.File, Options, error) {
 		return console, options, err
 	}
 
+	if options.Task {
+		if err := sys.Mkdir(stepCgroup); err != nil {
+			return console, options, fmt.Errorf("make the cgroup %s: %w", stepCgroup, err)
+		}
+	}
+
 	for _, device := range devices {
 		if err := sys.Chmod(device, 0o666); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return console, options, fmt.Errorf("open %s to everyone: %w", device, err)
@@ -723,6 +737,10 @@ func mountState(sys System, task bool) error {
 	blank, err := sys.Blank(stateDevice)
 	if err != nil {
 		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
+	}
+
+	if task && !blank {
+		return ErrUsedDisk
 	}
 
 	if blank {

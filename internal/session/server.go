@@ -1,5 +1,6 @@
-// Package session carries a terminal session between the host and the VM
-// over SSH. The guest serves the session, the host attaches to it.
+// Package session carries a session between the host and the VM over SSH,
+// on a terminal or without one. The guest serves the session, the host
+// attaches to it.
 package session
 
 import (
@@ -10,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,20 +34,32 @@ type Size struct {
 	Cols uint16
 }
 
-// Request is what a client asked for: the TERM and the size of its
-// terminal, and the variables it sent, as NAME=value.
+// Request is what a client asked for: whether it wants a terminal, the
+// TERM and the size of that terminal, and the variables it sent, as
+// NAME=value.
 type Request struct {
-	Term string
-	Size Size
-	Env  []string
+	Terminal bool
+	Term     string
+	Size     Size
+	Env      []string
 }
 
-// Process is a command running on a terminal. Reads return what it prints
-// and writes type into it. Close releases the terminal after Wait.
+// Process is a command running on a terminal or on pipes. Reads return what
+// it prints and writes type into it. Close releases the terminal or the
+// pipes after Wait.
 type Process interface {
 	io.ReadWriteCloser
 	Resize(size Size) error
 	Wait() (exitCode int, err error)
+}
+
+// Piped is a Process without a terminal. Stderr is what it prints to
+// standard error, which the session keeps apart from the rest. CloseInput
+// ends what it reads once the client has sent everything.
+type Piped interface {
+	Process
+	Stderr() io.Reader
+	CloseInput() error
 }
 
 // Starter runs the command of a session as the client asked for it.
@@ -205,6 +219,7 @@ func (s *served) handle(request *ssh.Request) error {
 
 		err := ssh.Unmarshal(request.Payload, &r)
 		if err == nil {
+			s.request.Terminal = true
 			s.request.Term = r.Term
 			s.request.Size = sizeOf(r.Rows, r.Cols)
 		}
@@ -269,16 +284,39 @@ func (s *served) startCommand() error {
 
 // relay joins the channel with the process and reports the exit of the
 // process once its output has been delivered. After the exit, the terminal
-// ends when its last user closes it. A child that keeps it open and silent
-// is not waited for, a slow client is.
+// or the pipes end when their last user closes them. A child that keeps
+// them open and silent is not waited for, a slow client is. A process on
+// pipes sends standard error apart and learns when the client has sent
+// everything.
 func relay(channel ssh.Channel, process Process, exited chan<- result) {
-	go func() { _, _ = io.Copy(process, channel) }()
+	piped, isPiped := process.(Piped)
 
-	output := &outputCopy{from: process, to: channel, done: make(chan struct{})}
-	go output.run()
+	go func() {
+		_, _ = io.Copy(process, channel)
+
+		if isPiped {
+			_ = piped.CloseInput()
+		}
+	}()
+
+	outputs := []*outputCopy{{from: process, to: channel, done: make(chan struct{})}}
+	if isPiped {
+		outputs = append(outputs, &outputCopy{from: piped.Stderr(), to: channel.Stderr(), done: make(chan struct{})})
+	}
+
+	for _, output := range outputs {
+		go output.run()
+	}
 
 	code, err := process.Wait()
-	output.await(drainDelay)
+
+	var drained sync.WaitGroup
+
+	for _, output := range outputs {
+		drained.Go(func() { output.await(drainDelay) })
+	}
+
+	drained.Wait()
 
 	exited <- result{code: code, err: err}
 }

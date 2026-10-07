@@ -274,9 +274,10 @@ func TestSessionStartsTheProcessAsTheClientAsked(t *testing.T) {
 
 	// assert
 	assert.Equal(t, session.Request{
-		Term: "xterm-kitty",
-		Size: session.Size{Rows: 50, Cols: 160},
-		Env:  []string{"GOFLAGS=-mod=mod", "TOKEN=s3cret=with=equals"},
+		Terminal: true,
+		Term:     "xterm-kitty",
+		Size:     session.Size{Rows: 50, Cols: 160},
+		Env:      []string{"GOFLAGS=-mod=mod", "TOKEN=s3cret=with=equals"},
 	}, f.process.request)
 }
 

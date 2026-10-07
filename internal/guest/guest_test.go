@@ -883,6 +883,41 @@ func TestRunGivesTheCommandTheTerminalOfTheHost(t *testing.T) {
 	assert.Contains(t, sys.screen.String(), "/dev/pts/")
 }
 
+func TestRunGivesAHostWithoutATerminalThePipesOfTheCommand(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{
+		t:           t,
+		noTerminal:  true,
+		input:       "the task\n",
+		realCommand: `read line; echo "got $line"; echo TERM=$TERM; echo warning >&2; tty || true; exit 4`,
+	}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 4, sys.exitCodeOnTheHost(t))
+	assert.Contains(t, sys.screen.String(), "got the task")
+	assert.Contains(t, sys.screen.String(), "TERM=dumb")
+	assert.Contains(t, sys.screen.String(), "not a tty")
+	assert.Equal(t, "warning\n", sys.errScreen.String())
+}
+
+func TestCommandWithoutATerminalLeavesTheStandardFilesToTheCaller(t *testing.T) {
+	// act
+	cmd := guest.Command(guest.Options{}, nil, session.Request{Env: []string{"GOFLAGS=-mod=mod"}})
+
+	// assert
+	assert.Nil(t, cmd.Stdin)
+	assert.Nil(t, cmd.Stdout)
+	assert.Nil(t, cmd.Stderr)
+	assert.False(t, cmd.SysProcAttr.Setctty)
+	assert.True(t, cmd.SysProcAttr.Setsid)
+	assert.Contains(t, cmd.Env, "TERM=dumb")
+	assert.Contains(t, cmd.Env, "GOFLAGS=-mod=mod")
+}
+
 func TestRunPowersOffWithoutATerminalPort(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, cmdline: "console=hvc0"}
@@ -992,16 +1027,21 @@ type fakeSystem struct {
 	cmdline string
 	calls   []string
 	// mounts is the last mount on each target, mountsOf all of them
-	mounts      map[string]mounted
-	mountsOf    map[string][]mounted
-	tty         *os.File
-	exitCode    int
-	orphans     int
-	waits       int
-	child       int
-	listener    net.Listener
-	mu          sync.Mutex
-	screen      syncBuffer
+	mounts   map[string]mounted
+	mountsOf map[string][]mounted
+	tty      *os.File
+	exitCode int
+	orphans  int
+	waits    int
+	child    int
+	listener net.Listener
+	mu       sync.Mutex
+	screen   syncBuffer
+	// noTerminal makes the host a client without a terminal, which sends
+	// input and collects standard error in errScreen
+	noTerminal  bool
+	input       string
+	errScreen   syncBuffer
 	attached    chan attachResult
 	realCommand string
 	real        *exec.Cmd
@@ -1229,26 +1269,32 @@ func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 
 	defer func() { _ = listener.Close() }()
 
+	guestSide, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(s.t, err)
+	s.t.Cleanup(func() { _ = guestSide.Close() })
+
+	// the connection is accepted before the listener closes, since closing
+	// a listener resets the connections it has not accepted yet
+	hostSide, err := listener.Accept()
+	require.NoError(s.t, err)
+
 	s.attached = make(chan attachResult, 1)
 
 	go func() {
-		hostSide, err := listener.Accept()
-		if err != nil {
-			s.attached <- attachResult{err: err}
+		defer func() { _ = hostSide.Close() }()
+
+		if s.noTerminal {
+			client := session.Exec{In: strings.NewReader(s.input), Out: &s.screen, Errors: &s.errScreen, Env: s.clientEnv}
+			code, err := client.Run(hostSide)
+			s.attached <- attachResult{code: code, err: err}
 
 			return
 		}
-
-		defer func() { _ = hostSide.Close() }()
 
 		client := session.Client{In: strings.NewReader(""), Out: &s.screen, Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}, Env: s.clientEnv}
 		code, err := client.Attach(hostSide)
 		s.attached <- attachResult{code: code, err: err}
 	}()
-
-	guestSide, err := net.Dial("tcp", listener.Addr().String())
-	require.NoError(s.t, err)
-	s.t.Cleanup(func() { _ = guestSide.Close() })
 
 	return guestSide, nil
 }
@@ -1306,7 +1352,7 @@ func (s *fakeSystem) Start(cmd *exec.Cmd, cgroup string) (int, error) {
 	s.real = exec.Command("/bin/sh", "-c", s.realCommand) //nolint:gosec // the command comes from the test
 	s.real.Env = cmd.Env
 	s.real.Stdin, s.real.Stdout, s.real.Stderr = cmd.Stdin, cmd.Stdout, cmd.Stderr
-	s.real.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	s.real.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: cmd.SysProcAttr.Setctty, Ctty: cmd.SysProcAttr.Ctty}
 
 	if err := s.real.Start(); err != nil {
 		return 0, err

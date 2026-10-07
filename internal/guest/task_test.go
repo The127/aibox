@@ -17,6 +17,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -164,6 +165,9 @@ type taskFixture struct {
 	base      string
 	processes *taskProcesses
 	progress  bytes.Buffer
+	// gitTimeout is how long the git steps before and after Claude Code
+	// may take
+	gitTimeout time.Duration
 }
 
 func newTaskFixture(t *testing.T, script string) *taskFixture {
@@ -171,14 +175,15 @@ func newTaskFixture(t *testing.T, script string) *taskFixture {
 
 	dir := t.TempDir()
 	f := &taskFixture{
-		t:         t,
-		source:    filepath.Join(dir, "source"),
-		input:     filepath.Join(dir, "input"),
-		project:   filepath.Join(dir, "project"),
-		out:       filepath.Join(dir, "out"),
-		home:      filepath.Join(dir, "home"),
-		claude:    filepath.Join(dir, "claude"),
-		processes: &taskProcesses{},
+		t:          t,
+		source:     filepath.Join(dir, "source"),
+		input:      filepath.Join(dir, "input"),
+		project:    filepath.Join(dir, "project"),
+		out:        filepath.Join(dir, "out"),
+		home:       filepath.Join(dir, "home"),
+		claude:     filepath.Join(dir, "claude"),
+		processes:  &taskProcesses{},
+		gitTimeout: time.Minute,
 	}
 
 	for _, d := range []string{f.source, f.input, f.project, f.home} {
@@ -238,7 +243,7 @@ func (f *taskFixture) command(name string, args ...string) *exec.Cmd {
 func (f *taskFixture) run() (int, results) {
 	var out bytes.Buffer
 
-	code := guest.RunTask(f.processes, f.command, f.input, f.out, &out, &f.progress)
+	code := guest.RunTask(f.processes, f.command, f.input, f.out, f.gitTimeout, &out, &f.progress)
 
 	return code, readResults(f.t, &out)
 }
@@ -494,7 +499,7 @@ func TestTaskStopsClaudeCodeAfterTheTimeoutAndSendsItsWork(t *testing.T) {
 git commit --quiet --allow-empty --message "before the timeout"
 sleep 100
 `)
-	f.writeInput(task.SettingsFile, `{"timeoutSeconds":1}`)
+	f.writeInput(task.SettingsFile, `{"timeoutSeconds":2}`)
 
 	// act
 	code, r := f.run()
@@ -535,8 +540,12 @@ func TestTaskLeavesTheTaskNoRemote(t *testing.T) {
 func TestTaskSendsTheLastLineOfClaudeCodeAsItsResult(t *testing.T) {
 	tests := map[string]string{
 		"echo '{\"type\":\"system\"}'\necho '{\"type\":\"result\",\"total_cost_usd\":0.5}'\n": `{"type":"result","total_cost_usd":0.5}`,
-		"printf '{\"type\":\"result\"}'\n":                     `{"type":"result"}`,
-		"echo '{\"type\":\"result\"}'\necho 'Not logged in'\n": "",
+		"printf '{\"type\":\"result\"}'\n":                                           `{"type":"result"}`,
+		"echo '{\"type\":\"result\"}'\necho 'Not logged in'\n":                       "",
+		"echo '{\"type\":\"result\"}'\necho\necho '  '\n":                            `{"type":"result"}`,
+		"echo '{\"type\":\"result\"}'\necho null\n":                                  "",
+		"echo '{\"type\":\"result\"}'\nhead -c 70000 /dev/zero | tr '\\0' a\n":       "",
+		"echo '{\"type\":\"result\"}'\nhead -c 70000 /dev/zero | tr '\\0' a\necho\n": "",
 		"": "",
 	}
 
@@ -555,11 +564,54 @@ func TestTaskSendsTheLastLineOfClaudeCodeAsItsResult(t *testing.T) {
 	}
 }
 
-func TestTaskShowsWhatGitPrintedWithoutControlCharacters(t *testing.T) {
+// evilFilter makes git add run a clean filter of the task on the file
+// left, with the script as its body.
+const evilFilter = `
+printf '#!/bin/sh\n%s\n' "$FILTER" > .git/filter
+chmod +x .git/filter
+git config filter.evil.clean "$PWD/.git/filter"
+git config filter.evil.required true
+echo 'left filter=evil' > .gitattributes
+echo left > left
+`
+
+func TestTaskShowsWhatGitPrintedOnOneLineWithoutControlCharacters(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `FILTER='printf "\033]52;c;ZXZpbA==\007done\naibox: fake\n" >&2; exit 1'`+evilFilter)
+
+	// act
+	code, r := f.run()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	require.Len(t, r.result.Warnings, 1)
+	assert.Contains(t, r.result.Warnings[0], "?]52;c;ZXZpbA==?done | aibox: fake | ")
+	assert.NotContains(t, f.progress.String(), "\x1b")
+	assert.NotContains(t, f.progress.String(), "\naibox: fake")
+}
+
+func TestTaskStopsTheGitStepsAfterTheirTime(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `FILTER='sleep 100'`+evilFilter)
+	f.gitTimeout = time.Second
+
+	// act
+	code, r := f.run()
+
+	// assert
+	assert.Equal(t, 1, code)
+	require.Len(t, r.result.Warnings, 1)
+	assert.Contains(t, r.result.Warnings[0], "the git steps took too long")
+	assert.Contains(t, r.result.Error, "the git steps took too long")
+	assert.Equal(t, []string{"transcript.jsonl", "claude.log", "result.json"}, r.names)
+}
+
+func TestTaskRunsNoHooksOfTheTask(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t, `
-printf '#!/bin/sh\nprintf "\\033]52;c;ZXZpbA==\\007done\\n" >&2\nexit 1\n' > .git/hooks/prepare-commit-msg
+printf '#!/bin/sh\nexit 1\n' > .git/hooks/prepare-commit-msg
 chmod +x .git/hooks/prepare-commit-msg
+git config core.fsmonitor "$PWD/.git/hooks/prepare-commit-msg"
 echo left > left
 `)
 
@@ -568,9 +620,8 @@ echo left > left
 
 	// assert
 	require.Equal(t, 0, code, r.result.Error)
-	require.Len(t, r.result.Warnings, 1)
-	assert.Contains(t, r.result.Warnings[0], "?]52;c;ZXZpbA==?done")
-	assert.NotContains(t, f.progress.String(), "\x1b")
+	assert.Empty(t, r.result.Warnings)
+	assert.True(t, r.result.Leftovers)
 }
 
 func TestTaskFailsWithBadSettings(t *testing.T) {
@@ -583,6 +634,7 @@ func TestTaskFailsWithBadSettings(t *testing.T) {
 		`{"timeoutSeconds":-1}`,
 		`{"gitName":"a\nb"}`,
 		`{"gitEmail":"a b@example.com"}`,
+		`{"gitName":"a <b@example.com>"}`,
 		`{} {}`,
 		`not json`,
 	} {

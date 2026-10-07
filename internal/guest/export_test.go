@@ -5,6 +5,7 @@ package guest
 import (
 	"io"
 	"os/exec"
+	"time"
 
 	"github.com/the127/aibox/internal/session"
 )
@@ -21,7 +22,8 @@ const (
 
 // RunTask runs a task with the programs command sets up, the task share in
 // input and the results kept in out, and writes the results to results.
-func RunTask(sys Processes, command func(string, ...string) *exec.Cmd, input, out string, results, progress io.Writer) int {
+// The git steps before and after Claude Code have gitTimeout each.
+func RunTask(sys Processes, command func(string, ...string) *exec.Cmd, input, out string, gitTimeout time.Duration, results, progress io.Writer) int {
 	t := &taskRun{sys: sys, command: command, input: input, out: out, progress: progress, gitTimeout: gitTimeout}
 
 	return t.run(results)

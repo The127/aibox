@@ -9,11 +9,13 @@
 // archive without ResultFile is a failure too.
 //
 // Everything that comes back was made by git and Claude Code running as the
-// user of the VM, who may be hostile. Result is what the VM claims. The host
-// checks the bundle against the commit it sent before it fetches anything,
-// and treats every text as untrusted. The VM stops Claude Code after
+// user of the VM, who may be hostile. Result is what the VM claims, and its
+// texts are free text. The host checks the bundle against the commit it
+// sent before it fetches anything, limits how much it reads, and cleans
+// every text before it shows it. The VM stops Claude Code after
 // Settings.TimeoutSeconds and still sends what it did, but the host needs
-// a limit of its own for a VM that hangs.
+// a limit of its own for a VM that hangs. The host checks the settings
+// with Check before it boots the VM.
 package task
 
 import (
@@ -68,7 +70,8 @@ type Settings struct {
 }
 
 // Check returns ErrBadSettings for a negative limit, a model Claude Code
-// could take for an option, or a git identity with control characters.
+// could take for an option, or a git identity with control characters or
+// angle brackets, which git uses around the email.
 func (s Settings) Check() error {
 	switch {
 	case s.MaxTurns < 0:
@@ -79,9 +82,9 @@ func (s Settings) Check() error {
 		return fmt.Errorf("%w: timeoutSeconds is %d", ErrBadSettings, s.TimeoutSeconds)
 	case strings.HasPrefix(s.Model, "-") || strings.ContainsFunc(s.Model, isSpaceOrControl):
 		return fmt.Errorf("%w: model is %q", ErrBadSettings, s.Model)
-	case strings.ContainsFunc(s.GitName, isControl):
+	case strings.ContainsFunc(s.GitName, isControl) || strings.ContainsAny(s.GitName, "<>"):
 		return fmt.Errorf("%w: gitName is %q", ErrBadSettings, s.GitName)
-	case strings.ContainsFunc(s.GitEmail, isSpaceOrControl):
+	case strings.ContainsFunc(s.GitEmail, isSpaceOrControl) || strings.ContainsAny(s.GitEmail, "<>"):
 		return fmt.Errorf("%w: gitEmail is %q", ErrBadSettings, s.GitEmail)
 	}
 
@@ -104,9 +107,10 @@ type Result struct {
 	Head string `json:"head,omitempty"`
 	// ClaudeExitCode is missing when Claude Code did not run.
 	ClaudeExitCode *int `json:"claudeExitCode,omitempty"`
-	// ClaudeResult is the last line Claude Code printed when it is JSON,
-	// the result event with the cost and why it stopped. It is here even
-	// when TranscriptFile was cut off.
+	// ClaudeResult is the last line Claude Code printed when it is a JSON
+	// object, normally the result event with the cost and why it stopped.
+	// It is here even when TranscriptFile was cut off. The task can print
+	// a line of its own after it, so it is only good to show.
 	ClaudeResult json.RawMessage `json:"claudeResult,omitempty"`
 	// TimedOut is true when Claude Code was stopped after
 	// Settings.TimeoutSeconds.

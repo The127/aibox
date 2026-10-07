@@ -329,28 +329,37 @@ func parsePort(key, value string) (uint32, error) {
 
 // Command is Claude Code, or a shell when the options ask for one, set up to
 // run as the user on the terminal with the TERM and the variables of the
-// request. The folders of a PATH in the request go in front of the PATH of
-// the image. The other variables aibox sets itself keep their values.
+// request. Without a terminal the caller gives it its standard files, and
+// TERM is dumb. The folders of a PATH in the request go in front of the PATH
+// of the image. The other variables aibox sets itself keep their values.
 func Command(options Options, terminal *os.File, request session.Request) *exec.Cmd {
 	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
 	if options.Shell {
 		cmd = exec.Command(bash, "-l")
 	}
 
+	term := request.Term
+	if terminal == nil {
+		term = "dumb"
+	}
+
 	hostPath, requested := takeVariable(request.Env, "PATH")
-	own := ownVariables(options, request.Term, hostPath)
+	own := ownVariables(options, term, hostPath)
 	accepted, _ := splitVariables(own, requested)
 
 	cmd.Dir = project
 	cmd.Env = slices.Concat(own, accepted)
-	cmd.Stdin = terminal
-	cmd.Stdout = terminal
-	cmd.Stderr = terminal
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
 		Setsid:     true,
-		Setctty:    true,
-		Ctty:       0,
+	}
+
+	if terminal != nil {
+		cmd.Stdin = terminal
+		cmd.Stdout = terminal
+		cmd.Stderr = terminal
+		cmd.SysProcAttr.Setctty = true
+		cmd.SysProcAttr.Ctty = 0
 	}
 
 	return cmd
@@ -872,8 +881,17 @@ func serve(sys System, options Options, console io.Writer) error {
 	})
 }
 
-// start runs the command on a new terminal of the size the host asked for.
-func start(sys System, options Options, request session.Request, console io.Writer) (*process, error) {
+// start runs the command on a new terminal of the size the host asked for,
+// or on pipes when the host asked for no terminal.
+func start(sys System, options Options, request session.Request, console io.Writer) (session.Process, error) {
+	if rejected := refused(options, request); len(rejected) > 0 {
+		say(console, "aibox: %s stay as the VM sets them\n", strings.Join(rejected, ", "))
+	}
+
+	if !request.Terminal {
+		return startPiped(sys, options, request)
+	}
+
 	pty, err := session.OpenPTY(request.Size)
 	if err != nil {
 		return nil, fmt.Errorf("open a terminal: %w", err)
@@ -882,10 +900,6 @@ func start(sys System, options Options, request session.Request, console io.Writ
 	// programs that open their terminal by name need to own it
 	if err := pty.Slave.Chown(int(vm.GuestUID), int(vm.GuestGID)); err != nil {
 		say(console, "aibox: own the terminal: %v\n", err)
-	}
-
-	if rejected := refused(options, request); len(rejected) > 0 {
-		say(console, "aibox: %s stay as the VM sets them\n", strings.Join(rejected, ", "))
 	}
 
 	cmd := Command(options, pty.Slave, request)
@@ -917,19 +931,95 @@ func (p *process) Resize(size session.Size) error { return p.pty.Resize(size) }
 
 func (p *process) Close() error { return p.pty.Master.Close() }
 
-// Wait reaps every child until the command exits. As PID 1 the init also
+func (p *process) Wait() (int, error) { return reap(p.sys, p.pid) }
+
+// reap reaps every child until the command exits. As PID 1 the init also
 // inherits the children whose parents are gone.
-func (p *process) Wait() (int, error) {
+func reap(sys System, pid int) (int, error) {
 	for {
-		exited, exitCode, err := p.sys.Wait()
+		exited, exitCode, err := sys.Wait()
 		if err != nil {
 			return 0, err
 		}
 
-		if exited == p.pid {
+		if exited == pid {
 			return exitCode, nil
 		}
 	}
+}
+
+// startPiped runs the command on three pipes, for a host that asked for no
+// terminal.
+func startPiped(sys System, options Options, request session.Request) (session.Process, error) {
+	var ends [3]struct{ read, write *os.File }
+
+	closeAll := func() {
+		for _, end := range ends {
+			for _, f := range []*os.File{end.read, end.write} {
+				if f != nil {
+					_ = f.Close()
+				}
+			}
+		}
+	}
+
+	for i := range ends {
+		r, w, err := os.Pipe()
+		if err != nil {
+			closeAll()
+
+			return nil, fmt.Errorf("make a pipe: %w", err)
+		}
+
+		ends[i].read, ends[i].write = r, w
+	}
+
+	stdin, stdout, stderr := ends[0], ends[1], ends[2]
+
+	cmd := Command(options, nil, request)
+	cmd.Stdin = stdin.read
+	cmd.Stdout = stdout.write
+	cmd.Stderr = stderr.write
+
+	pid, err := sys.Start(cmd, sessionCgroup)
+	if err != nil {
+		closeAll()
+
+		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
+	}
+
+	// the command has its own copies of these now
+	for _, f := range []*os.File{stdin.read, stdout.write, stderr.write} {
+		_ = f.Close()
+	}
+
+	return &piped{stdin: stdin.write, stdout: stdout.read, stderr: stderr.read, pid: pid, sys: sys}, nil
+}
+
+// piped is the command on pipes.
+type piped struct {
+	stdin, stdout, stderr *os.File
+	pid                   int
+	sys                   System
+}
+
+func (p *piped) Read(b []byte) (int, error)  { return p.stdout.Read(b) }
+func (p *piped) Write(b []byte) (int, error) { return p.stdin.Write(b) }
+
+func (p *piped) Stderr() io.Reader { return p.stderr }
+
+func (p *piped) CloseInput() error { return p.stdin.Close() }
+
+// Resize does nothing, since there is no terminal to resize.
+func (p *piped) Resize(session.Size) error { return nil }
+
+func (p *piped) Wait() (int, error) { return reap(p.sys, p.pid) }
+
+func (p *piped) Close() error {
+	_ = p.stdin.Close()
+	_ = p.stdout.Close()
+
+	return p.stderr.Close()
 }
 
 func say(console io.Writer, format string, args ...any) {

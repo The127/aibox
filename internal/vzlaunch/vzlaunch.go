@@ -40,6 +40,9 @@ const (
 	defaultPowerOffWait = 10 * time.Second
 	// stopTimeout is how long a VM may take to stop once told to.
 	stopTimeout = 10 * time.Second
+	// consoleDrainTimeout is how long the console log waits for the end
+	// of the console once the VM is gone.
+	consoleDrainTimeout = time.Second
 )
 
 var (
@@ -114,10 +117,26 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return err
 	}
 
-	defer func() { _ = consoleOut.Close() }()
-	defer func() { _ = consoleIn.Close() }()
+	copied := make(chan struct{})
 
-	go func() { _, _ = io.Copy(host.ConsoleLog(console.File), consoleOut) }()
+	go func() {
+		defer close(copied)
+
+		_, _ = io.Copy(host.ConsoleLog(console.File), consoleOut)
+	}()
+
+	// the last lines of the console tell most when the VM failed, so the
+	// copy goes on until the VM let go of the pipe too, or for a moment
+	defer func() {
+		_ = consoleIn.Close()
+
+		select {
+		case <-copied:
+		case <-time.After(consoleDrainTimeout):
+		}
+
+		_ = consoleOut.Close()
+	}()
 
 	config, err := configure(m, devNull, consoleIn)
 	if err != nil {

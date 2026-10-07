@@ -193,6 +193,23 @@ func CleanText(text string) string {
 	}, strings.ToValidUTF8(text, "?"))
 }
 
+// CleanLine is CleanText on one line: the lines of the text are joined
+// with " | ", so that text from the VM cannot pass for a line of aibox.
+func CleanLine(text string) string {
+	return strings.Join(strings.Split(CleanText(strings.TrimSpace(text)), "\n"), " | ")
+}
+
+// Indent is CleanText with every line indented, for text from the VM that
+// has lines of its own.
+func Indent(text, prefix string) string {
+	lines := strings.Split(CleanText(strings.TrimSpace(text)), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // maxLineBytes is how long a line of a LineCleaner may get. The rest of a
 // longer line is dropped.
 const maxLineBytes = 4096

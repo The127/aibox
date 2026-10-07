@@ -175,6 +175,9 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	}()
 
 	runErr := deps.backend.Run(ctx, spec)
+
+	// this comes before the pipe closes, since the close makes Receive end
+	// with an error that is no refusal
 	ran.Store(true)
 
 	_ = resultsWriter.Close()
@@ -214,7 +217,7 @@ func outcome(ctx context.Context, runErr, receiveErr error, limit time.Duration)
 		return receiveErr
 	}
 
-	return errors.New(task.CleanText(runErr.Error()))
+	return errors.New(task.CleanLine(runErr.Error()))
 }
 
 // warnings tells the person what the task will not have: the changes not
@@ -332,7 +335,7 @@ func (t *taskRun) report(stdout, stderr io.Writer) error {
 	say("%s", summary(result))
 
 	for _, warning := range result.Warnings {
-		say("aibox: warning: %s\n", task.CleanText(warning))
+		say("aibox: warning: %s\n", task.CleanLine(warning))
 	}
 
 	head, err := t.changes()
@@ -354,7 +357,7 @@ func (t *taskRun) report(stdout, stderr io.Writer) error {
 
 	switch {
 	case result.Error != "":
-		return fmt.Errorf("the task failed: %s", task.CleanText(result.Error))
+		return fmt.Errorf("the task failed: %s", task.CleanLine(result.Error))
 	case err != nil:
 		return err
 	case result.TimedOut || result.ClaudeExitCode == nil || *result.ClaudeExitCode != 0:
@@ -414,13 +417,14 @@ func summary(result task.Result) string {
 		fmt.Fprintf(&b, "aibox: %d turns in %s for %.2f USD", last.Turns, time.Duration(last.Duration)*time.Millisecond, last.Cost)
 
 		if last.Reason != "" {
-			fmt.Fprintf(&b, ", ended by %s", task.CleanText(last.Reason))
+			fmt.Fprintf(&b, ", ended by %s", task.CleanLine(last.Reason))
 		}
 
 		b.WriteString("\n")
 
-		if text := strings.TrimSpace(task.CleanText(last.Result)); text != "" {
-			fmt.Fprintf(&b, "%s\n", cut(text, 2000))
+		// the last message of Claude Code, which the task wrote
+		if text := strings.TrimSpace(last.Result); text != "" {
+			fmt.Fprintf(&b, "%s\n", task.Indent(cut(text, 2000), "  | "))
 		}
 	}
 

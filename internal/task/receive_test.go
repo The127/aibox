@@ -246,3 +246,11 @@ func TestCheckOfTheSettings(t *testing.T) {
 		assert.ErrorIs(t, s.Check(), task.ErrBadSettings, "%+v", s)
 	}
 }
+
+func TestCleanLineJoinsTheLines(t *testing.T) {
+	assert.Equal(t, "one | aibox: two?", task.CleanLine(" one\naibox: two\x1b \n"))
+}
+
+func TestIndentIndentsEveryLine(t *testing.T) {
+	assert.Equal(t, "  | one\n  | aibox: two?", task.Indent("one\naibox: two\x1b\n", "  | "))
+}

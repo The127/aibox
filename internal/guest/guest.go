@@ -92,9 +92,12 @@ const imagePath = "/usr/local/bin:/usr/bin:/bin"
 // Options come from the kernel command line. Mounts are the shares of the
 // host that are mounted read-only where the host says. Loopback are the
 // ports on the loopback of the host the VM may reach through the proxy.
+// Task runs a task from the task share unattended, in place of Claude Code
+// on a terminal.
 type Options struct {
 	Console      string
 	Shell        bool
+	Task         bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
@@ -114,9 +117,21 @@ type Network interface {
 	DialHost(port uint32) (net.Conn, error)
 }
 
+// Processes is what running commands as the user needs from the kernel.
+type Processes interface {
+	// Start starts the command in the cgroup, a folder of the cgroup2 file
+	// system.
+	Start(cmd *exec.Cmd, cgroup string) (pid int, err error)
+	Wait() (pid, exitCode int, err error)
+	// Kill ends every process in the cgroup and the cgroups below it, and
+	// returns once they are gone.
+	Kill(cgroup string) error
+}
+
 // System is what Run needs from the kernel.
 type System interface {
 	Network
+	Processes
 	Mount(source, target, fstype string, flags uintptr, data string) error
 	// Mkdir makes the folder and its parents, if missing.
 	Mkdir(path string) error
@@ -137,15 +152,11 @@ type System interface {
 	ReadCmdline() (string, error)
 	OpenConsole(path string) (*os.File, error)
 	Sethostname(name string) error
-	// Start starts the command in the cgroup, a folder of the cgroup2 file
-	// system.
-	Start(cmd *exec.Cmd, cgroup string) (pid int, err error)
 	// Controllers turns the cgroup controllers on for the cgroups below.
 	Controllers(cgroup string) error
 	// Delegate makes the cgroup, if missing, and gives it to the user, so
 	// that the user can make cgroups below it.
 	Delegate(cgroup string) error
-	Wait() (pid, exitCode int, err error)
 	Halt() error
 	// Stderr is the standard error the init started with, the console of
 	// the kernel.
@@ -167,6 +178,7 @@ const (
 	// programs in a mounted folder must run, so it stays executable
 	readOnlyShare = syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NODEV
 	stateFlags    = syscall.MS_NOSUID | syscall.MS_NODEV
+	taskFlags     = syscall.MS_RDONLY | noDevices
 )
 
 // ErrDamaged is returned for a state disk that has data but no ext4 file
@@ -179,8 +191,10 @@ const (
 	cache    = home + "/.cache"
 )
 
+type stateDir struct{ dir, target string }
+
 // stateDirs are the folders of the state disk and where they are bound.
-var stateDirs = []struct{ dir, target string }{
+var stateDirs = []stateDir{
 	{"local", "/usr/local"},
 	{"cache", cache},
 	// overlayfs does not work on top of virtio-fs, so container images need
@@ -219,8 +233,18 @@ var (
 		{source: "tmpfs", target: "/tmp", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
 		{source: "tmpfs", target: "/var/tmp", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=1777"},
 		{source: "tmpfs", target: "/run", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=755"},
+	}
+
+	// a task has neither, its project and home are on the state disk
+	shares = []mount{
 		{source: projectShare, target: project, fstype: "virtiofs"},
 		{source: homeShare, target: home, fstype: "virtiofs"},
+	}
+
+	// taskDirs come before stateDirs, which bind folders into the home
+	taskDirs = []stateDir{
+		{"home", home},
+		{"project", project},
 	}
 
 	// devtmpfs does not create these
@@ -270,6 +294,8 @@ func ParseCmdline(cmdline string) (Options, error) {
 			}
 		case "aibox.shell":
 			options.Shell = true
+		case "aibox.task":
+			options.Task = true
 		case "aibox.proxy":
 			options.ProxyPort = port(key, value)
 		case "aibox.terminal":
@@ -333,9 +359,9 @@ func parsePort(key, value string) (uint32, error) {
 // TERM is dumb. The folders of a PATH in the request go in front of the PATH
 // of the image. The other variables aibox sets itself keep their values.
 func Command(options Options, terminal *os.File, request session.Request) *exec.Cmd {
-	cmd := exec.Command(claude, "--append-system-prompt-file", prompt)
+	name, args := claude, []string{"--append-system-prompt-file", prompt}
 	if options.Shell {
-		cmd = exec.Command(bash, "-l")
+		name, args = bash, []string{"-l"}
 	}
 
 	term := request.Term
@@ -343,16 +369,7 @@ func Command(options Options, terminal *os.File, request session.Request) *exec.
 		term = "dumb"
 	}
 
-	hostPath, requested := takeVariable(request.Env, "PATH")
-	own := ownVariables(options, term, hostPath)
-	accepted, _ := splitVariables(own, requested)
-
-	cmd.Dir = project
-	cmd.Env = slices.Concat(own, accepted)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
-		Setsid:     true,
-	}
+	cmd := userCommand(options, request, term, name, args...)
 
 	if terminal != nil {
 		cmd.Stdin = terminal
@@ -360,6 +377,24 @@ func Command(options Options, terminal *os.File, request session.Request) *exec.
 		cmd.Stderr = terminal
 		cmd.SysProcAttr.Setctty = true
 		cmd.SysProcAttr.Ctty = 0
+	}
+
+	return cmd
+}
+
+// userCommand is a program set up to run as the user in the project, with
+// the variables of aibox and of the request.
+func userCommand(options Options, request session.Request, term, name string, args ...string) *exec.Cmd {
+	hostPath, requested := takeVariable(request.Env, "PATH")
+	own := ownVariables(options, term, hostPath)
+	accepted, _ := splitVariables(own, requested)
+
+	cmd := exec.Command(name, args...) //nolint:gosec // the programs are aibox's own
+	cmd.Dir = project
+	cmd.Env = slices.Concat(own, accepted)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: vm.GuestUID, Gid: vm.GuestGID},
+		Setsid:     true,
 	}
 
 	return cmd
@@ -548,7 +583,12 @@ func setup(sys System) (*os.File, Options, error) {
 		say(console, "aibox: %v\n", badWord)
 	}
 
-	for _, m := range mounts {
+	setupMounts := mounts
+	if !options.Task {
+		setupMounts = slices.Concat(mounts, shares)
+	}
+
+	for _, m := range setupMounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
 		}
@@ -564,13 +604,19 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
-	if err := mountState(sys); err != nil {
+	if err := mountState(sys, options.Task); err != nil {
 		return console, options, err
 	}
 
 	for _, m := range options.Mounts {
 		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
+		}
+	}
+
+	if options.Task {
+		if err := sys.Mount(taskShare, taskDir, "virtiofs", taskFlags, ""); err != nil {
+			return console, options, fmt.Errorf("mount %s on %s: %w", taskShare, taskDir, err)
 		}
 	}
 
@@ -671,8 +717,9 @@ func lockRoot(sys System) error {
 }
 
 // mountState mounts the state disk of the project, formatting it on the
-// first boot, and binds its folders where tools and caches land.
-func mountState(sys System) error {
+// first boot, and binds its folders where tools and caches land. For a task
+// the home and the project are on it too.
+func mountState(sys System, task bool) error {
 	blank, err := sys.Blank(stateDevice)
 	if err != nil {
 		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
@@ -688,7 +735,12 @@ func mountState(sys System) error {
 		return fmt.Errorf("mount the state disk: %w", err)
 	}
 
-	for _, d := range stateDirs {
+	dirs := stateDirs
+	if task {
+		dirs = slices.Concat(taskDirs, stateDirs)
+	}
+
+	for _, d := range dirs {
 		source := stateMount + "/" + d.dir
 
 		if err := sys.Own(source); err != nil {
@@ -882,10 +934,15 @@ func serve(sys System, options Options, console io.Writer) error {
 }
 
 // start runs the command on a new terminal of the size the host asked for,
-// or on pipes when the host asked for no terminal.
+// or on pipes when the host asked for no terminal. A task runs without a
+// terminal whatever the host asked for.
 func start(sys System, options Options, request session.Request, console io.Writer) (session.Process, error) {
 	if rejected := refused(options, request); len(rejected) > 0 {
 		say(console, "aibox: %s stay as the VM sets them\n", strings.Join(rejected, ", "))
+	}
+
+	if options.Task {
+		return startTask(newTask(sys, options, request)), nil
 	}
 
 	if !request.Terminal {
@@ -935,7 +992,7 @@ func (p *process) Wait() (int, error) { return reap(p.sys, p.pid) }
 
 // reap reaps every child until the command exits. As PID 1 the init also
 // inherits the children whose parents are gone.
-func reap(sys System, pid int) (int, error) {
+func reap(sys Processes, pid int) (int, error) {
 	for {
 		exited, exitCode, err := sys.Wait()
 		if err != nil {

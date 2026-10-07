@@ -39,6 +39,7 @@ func TestParseCmdline(t *testing.T) {
 	tests := map[string]guest.Options{
 		"root=/dev/vda rw console=ttyS0 quiet":   {Console: "/dev/ttyS0"},
 		"console=hvc0 aibox.shell":               {Console: "/dev/hvc0", Shell: true},
+		"console=hvc0 aibox.task":                {Console: "/dev/hvc0", Task: true},
 		"root=/dev/vda":                          {Console: "/dev/console"},
 		"console=ttyS0 aibox.shell=1 panic=-1":   {Console: "/dev/ttyS0", Shell: true},
 		"console=tty0 console=ttyS0,115200n8":    {Console: "/dev/ttyS0"},
@@ -642,6 +643,47 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, mounted{"overlay", "/", "", syscall.MS_REMOUNT | syscall.MS_BIND | syscall.MS_RDONLY, ""}, sys.mounts["/"])
 	assert.Equal(t, mounted{"shared", "/", "", syscall.MS_REC | syscall.MS_SHARED, ""}, sys.mountsOf["/"][0])
 	assert.Equal(t, "/sys/fs/cgroup/user/session", sys.startedIn)
+}
+
+func TestRunPutsTheHomeAndTheProjectOfATaskOnTheStateDisk(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.task", noTerminal: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+
+	calls := strings.Join(sys.calls, "\n")
+	assert.NotContains(t, calls, "mount project /project")
+	assert.NotContains(t, calls, "mount home /home/user")
+	assert.Contains(t, calls, strings.Join([]string{
+		"mount /dev/vdb /var/lib/aibox/state",
+		"own /var/lib/aibox/state/home",
+		"mount /var/lib/aibox/state/home /home/user",
+		"own /var/lib/aibox/state/project",
+		"mount /var/lib/aibox/state/project /project",
+		"own /var/lib/aibox/state/local",
+	}, "\n"))
+	assert.Equal(t, mounted{"task", "/var/lib/aibox/task", "virtiofs", syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/task"])
+}
+
+func TestRunSendsTheResultsOfATaskToTheHost(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.task", noTerminal: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, sys.exitCodeOnTheHost(t), "the VM has no task share in the test")
+
+	results := readResults(t, strings.NewReader(sys.screen.String()))
+	assert.Equal(t, []string{"result.json"}, results.names)
+	assert.Contains(t, results.result.Error, "read the settings of the task")
+	assert.Contains(t, sys.errScreen.String(), "aibox: read the settings of the task")
 }
 
 func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {
@@ -1361,6 +1403,12 @@ func (s *fakeSystem) Start(cmd *exec.Cmd, cgroup string) (int, error) {
 	s.child = s.real.Process.Pid
 
 	return s.child, nil
+}
+
+func (s *fakeSystem) Kill(cgroup string) error {
+	s.record("kill " + cgroup)
+
+	return nil
 }
 
 func (s *fakeSystem) Wait() (int, int, error) {

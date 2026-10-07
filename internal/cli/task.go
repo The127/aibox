@@ -15,7 +15,9 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/urfave/cli/v3"
 
@@ -28,7 +30,10 @@ import (
 const maxTimeout = 30 * 24 * time.Hour
 
 var (
-	errNoPrompt     = errors.New("task needs a prompt, as its arguments")
+	errNoPrompt     = errors.New("task needs a prompt, as arguments, with --file, or on stdin")
+	errLongPrompt   = errors.New("the prompt is longer than 1 MiB, its arguments and its file together")
+	errNoText       = errors.New("the prompt is not UTF-8 text")
+	errNoPromptFile = errors.New("the file of the prompt must be a plain file, use --file - for a pipe")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
 	errNoCommit     = errors.New("task must start in a git repository with a commit")
 	errNoTimeout    = errors.New("--timeout must be at least a second and at most 30 days")
@@ -39,6 +44,10 @@ var (
 // Code, which have 10 minutes each in the VM.
 const taskSlack = 25 * time.Minute
 
+// maxPromptBytes is how long the prompt of a task may be, its arguments and
+// its file together.
+const maxPromptBytes = 1 << 20
+
 // credentials are the variables Claude Code logs in with. A task starts
 // with an empty home, so one of them must reach the VM.
 var credentials = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
@@ -47,8 +56,9 @@ func taskCommand(deps dependencies) *cli.Command {
 	return &cli.Command{
 		Name:      "task",
 		Usage:     "run Claude Code unattended on the last commit, in a VM of its own, and keep its commits as a git bundle",
-		ArgsUsage: "PROMPT",
+		ArgsUsage: "[PROMPT]",
 		Flags: append(vmFlags(),
+			&cli.StringFlag{Name: "file", Aliases: []string{"f"}, Usage: "read the prompt from this file, after the arguments, - for stdin. Without arguments, aibox reads stdin unless it is a terminal"},
 			&cli.StringFlag{Name: "model", Usage: "the model Claude Code uses", DefaultText: "the default of Claude Code"},
 			&cli.IntFlag{Name: "max-turns", Usage: "the most turns Claude Code takes", DefaultText: "no limit"},
 			&cli.FloatFlag{Name: "max-budget-usd", Usage: "the most Claude Code may spend by its own estimate, in US dollars at API prices", DefaultText: "no limit"},
@@ -75,8 +85,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return errRoot
 	}
 
-	prompt := strings.TrimSpace(strings.Join(cmd.Args().Slice(), " "))
-	if prompt == "" {
+	if promptFile(deps, cmd) == "" && strings.TrimSpace(strings.Join(cmd.Args().Slice(), " ")) == "" {
 		return errNoPrompt
 	}
 
@@ -102,6 +111,11 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	base, err := gitOutput(cwd, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
 	if err != nil {
 		return fmt.Errorf("%w: %w", errNoCommit, err)
+	}
+
+	prompt, err := readPrompt(ctx, deps, cmd, cwd)
+	if err != nil {
+		return err
 	}
 
 	settings := task.Settings{
@@ -218,6 +232,127 @@ func outcome(ctx context.Context, runErr, receiveErr error, limit time.Duration)
 	}
 
 	return errors.New(task.CleanLine(runErr.Error()))
+}
+
+// promptFile is the file of --file, or - for stdin when there are no
+// arguments and stdin is no terminal, or nothing.
+func promptFile(deps dependencies, cmd *cli.Command) string {
+	if file := cmd.String("file"); file != "" || strings.TrimSpace(strings.Join(cmd.Args().Slice(), "")) != "" || deps.stdinIsTerminal() {
+		return file
+	}
+
+	return "-"
+}
+
+// readPrompt returns the prompt of the task: its arguments, then the text
+// of its file.
+func readPrompt(ctx context.Context, deps dependencies, cmd *cli.Command, cwd string) (string, error) {
+	parts := []string{strings.Join(cmd.Args().Slice(), " ")}
+
+	if file := promptFile(deps, cmd); file != "" {
+		if file == "-" && cmd.String("file") == "" {
+			_, _ = fmt.Fprintln(deps.stderr, "aibox: reading the prompt from stdin")
+		}
+
+		text, err := readPromptFile(ctx, deps.stdin, cwd, file)
+		if err != nil {
+			return "", err
+		}
+
+		parts = append(parts, text)
+	}
+
+	for i, part := range parts {
+		parts[i] = strings.TrimSpace(part)
+	}
+
+	prompt := strings.TrimSpace(strings.Join(parts, "\n\n"))
+
+	switch {
+	case prompt == "":
+		return "", errNoPrompt
+	case len(prompt) > maxPromptBytes:
+		return "", errLongPrompt
+	case !utf8.ValidString(prompt):
+		return "", errNoText
+	}
+
+	return prompt, nil
+}
+
+// openPromptFile opens the file of --file. A file in a repository someone
+// else wrote may be a link to a secret of the person, or a FIFO that never
+// ends. So a relative path must stay inside cwd, links included, an
+// absolute path must not end in a link, and opening a FIFO must not wait.
+// readPromptFile then refuses anything but a plain file.
+func openPromptFile(cwd, name string) (*os.File, error) {
+	const flags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+
+	if filepath.IsAbs(name) {
+		return os.OpenFile(name, flags, 0) //nolint:gosec // the person names the file
+	}
+
+	root, err := os.OpenRoot(cwd)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	return root.OpenFile(name, flags, 0)
+}
+
+// readPromptFile reads the file of --file, relative to cwd, or stdin for
+// -. It refuses a link and anything but a plain file, and a file longer
+// than a prompt may be. Ctrl-C stops it while it waits for stdin.
+func readPromptFile(ctx context.Context, stdin io.Reader, cwd, name string) (string, error) {
+	r := stdin
+
+	if name != "-" {
+		file, err := openPromptFile(cwd, name)
+		if err != nil {
+			return "", fmt.Errorf("read the prompt: %w", err)
+		}
+
+		defer func() { _ = file.Close() }()
+
+		info, err := file.Stat()
+		if err != nil {
+			return "", fmt.Errorf("read the prompt: %w", err)
+		}
+
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%w: %s", errNoPromptFile, name)
+		}
+
+		r = file
+	}
+
+	type read struct {
+		text []byte
+		err  error
+	}
+
+	done := make(chan read, 1)
+
+	go func() {
+		text, err := io.ReadAll(io.LimitReader(r, maxPromptBytes+1))
+		done <- read{text: text, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case got := <-done:
+		switch {
+		case got.err != nil:
+			return "", fmt.Errorf("read the prompt: %w", got.err)
+		case len(got.text) > maxPromptBytes:
+			return "", errLongPrompt
+		}
+
+		return string(got.text), nil
+	}
 }
 
 // warnings tells the person what the task will not have: the changes not

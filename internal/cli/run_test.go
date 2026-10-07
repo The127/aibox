@@ -85,6 +85,7 @@ func newFixture(t *testing.T) *fixture {
 		homeDir:         func() (string, error) { return f.homeDir, nil },
 		uid:             func() int { return 1234 },
 		stdinIsTerminal: func() bool { return true },
+		stdin:           strings.NewReader(""),
 		lookupEnv:       func(string) (string, bool) { return "", false },
 		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
 		backend:         f.launch,

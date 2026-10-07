@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/The127/aibox/compare/v1.0.0...v1.1.0) (2026-10-06)
+
+
+### Features
+
+* reach ports on the loopback of the host from the VM ([#9](https://github.com/The127/aibox/issues/9)) ([f8a783a](https://github.com/The127/aibox/commit/f8a783a4e3931a326ca8502b7275a58b89175a97))
+
 ## 1.0.0 (2026-10-06)
 
 

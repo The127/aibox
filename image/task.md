@@ -19,7 +19,8 @@ Your work:
 - When you stop, aibox commits what you left uncommitted as one commit of
   its own, apart from files git ignores, then sends the branch back.
   Everything else in the VM is thrown away.
-- Git has no remote here, and you cannot push.
+- Git has no remote here. Do not push, publish or send your work anywhere,
+  even when the network would let you. Only the bundle comes back.
 
 Files and tools:
 

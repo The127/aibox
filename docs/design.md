@@ -62,6 +62,45 @@ goes into `console.log` in the project's aibox folder.
   the first boot and refuses a disk whose superblock has data but no ext4
   magic, so a damaged disk is never formatted over.
 
+## Tasks
+
+`aibox task` boots the same VM without a terminal. The kernel command line
+tells the init that it runs a task.
+
+- The host writes the prompt, the settings and a bundle of `HEAD` into the
+  folder of the task, which the VM gets as a read-only share. The project
+  folder and the home of the project are not shared. The mounts of the
+  config and the skills of the person are, read-only as for `aibox run`.
+- Each task gets a new state disk, which the init formats. The home and the
+  project are folders on it. The host removes the file as soon as the VM has
+  it open, so the disk is gone when the VM is. Tasks do not lock the project,
+  so they run next to each other and next to `aibox run`.
+- The init clones the bundle, removes the remote and switches to the branch
+  `aibox/task`.
+- It runs `claude --print` as the user, with `bypassPermissions`,
+  `stream-json` and `image/task.md` as an extra system prompt.
+- Then it commits what is left as a commit of its own and makes a bundle of
+  the branch. aibox's git steps run with hooks and fsmonitor off, since the
+  repository came from the task. Filters the task sets up still run, inside
+  the VM.
+- Each step runs in a new cgroup, and the init kills that cgroup when the
+  step ends, so nothing a step started outlives it. The git steps before
+  Claude Code have 10 minutes together, and the ones after it have 10 more.
+  Claude Code has the timeout of the task. The host stops the VM 25 minutes
+  after the timeout at the latest.
+- The results come back over the SSH session, as a tar on its standard
+  output. The init sends each file once it is complete and `result.json`
+  last. Progress goes over its standard error.
+- The host accepts only files it knows by name. Each must be a plain file,
+  sent once, and within a size limit. When the host refuses the results, it
+  stops the VM.
+- The host reads the header of the bundle without git. It refuses a bundle
+  that carries another ref than `aibox/task` or needs a commit other than the
+  one the task started from. Text from the VM is cleaned of control
+  characters before it reaches the terminal.
+- The files of the results are opened before the VM starts, since aibox
+  confines itself once the VM runs and can open no file then.
+
 ## Containers and VMs inside the VM
 
 Containers and VMs run inside the VM without root. The kernel has user

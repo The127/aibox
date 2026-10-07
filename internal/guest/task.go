@@ -496,9 +496,9 @@ type step struct {
 	timedOut bool
 }
 
-// expire ends the step when its time is up. A step that has finished is
-// left alone, so that a late timer does not hit the next step.
-func (s *step) expire(endAll func() error) {
+// expire ends the step when its time is up, with kill. A step that has
+// finished is left alone, so that a late timer does not hit the next step.
+func (s *step) expire(kill func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -507,7 +507,7 @@ func (s *step) expire(endAll func() error) {
 	}
 
 	s.timedOut = true
-	_ = endAll()
+	kill()
 }
 
 // finish marks the step as finished with the exit code, once a running
@@ -581,8 +581,15 @@ func (t *taskRun) execute(s *step) (int, error) {
 	}
 
 	if s.timeout > 0 {
+		// the command goes first, so that it ends by the kill and not by
+		// itself when a helper of it dies, and then everything else, since
 		// the user may have moved out of the cgroup of the step
-		timer := time.AfterFunc(s.timeout, func() { s.expire(t.endAll) })
+		timer := time.AfterFunc(s.timeout, func() {
+			s.expire(func() {
+				_ = t.sys.Kill(s.cgroup)
+				_ = t.endAll()
+			})
+		})
 		defer timer.Stop()
 	}
 

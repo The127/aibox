@@ -185,11 +185,27 @@ env:
   - CLAUDE_CODE_OAUTH_TOKEN
 ```
 
-aibox never stores the token. It passes on the value your shell has when the
-task starts. In the VM, Claude Code and every program the task runs can read
-it. A task that text has steered can send it to a host of the allow list, or
-write it into a commit or the transcript. Use a token or key for tasks only,
-so that you can revoke it on its own.
+aibox never stores the token or the key. It takes the value your shell has
+when the task starts.
+
+An API key stays on your machine. The VM gets a placeholder in its place,
+and `ANTHROPIC_BASE_URL` points Claude Code at a port on the loopback of the
+VM. Behind that port, aibox sends each request to `api.anthropic.com` with
+the real key. So nothing in the VM can read the key, send it away or write
+it into a commit. But while the task runs, it can spend the key through
+aibox, for any request to the Claude API. Give the key a spend limit in the
+Console. An interactive Claude Code still reaches `api.anthropic.com` and
+`platform.claude.com` directly when it starts, without the key, so keep them
+on the allow list as a new config has them. Programs other than Claude Code
+get the placeholder too, and work only if they follow `ANTHROPIC_BASE_URL`.
+aibox refuses a config that sets `ANTHROPIC_BASE_URL` itself next to the
+key.
+
+A subscription token goes into the VM as it is, since Anthropic's terms let
+no one but you handle it. In the VM, Claude Code and every program the task
+runs can read it. A task that text has steered can send it to a host of the
+allow list, or write it into a commit or the transcript. Use a token or key
+for tasks only, so that you can revoke it on its own.
 
 Whether unattended tasks are fine on your subscription is your own risk. See
 Anthropic's [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
@@ -433,6 +449,10 @@ in without being written into the file. aibox refuses the variables it sets
 itself: `AIBOX`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `TERM`, `LANG`,
 the proxy variables, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and
 `GOMODCACHE`.
+
+`ANTHROPIC_API_KEY` is the exception to passing values on. For `aibox run`
+as for tasks, the key stays on your machine and the VM gets a placeholder,
+see [Login](#login).
 
 ## Documentation
 

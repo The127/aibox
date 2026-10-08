@@ -213,6 +213,20 @@ dependenciesRules:
         - '**.internal.image$'
         - '**.internal.vsockns$'
         - '**.internal.task$'
+        - '**.internal.anthropic$'
+  # the forwarder adds the API key to the requests of the VM and knows
+  # nothing else
+  - package: '**.internal.anthropic$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os
+        - os/exec
+        - syscall
   # the task says what the host and the VM exchange for a task and knows
   # nothing else
   - package: '**.internal.task$'

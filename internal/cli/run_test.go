@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/the127/aibox/internal/anthropic"
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/project"
@@ -685,6 +686,94 @@ func TestRunSendsThePathOfTheConfigAsAVariable(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, []string{"GOFLAGS=-mod=mod", "PATH=/opt/go/bin:/opt/bin"}, f.launch.spec.Env)
+}
+
+func TestRunKeepsTheAPIKeyOnTheHost(t *testing.T) {
+	for _, entry := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY=sk-real"} {
+		t.Run(entry, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.writeConfig(t, "allow:\n  - example.com:8443\nenv:\n  - GOFLAGS=-mod=mod\n  - "+entry+"\n")
+			f.deps.lookupEnv = func(name string) (string, bool) { return "sk-real", name == "ANTHROPIC_API_KEY" }
+
+			// act
+			err := f.run("--image", image)
+
+			// assert
+			require.NoError(t, err)
+
+			spec := f.launch.spec
+			assert.Equal(t, []string{"GOFLAGS=-mod=mod", "ANTHROPIC_API_KEY=" + anthropic.Placeholder, "ANTHROPIC_BASE_URL=http://127.0.0.1:3129"}, spec.Env)
+			assert.Equal(t, []uint16{3129}, spec.Loopback)
+			assert.Equal(t, []uint16{8443, 443}, spec.Ports)
+			require.NotNil(t, spec.Proxy.Local)
+			assert.NotNil(t, spec.Proxy.Local("localhost", "3129"))
+			assert.Nil(t, spec.Proxy.Local("localhost", "8080"))
+			assert.Nil(t, spec.Proxy.Local("example.com", "3129"))
+		})
+	}
+}
+
+func TestRunPutsThePlaceholderInEveryEntryOfTheAPIKey(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - ANTHROPIC_API_KEY=sk-one\n  - ANTHROPIC_API_KEY=sk-two\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "sk-one")
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "sk-two")
+	assert.Contains(t, f.launch.spec.Env, "ANTHROPIC_API_KEY="+anthropic.Placeholder)
+}
+
+func TestRunPassesATokenOfASubscriptionAsItIs(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - CLAUDE_CODE_OAUTH_TOKEN\n")
+	f.deps.lookupEnv = func(string) (string, bool) { return "the-token", true }
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"CLAUDE_CODE_OAUTH_TOKEN=the-token"}, f.launch.spec.Env)
+	assert.Nil(t, f.launch.spec.Proxy.Local)
+	assert.Empty(t, f.launch.spec.Loopback)
+}
+
+func TestRunRefusesABaseURLNextToTheAPIKey(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - ANTHROPIC_API_KEY=sk-real\n  - ANTHROPIC_BASE_URL=https://gateway.example\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, errOwnBaseURL)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesTheLoopbackPortOfTheForwarder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow:\n  - 127.0.0.1:3129\nenv:\n  - ANTHROPIC_API_KEY=sk-real\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, errForwarderPort)
+	assert.False(t, f.launch.called)
 }
 
 func TestRunTakesTheFoldersOfAVariableInThePath(t *testing.T) {

@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/the127/aibox/internal/anthropic"
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
@@ -138,6 +141,9 @@ type projectRun struct {
 	log     *os.File
 	// proxyLog writes the hosts the proxy connected to or refused into log
 	proxyLog *proxy.Log
+	// forwarder sends the requests of Claude Code to the Claude API with
+	// the API key, or is nil when the VM gets no key
+	forwarder http.Handler
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -179,19 +185,35 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, err
 	}
 
+	env, key, err := keepAPIKey(env, cfg.Allow.LoopbackPorts())
+	if err != nil {
+		return projectRun{}, err
+	}
+
+	var forwarder http.Handler
+
+	if key != "" {
+		roots, err := systemRoots()
+		if err != nil {
+			return projectRun{}, fmt.Errorf("read the root certificates for the Claude API: %w", err)
+		}
+
+		forwarder = anthropic.Forwarder(key, roots)
+	}
+
 	log, err := os.OpenFile(p.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return projectRun{}, fmt.Errorf("open the log of the proxy: %w", err)
 	}
 
-	return projectRun{image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log)}, nil
+	return projectRun{image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log), forwarder: forwarder}, nil
 }
 
 func (r projectRun) close() { _ = r.log.Close() }
 
 // spec is the part of the spec that every command fills the same way.
 func (r projectRun) spec(cmd *cli.Command) backend.Spec {
-	return backend.Spec{
+	spec := backend.Spec{
 		Image:       r.image,
 		StateBytes:  stateBytes(r.config),
 		MemoryMiB:   flagOrConfig(cmd, "memory", r.config.Memory),
@@ -210,6 +232,70 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 		Loopback: r.config.Allow.LoopbackPorts(),
 		Stderr:   os.Stderr,
 	}
+
+	if r.forwarder != nil {
+		spec.Proxy.Local = func(host, port string) http.Handler {
+			if host == "localhost" && port == strconv.Itoa(forwarderPort) {
+				return r.forwarder
+			}
+
+			return nil
+		}
+
+		// aibox itself connects to the Claude API
+		if !slices.Contains(spec.Ports, apiPort) {
+			spec.Ports = append(spec.Ports, apiPort)
+		}
+
+		spec.Loopback = append(spec.Loopback, forwarderPort)
+	}
+
+	return spec
+}
+
+// forwarderPort is the port on the loopback of the VM where Claude Code
+// reaches the forwarder, and apiPort the one of the Claude API.
+const (
+	forwarderPort = 3129
+	apiPort       = 443
+)
+
+// errOwnBaseURL is ANTHROPIC_BASE_URL set by the config next to the API key,
+// which would send the requests elsewhere than to the forwarder.
+var errOwnBaseURL = errors.New("env sets ANTHROPIC_BASE_URL next to ANTHROPIC_API_KEY, but aibox keeps the key on the host and sets ANTHROPIC_BASE_URL itself")
+
+// errForwarderPort is a port of the allow list that the forwarder takes on
+// the loopback of the VM.
+var errForwarderPort = fmt.Errorf("allow names port %d of the loopback, which the VM needs for the API key", forwarderPort)
+
+// keepAPIKey takes the API key out of the variables for the VM and puts in
+// a placeholder and the address of the forwarder, so that the VM never
+// holds the key. It returns the key, or nothing when the variables have
+// none. A token of a claude.ai subscription goes into the VM as it is,
+// since only its owner may use it.
+func keepAPIKey(env []string, loopback []uint16) ([]string, string, error) {
+	var key string
+
+	for i, variable := range env {
+		if value, ok := strings.CutPrefix(variable, "ANTHROPIC_API_KEY="); ok && value != "" {
+			key = value
+			env[i] = "ANTHROPIC_API_KEY=" + anthropic.Placeholder
+		}
+	}
+
+	if key == "" {
+		return env, "", nil
+	}
+
+	if slices.ContainsFunc(env, func(variable string) bool { return strings.HasPrefix(variable, "ANTHROPIC_BASE_URL=") }) {
+		return nil, "", errOwnBaseURL
+	}
+
+	if slices.Contains(loopback, forwarderPort) {
+		return nil, "", errForwarderPort
+	}
+
+	return append(env, fmt.Sprintf("ANTHROPIC_BASE_URL=http://127.0.0.1:%d", forwarderPort)), key, nil
 }
 
 // maxPathBytes is what the PATH for the VM may be long. The session carries

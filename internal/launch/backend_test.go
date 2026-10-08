@@ -91,6 +91,6 @@ func TestNewBackendRunsTheQEMUAndVirtiofsdOfAnX86Host(t *testing.T) {
 
 	// assert
 	assert.Equal(t, "qemu-system-x86_64", b.QEMU)
-	assert.Equal(t, "/usr/libexec/virtiofsd", b.Virtiofsd)
+	assert.Empty(t, b.Virtiofsd, "Run finds virtiofsd")
 	assert.Equal(t, vm.Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, b.Owner) //nolint:gosec // never negative on Linux
 }

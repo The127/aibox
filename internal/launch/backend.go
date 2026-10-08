@@ -11,13 +11,11 @@ import (
 	"github.com/the127/aibox/internal/vm"
 )
 
-const (
-	qemuProgram      = "qemu-system-x86_64"
-	virtiofsdProgram = "/usr/libexec/virtiofsd"
-)
+const qemuProgram = "qemu-system-x86_64"
 
 // Backend runs the VM on QEMU and virtiofsd, on a Linux host with KVM.
-// Owner is the host user the VM user stands for in the shares.
+// Owner is the host user the VM user stands for in the shares. An empty
+// Virtiofsd is found by Run.
 type Backend struct {
 	QEMU      string
 	Virtiofsd string
@@ -29,9 +27,8 @@ var _ backend.Backend = Backend{}
 // NewBackend returns the Backend for the user running aibox.
 func NewBackend() Backend {
 	return Backend{
-		QEMU:      qemuProgram,
-		Virtiofsd: virtiofsdProgram,
-		Owner:     vm.Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, //nolint:gosec // never negative on Linux
+		QEMU:  qemuProgram,
+		Owner: vm.Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, //nolint:gosec // never negative on Linux
 	}
 }
 

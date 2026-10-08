@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -40,16 +41,22 @@ const (
 	defaultSocketTimeout = 10 * time.Second
 	defaultKVMDevice     = "/dev/kvm"
 	defaultBubblewrap    = "bwrap"
-	defaultLibraries     = "/usr/lib64"
-	defaultFirmware      = "/usr/share/qemu/qboot.rom"
+	defaultVirtiofsd     = "virtiofsd"
 	defaultStopDelay     = time.Second
+	// systemVirtiofsd is where Debian, Ubuntu and Fedora put virtiofsd,
+	// which is not on the PATH
+	systemVirtiofsd = "/usr/libexec/virtiofsd"
+	systemLibraries = "/usr/lib64"
+	firmwareOfQEMU  = "share/qemu/qboot.rom"
 )
 
 // Options are the programs Run starts, the terminal of the person on Stdin
 // and Stdout, where the messages of aibox and of the programs go, and how
 // the VM reaches the host.
 type Options struct {
-	QEMU      string
+	QEMU string
+	// Virtiofsd is the program that serves the shares. Empty means
+	// virtiofsd on the PATH, or else /usr/libexec/virtiofsd.
 	Virtiofsd string
 	Stdin     *os.File
 	Stdout    io.Writer
@@ -84,7 +91,7 @@ type Options struct {
 	// throws it away.
 	ConsoleLog string
 	// Libraries and Firmware are what QEMU is made of on the host, bound
-	// into its sandbox. Empty means /usr/lib64 and qboot.rom of QEMU.
+	// into its sandbox. Empty means those of the QEMU found, see hostFiles.
 	Libraries string
 	Firmware  string
 	// StopDelay is how long a stopped program may take before it is
@@ -122,14 +129,6 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	if options.Confine == nil {
 		options.Confine = confine.Apply
-	}
-
-	if options.Libraries == "" {
-		options.Libraries = defaultLibraries
-	}
-
-	if options.Firmware == "" {
-		options.Firmware = defaultFirmware
 	}
 
 	if options.StopDelay == 0 {
@@ -460,9 +459,13 @@ func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options 
 	return nil
 }
 
-// findPrograms resolves QEMU and, unless the sandbox is off, bubblewrap,
-// and checks that the host has what the sandbox binds in.
+// findPrograms resolves virtiofsd, QEMU and, unless the sandbox is off,
+// bubblewrap, and checks that the host has what the sandbox binds in.
 func findPrograms(options *Options) error {
+	if err := findVirtiofsd(options); err != nil {
+		return err
+	}
+
 	qemu, err := exec.LookPath(options.QEMU)
 	if err != nil {
 		return fmt.Errorf("find qemu: %w", err)
@@ -481,6 +484,22 @@ func findPrograms(options *Options) error {
 		return fmt.Errorf("find bubblewrap for the sandbox of QEMU, or run with --no-sandbox: %w", err)
 	}
 
+	// a QEMU from Nix is a link into the store, from a profile or a wrapper
+	resolved, err := filepath.EvalSymlinks(options.QEMU)
+	if err != nil {
+		return fmt.Errorf("find qemu: %w", err)
+	}
+
+	libraries, firmware := hostFiles(resolved)
+
+	if options.Libraries == "" {
+		options.Libraries = libraries
+	}
+
+	if options.Firmware == "" {
+		options.Firmware = firmware
+	}
+
 	for _, path := range []string{options.Libraries, options.Firmware} {
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", path, err)
@@ -488,6 +507,38 @@ func findPrograms(options *Options) error {
 	}
 
 	return nil
+}
+
+// findVirtiofsd resolves virtiofsd: the one of the options, or else the
+// one on the PATH, or else the one of the system.
+func findVirtiofsd(options *Options) error {
+	if options.Virtiofsd != "" {
+		return nil
+	}
+
+	program, err := exec.LookPath(defaultVirtiofsd)
+	if err != nil {
+		if program, err = exec.LookPath(systemVirtiofsd); err != nil {
+			return fmt.Errorf("find virtiofsd on the PATH or at %s: %w", systemVirtiofsd, err)
+		}
+	}
+
+	options.Virtiofsd = program
+
+	return nil
+}
+
+// hostFiles are the libraries and the firmware of the QEMU at the real
+// path. A QEMU from Nix has its libraries in the store, one of the system
+// in /usr/lib64. Either has its firmware next to its bin folder, as
+// /usr/share/qemu or <store path>/share/qemu.
+func hostFiles(qemu string) (libraries, firmware string) {
+	libraries = systemLibraries
+	if strings.HasPrefix(qemu, sandbox.NixStore+"/") {
+		libraries = sandbox.NixStore
+	}
+
+	return libraries, filepath.Join(filepath.Dir(filepath.Dir(qemu)), firmwareOfQEMU)
 }
 
 // qemuCommand is QEMU in its sandbox, or QEMU alone without one. Outside

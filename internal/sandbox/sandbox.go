@@ -12,6 +12,10 @@ import (
 // bubblewrap makes from the inherited file.
 const Kernel = "/kernel"
 
+// NixStore is where a program from Nix has its libraries and its loader.
+// Bound as Libraries, the store needs no /lib64.
+const NixStore = "/nix/store"
+
 // Spec is what QEMU needs inside the sandbox: the programs and files of
 // the host that are bound in, and the number of the inherited file
 // bubblewrap copies the kernel from.
@@ -31,8 +35,15 @@ func (s Spec) Command(args []string) (string, []string) {
 		// every namespace, no terminal, no environment, and QEMU dies with aibox
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
 		"--ro-bind", s.Libraries, s.Libraries,
-		// the loader of the program is named by its /lib64 path
-		"--symlink", strings.TrimPrefix(s.Libraries, "/"), "/lib64",
+	}
+
+	// the loader of the program is named by its /lib64 path, unless the
+	// program is from Nix
+	if s.Libraries != NixStore {
+		wrapped = append(wrapped, "--symlink", strings.TrimPrefix(s.Libraries, "/"), "/lib64")
+	}
+
+	wrapped = append(wrapped,
 		"--ro-bind", s.Program, s.Program,
 		"--ro-bind", s.Firmware, s.Firmware,
 		"--ro-bind-data", strconv.Itoa(s.KernelFD), Kernel,
@@ -40,7 +51,7 @@ func (s Spec) Command(args []string) (string, []string) {
 		"--dev-bind", "/dev/null", "/dev/null",
 		"--",
 		s.Program,
-	}
+	)
 
 	return s.Bubblewrap, append(wrapped, args...)
 }

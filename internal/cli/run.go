@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -151,6 +152,9 @@ type projectRun struct {
 	// the host, and roots the certificates it checks their servers with
 	gitRemotes []gitbroker.Remote
 	roots      *x509.CertPool
+	// sshKeys hold the connection to the SSH agent the broker signs with,
+	// or are nil
+	sshKeys sshKeys
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -202,7 +206,7 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, err
 	}
 
-	remotes, err := gitLogins(ctx, deps, cfg.Git)
+	remotes, sshKeys, err := gitLogins(ctx, deps, cfg.Git)
 	if err != nil {
 		return projectRun{}, err
 	}
@@ -214,6 +218,8 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 
 	if key != "" || len(remotes) > 0 {
 		if roots, err = systemRoots(); err != nil {
+			closeKeys(sshKeys)
+
 			return projectRun{}, fmt.Errorf("read the root certificates: %w", err)
 		}
 	}
@@ -224,16 +230,27 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 
 	log, err := os.OpenFile(p.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
+		closeKeys(sshKeys)
+
 		return projectRun{}, fmt.Errorf("open the log of the proxy: %w", err)
 	}
 
 	return projectRun{
 		image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log),
-		forwarder: forwarder, gitRemotes: remotes, roots: roots,
+		forwarder: forwarder, gitRemotes: remotes, roots: roots, sshKeys: sshKeys,
 	}, nil
 }
 
-func (r projectRun) close() { _ = r.log.Close() }
+func (r projectRun) close() {
+	_ = r.log.Close()
+	closeKeys(r.sshKeys)
+}
+
+func closeKeys(keys sshKeys) {
+	if keys != nil {
+		keys.Close()
+	}
+}
 
 // spec is the part of the spec that every command fills the same way.
 func (r projectRun) spec(cmd *cli.Command) backend.Spec {
@@ -270,6 +287,17 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 	// aibox itself connects to the Claude API and to the git servers
 	if (r.forwarder != nil || len(r.gitRemotes) > 0) && !slices.Contains(spec.Ports, apiPort) {
 		spec.Ports = append(spec.Ports, apiPort)
+	}
+
+	for _, remote := range r.gitRemotes {
+		if remote.SSH == nil {
+			continue
+		}
+
+		_, port, _ := net.SplitHostPort(remote.SSH.Address)
+		if n, err := strconv.ParseUint(port, 10, 16); err == nil && !slices.Contains(spec.Ports, uint16(n)) {
+			spec.Ports = append(spec.Ports, uint16(n))
+		}
 	}
 
 	return spec
@@ -353,25 +381,66 @@ func routeGit(env []string, remotes []config.GitRemote, loopback []uint16) ([]st
 }
 
 // gitLogins asks git on the host for its login for each remote, before the
-// VM starts, since aibox can start no programs once it is confined.
-func gitLogins(ctx context.Context, deps dependencies, remotes []config.GitRemote) ([]gitbroker.Remote, error) {
-	var brokered []gitbroker.Remote
+// VM starts, since aibox can start no programs once it is confined. When
+// git has no login for HTTPS, the remote goes over SSH with the SSH keys
+// of the host, which it returns to be closed with the run.
+func gitLogins(ctx context.Context, deps dependencies, remotes []config.GitRemote) ([]gitbroker.Remote, sshKeys, error) {
+	var (
+		brokered []gitbroker.Remote
+		keys     sshKeys
+		keysErr  error
+		loaded   bool
+	)
 
 	for _, remote := range remotes {
+		brokeredRemote := gitbroker.Remote{Name: remote.Remote, Fetch: remote.Fetch, Push: remote.Push}
+
 		login, err := deps.gitLogin(ctx, remote.Remote)
-		if err != nil {
-			return nil, fmt.Errorf("git entry %s: %w", remote.Remote, err)
+
+		switch {
+		case err == nil:
+			brokeredRemote.Login = gitbroker.Login{Username: login.Username, Password: login.Password}
+		case errors.Is(err, gitconfig.ErrNoLogin):
+			if !loaded {
+				if keys, keysErr = deps.sshKeys(); keysErr != nil {
+					keys = nil
+				}
+
+				loaded = true
+			}
+
+			host, _, _ := strings.Cut(remote.Remote, "/")
+
+			var target gitconfig.SSHTarget
+			if keysErr == nil {
+				target, err = keys.For(ctx, host)
+			} else {
+				err = keysErr
+			}
+
+			if err != nil {
+				closeKeys(keys)
+
+				return nil, nil, fmt.Errorf("git entry %s: git on this machine has no login for HTTPS, and SSH does not work either: %w", remote.Remote, err)
+			}
+
+			_, _ = fmt.Fprintf(deps.stderr, "aibox: git has no login for HTTPS for %s, so the broker reaches it over SSH as %s@%s with %s\n",
+				remote.Remote, target.User, target.Address, strings.Join(target.Keys, ", "))
+
+			brokeredRemote.SSH = &gitbroker.SSH{
+				Address: target.Address, User: target.User, Signers: target.Signers,
+				HostKey: target.HostKey, HostKeyAlgorithms: target.HostKeyAlgorithms,
+			}
+		default:
+			closeKeys(keys)
+
+			return nil, nil, fmt.Errorf("git entry %s: %w", remote.Remote, err)
 		}
 
-		brokered = append(brokered, gitbroker.Remote{
-			Name:  remote.Remote,
-			Fetch: remote.Fetch,
-			Push:  remote.Push,
-			Login: gitbroker.Login{Username: login.Username, Password: login.Password},
-		})
+		brokered = append(brokered, brokeredRemote)
 	}
 
-	return brokered, nil
+	return brokered, keys, nil
 }
 
 // errOwnBaseURL is ANTHROPIC_BASE_URL set by the config next to the API key,

@@ -509,10 +509,27 @@ in `env`. For a host other than GitHub, Go first asks the host over HTTPS
 where the module is, so that host needs to be on the allow list too.
 
 Before the VM starts, aibox asks git on your machine for the login of each
-repository, as `git push` over HTTPS would, and stops when git has none. If
-you use git over SSH, set up a login for HTTPS first, for example with
-`gh auth setup-git` for GitHub. aibox reads the login once, so restart aibox
-when it expires.
+repository, as `git push` over HTTPS would. When git has none, the broker
+talks to the server over SSH instead, as `git@HOST`, and aibox says so when
+it starts:
+
+- aibox asks `ssh -G` how ssh would reach the host, so `HostName`, `Port`,
+  `IdentityFile`, `IdentitiesOnly`, `IdentityAgent`, `UserKnownHostsFile`,
+  `GlobalKnownHostsFile` and `HostKeyAlias` of your `~/.ssh/config` apply.
+  It offers the keys ssh would offer, of those in your SSH agent and those
+  in a key file without a passphrase. A key with a passphrase works through
+  the agent, which has to keep running while aibox does. aibox refuses a
+  host that the config reaches with `ProxyJump` or `ProxyCommand`.
+- The known hosts check the server. A server that is not in them is
+  refused, so connect once with `ssh` to add it.
+- The broker logs in once and runs the requests of git in the VM over that
+  connection, at most four at a time.
+
+aibox stops when neither way works. It reads the logins and keys once, so
+restart aibox when one expires. For SSH, aibox keeps a connection to your
+SSH agent open while it runs, and may connect to the port of the SSH server.
+A key of its own for aibox, or an agent that asks before it signs, such as
+with `ssh-add -c`, limits what a fault in aibox could do with it.
 
 What the broker cannot stop:
 

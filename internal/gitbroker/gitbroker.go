@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -36,8 +37,10 @@ type Remote struct {
 	// Push are the branches a push may create or update, as patterns of
 	// path.Match, such as aibox/*. Empty refuses every push.
 	Push []string
-	// Login is what the broker sends upstream for this remote.
+	// Login is what the broker sends upstream for this remote over HTTPS.
 	Login Login
+	// SSH, when set, is the login the broker uses instead, over SSH.
+	SSH *SSH
 }
 
 // Login is a user name and a password or token for HTTP basic auth.
@@ -56,10 +59,13 @@ func Broker(remotes []Remote, roots *x509.CertPool, w io.Writer) http.Handler {
 		return &url.URL{Scheme: "https", Host: host, Path: "/" + repository + ".git"}
 	}
 
-	return newBroker(remotes, upstream, &http.Transport{
+	b := newBroker(remotes, upstream, &http.Transport{
 		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2: true,
 	}, w)
+	b.dial = (&net.Dialer{Timeout: dialTimeout}).DialContext
+
+	return b
 }
 
 // The services of the smart HTTP protocol.
@@ -76,13 +82,21 @@ type broker struct {
 	remotes  map[string]Remote
 	upstream func(name string) *url.URL
 	forward  *httputil.ReverseProxy
-	log      *eventLog
+	// dial connects to a server over SSH
+	dial       func(ctx context.Context, network, address string) (net.Conn, error)
+	sshServers map[string]*sshServer
+	log        *eventLog
 }
 
-func newBroker(remotes []Remote, upstream func(name string) *url.URL, transport http.RoundTripper, w io.Writer) http.Handler {
-	b := &broker{remotes: map[string]Remote{}, upstream: upstream, log: &eventLog{w: w}}
+// gitProtocol is a version of the protocol git in the VM asks for, with
+// the options that go with it, such as the format of the object IDs.
+var gitProtocol = regexp.MustCompile(`^version=[0-2](:[a-z0-9-]+=[a-z0-9-]+)*$`)
+
+func newBroker(remotes []Remote, upstream func(name string) *url.URL, transport http.RoundTripper, w io.Writer) *broker {
+	b := &broker{remotes: map[string]Remote{}, upstream: upstream, sshServers: map[string]*sshServer{}, log: &eventLog{w: w}}
 	for _, remote := range remotes {
 		b.remotes[remote.Name] = remote
+		b.sshServers[remote.Name] = newSSHServer()
 	}
 
 	b.forward = &httputil.ReverseProxy{
@@ -107,8 +121,7 @@ func newBroker(remotes []Remote, upstream func(name string) *url.URL, transport 
 		ErrorLog: log.New(io.Discard, "", 0),
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			req, _ := r.Context().Value(requestKey{}).(request)
-			b.log.add("failed %s: %v", req.remote, err)
-			http.Error(w, fmt.Sprintf("aibox: %s: %v", req.remote, err), http.StatusBadGateway)
+			b.fail(w, req, err)
 		},
 	}
 
@@ -188,7 +201,19 @@ func (b *broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if remote.SSH != nil {
+		b.serveSSH(w, r, req, remote)
+
+		return
+	}
+
 	b.forward.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestKey{}, req)))
+}
+
+// fail answers a request the broker could not pass on, and logs why.
+func (b *broker) fail(w http.ResponseWriter, req request, err error) {
+	b.log.add("failed %s: %v", req.remote, err)
+	http.Error(w, fmt.Sprintf("aibox: %s: %v", req.remote, err), http.StatusBadGateway)
 }
 
 // refuse answers with a message that git in the VM shows, and logs it.

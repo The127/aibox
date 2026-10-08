@@ -31,15 +31,23 @@ type dependencies struct {
 	gitIdentity func(dir string) gitconfig.Identity
 	// gitLogin is the login git on the host has for a remote
 	gitLogin func(ctx context.Context, remote string) (gitconfig.Login, error)
-	backend  backend.Backend
-	edit     func(editor, path string) error
-	version  func() string
+	// sshKeys are the SSH keys and the known hosts of the host
+	sshKeys func() (sshKeys, error)
+	backend backend.Backend
+	edit    func(editor, path string) error
+	version func() string
 	// imageDigest is the digest of the image this aibox was released with
 	imageDigest func(arch string) (string, bool)
 	// fetchImage downloads the image of the release into dir
 	fetchImage func(ctx context.Context, version, arch, digest, dir string) error
 	// stdout and stderr are where a task reports
 	stdout, stderr io.Writer
+}
+
+// sshKeys say how the host reaches a git server over SSH, until Close.
+type sshKeys interface {
+	For(ctx context.Context, host string) (gitconfig.SSHTarget, error)
+	Close()
 }
 
 // ExitCode is the code aibox ends with after the error: the code of the
@@ -82,6 +90,7 @@ func NewRootCommand() *cli.Command {
 		lookupEnv:       os.LookupEnv,
 		gitIdentity:     gitconfig.Read,
 		gitLogin:        gitconfig.LoginFor,
+		sshKeys:         func() (sshKeys, error) { return gitconfig.LoadSSHKeys() },
 		backend:         newBackend(),
 		edit:            runEditor,
 		version:         version.Get,

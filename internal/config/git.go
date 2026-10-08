@@ -88,6 +88,12 @@ func parseRemote(text string) (string, error) {
 		}
 	}
 
+	// over SSH the path is an argument of the command on the server, which
+	// would read a - as an option and a ~ as the home of a user
+	if strings.HasPrefix(repository, "-") || strings.HasPrefix(repository, "~") {
+		return "", ErrBadRemote
+	}
+
 	return host + "/" + repository, nil
 }
 

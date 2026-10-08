@@ -132,6 +132,14 @@ nosuid.
   and a copy of the kernel. Devices, the disks and the sockets reach it as
   open files from aibox, and it filters its own syscalls.
   `aibox run --no-sandbox` runs it without bubblewrap, for debugging.
+- QEMU and virtiofsd should end with aibox, even when aibox is killed or
+  crashes. aibox starts them with a parent death signal, so the kernel sends
+  them SIGKILL when aibox dies. In the sandbox bubblewrap does the same for
+  QEMU with --die-with-parent. The kernel sends that signal when the thread
+  that started the program ends, so aibox starts all of them from one thread
+  that lives as long as aibox does. virtiofsd forks the process that serves
+  the share, which ends by a signal of its own. That this works with the
+  real virtiofsd is not yet tested.
 - Once QEMU runs, aibox restricts itself too: no new privileges, Landlock
   rules that let it read `/etc` for DNS and connect only to the ports of the
   allow list, and a seccomp filter that refuses ptrace, mount, namespace and
@@ -151,6 +159,9 @@ Linux. What is different:
   namespace is needed. The shares are virtio-fs as on Linux, read-only where
   Linux has them read-only, which the host enforces. There is no mapping of
   user ids: the VM user writes as you, and the files it makes are yours.
+- The VM runs in a process of Virtualization.framework, which ends with
+  aibox, also when aibox is killed. The shares are served by that process,
+  so nothing is left either.
 - The VM is arm64 Linux, so programs of the Mac do not run in it. A mount of a
   tool from the Mac, such as a Go SDK or `/nix/store`, gives the VM files it
   cannot run. Tools for the VM come from a folder of arm64 Linux programs, or

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -395,10 +396,11 @@ func startDaemons(shares []vm.Share, owner *vm.Owner, options Options) (<-chan e
 	for _, share := range shares {
 		daemon := command(ctx, options.Virtiofsd, share.VirtiofsdArgs(owner), options.StopDelay)
 		daemon.Stderr = options.Stderr
-		// a Ctrl-C from the terminal reaches QEMU alone
-		daemon.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		// a Ctrl-C from the terminal reaches QEMU alone, and the kernel
+		// kills the daemon when aibox dies without stopping it
+		daemon.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 
-		if err := daemon.Start(); err != nil {
+		if err := start(daemon); err != nil {
 			return died, stop, fmt.Errorf("start virtiofsd for %s: %w", share.Dir, err)
 		}
 
@@ -426,7 +428,12 @@ func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options 
 	qemu.Stderr = notAFile{options.Stderr}
 	qemu.ExtraFiles = files.extra
 
-	err := qemu.Start()
+	// the kernel kills QEMU when aibox dies. In the sandbox bubblewrap does
+	// it too, with --die-with-parent, but only once it runs, so this also
+	// covers the moment before
+	qemu.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+
+	err := start(qemu)
 
 	// QEMU has its own copies now, or never will, and the console log ends
 	// only when every copy of its end is closed
@@ -520,6 +527,44 @@ func command(ctx context.Context, program string, args []string, delay time.Dura
 	cmd.WaitDelay = delay
 
 	return cmd
+}
+
+// starts carries the work of the starter, the goroutine that starts every
+// child of aibox. See start.
+var (
+	starts      = make(chan func())
+	starterOnce sync.Once
+)
+
+// start starts the command on a thread that lives as long as aibox does.
+//
+// The kernel sends the Pdeathsig of a child when the thread that started it
+// ends, not when aibox ends. Go ends a thread when a goroutine locked to it
+// returns, and any goroutine may run on any thread, so a child started from
+// a goroutine could be killed while aibox still runs. bubblewrap's
+// --die-with-parent works the same way, so this matters for the sandbox of
+// QEMU too.
+//
+// The starter locks its thread and never returns, so Go never ends that
+// thread and no other goroutine runs on it. The thread ends only with
+// aibox, and with it the children. This costs one idle thread. Doing the
+// whole of Run on a locked thread would not do, since the caller decides
+// which thread Run runs on and may end it.
+func start(cmd *exec.Cmd) error {
+	starterOnce.Do(func() {
+		go func() {
+			runtime.LockOSThread()
+
+			for work := range starts {
+				work()
+			}
+		}()
+	})
+
+	started := make(chan error, 1)
+	starts <- func() { started <- cmd.Start() }
+
+	return <-started
 }
 
 func withSockets(shares []vm.Share, dir string) []vm.Share {

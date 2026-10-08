@@ -1,0 +1,6 @@
+# Debian's git starts a program named pager when none is set, and the image
+# has none. busybox less quits when the output fits on one screen (-F),
+# handles the colors of git (-R) and shows no ~ past the end (-~). GIT_PAGER
+# or a ~/.gitconfig of the user wins over this, PAGER does not.
+[core]
+	pager = less -FR~

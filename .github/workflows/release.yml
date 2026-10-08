@@ -84,3 +84,46 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
+
+  # points the Nix package at the release. The ruleset of main asks for the
+  # ci check, so the change goes through a pull request, which ci builds and
+  # which merges once it passes
+  nix:
+    needs: [release-please, goreleaser]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: point nix/release.json at the release
+        run: |
+          gh release download "$TAG" --pattern checksums.txt --dir "$RUNNER_TEMP"
+          hack/nix-release.sh "${TAG#v}" "$RUNNER_TEMP/checksums.txt"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+
+      - uses: peter-evans/create-pull-request@v7
+        id: pr
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: nix/release
+          title: "chore: point the Nix package at ${{ needs.release-please.outputs.tag_name }}"
+          commit-message: "chore: point the Nix package at ${{ needs.release-please.outputs.tag_name }}"
+          signoff: true
+          body: Updates `nix/release.json` to the Linux archive of the release.
+
+      - name: merge once ci passes
+        if: steps.pr.outputs.pull-request-url != ''
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}

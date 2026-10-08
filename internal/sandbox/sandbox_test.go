@@ -51,3 +51,18 @@ func TestCommandSharesNoNetworkAndNoFolderOfTheHost(t *testing.T) {
 		assert.NotEqual(t, "/home", arg)
 	}
 }
+
+func TestCommandBindsTheNixStoreForAProgramFromNix(t *testing.T) {
+	// arrange
+	s := spec()
+	s.Program = "/nix/store/abc-qemu/bin/qemu-system-x86_64"
+	s.Libraries = sandbox.NixStore
+	s.Firmware = "/nix/store/abc-qemu/share/qemu/qboot.rom"
+
+	// act
+	_, args := s.Command(nil)
+
+	// assert
+	assert.Equal(t, []string{"--ro-bind", "/nix/store", "/nix/store"}, args[4:7])
+	assert.NotContains(t, args, "/lib64")
+}

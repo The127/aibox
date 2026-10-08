@@ -54,8 +54,19 @@ brew install --cask the127/tap/aibox
 On Linux, each [release](https://github.com/The127/aibox/releases) has a
 `deb` and an `rpm` for amd64, which depend on QEMU, virtiofsd and bubblewrap,
 and a `tar.gz` with the binary. aibox needs Linux 6.7 or newer and virtiofsd
-at `/usr/libexec/virtiofsd`, as Debian 13, Ubuntu 24.04 and Fedora have it.
-It also needs access to `/dev/kvm`.
+on `PATH` or at `/usr/libexec/virtiofsd`, as Debian 13, Ubuntu 24.04 and
+Fedora have it. QEMU and virtiofsd from Nix work too: for a QEMU in
+`/nix/store`, the sandbox of QEMU binds the store in place of `/usr/lib64`.
+aibox also needs access to `/dev/kvm`.
+
+On Linux with [Nix](https://nixos.org), the flake of this repository has a
+package of the latest release that brings QEMU, virtiofsd and bubblewrap
+along:
+
+```
+nix profile install github:The127/aibox
+nix run github:The127/aibox -- run
+```
 
 The packages do not hold the VM image. The first `aibox run` downloads the
 image of its release, about 150 MB, and keeps it in

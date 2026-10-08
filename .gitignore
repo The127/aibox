@@ -12,3 +12,5 @@ coverage.out
 /dist/
 # the VM images the release workflow hands to goreleaser
 /images/
+# the link nix build leaves
+/result

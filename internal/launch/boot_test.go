@@ -24,8 +24,6 @@ import (
 	"github.com/the127/aibox/internal/vm"
 )
 
-const virtiofsdPath = "/usr/libexec/virtiofsd"
-
 // throughTheProxy is a bash script that connects to the given host:port
 // through the proxy of the VM and sends a line, which the host echoes.
 const throughTheProxy = `exec 3<>/dev/tcp/127.0.0.1/3128
@@ -79,8 +77,10 @@ func TestRunBootsTheImage(t *testing.T) {
 		t.Skip("no /dev/kvm")
 	}
 
-	if _, err := os.Stat(virtiofsdPath); err != nil {
-		t.Skip("no " + virtiofsdPath)
+	if _, err := exec.LookPath("virtiofsd"); err != nil {
+		if _, err := os.Stat("/usr/libexec/virtiofsd"); err != nil {
+			t.Skip("no virtiofsd")
+		}
 	}
 
 	qemu, err := exec.LookPath("qemu-system-x86_64")
@@ -132,7 +132,7 @@ func TestRunBootsTheImage(t *testing.T) {
 	defer func() { _ = input.Close() }()
 
 	out := &console{input: input, command: "cat /project/hello; echo proxy=$HTTPS_PROXY; " + through + "; exit"}
-	options := launch.Options{QEMU: qemu, Virtiofsd: virtiofsdPath, Stdin: stdin, Stdout: out, Stderr: out}
+	options := launch.Options{QEMU: qemu, Stdin: stdin, Stdout: out, Stderr: out}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

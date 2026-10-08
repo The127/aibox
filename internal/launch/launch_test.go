@@ -286,6 +286,39 @@ func TestRunBindsTheLibrariesAndFirmwareOfTheOptionsIntoTheSandbox(t *testing.T)
 	assert.Contains(t, f.record(t, "bwrap"), f.firmware)
 }
 
+func TestRunStartsTheVirtiofsdOnThePathWhenTheOptionsNameNone(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.Virtiofsd = ""
+	t.Setenv("PATH", filepath.Dir(f.virtiofsd))
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.Contains(t, f.record(t, "virtiofsd-project.sock"), "--shared-dir=/home/someone/project")
+}
+
+func TestHostFilesOfAQEMUOfTheSystem(t *testing.T) {
+	// act
+	libraries, firmware := launch.HostFiles("/usr/bin/qemu-system-x86_64")
+
+	// assert
+	assert.Equal(t, "/usr/lib64", libraries)
+	assert.Equal(t, "/usr/share/qemu/qboot.rom", firmware)
+}
+
+func TestHostFilesOfAQEMUFromNix(t *testing.T) {
+	// act
+	libraries, firmware := launch.HostFiles("/nix/store/abc-qemu-11.1.1/bin/qemu-system-x86_64")
+
+	// assert
+	assert.Equal(t, sandbox.NixStore, libraries)
+	assert.Equal(t, "/nix/store/abc-qemu-11.1.1/share/qemu/qboot.rom", firmware)
+}
+
 func TestRunFailsBeforeQEMUWithoutTheFirmwareForTheSandbox(t *testing.T) {
 	// arrange
 	f := fakes(t)

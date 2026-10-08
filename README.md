@@ -59,9 +59,9 @@ Fedora have it. QEMU and virtiofsd from Nix work too: for a QEMU in
 `/nix/store`, the sandbox of QEMU binds the store in place of `/usr/lib64`.
 aibox also needs access to `/dev/kvm`.
 
-On Linux with [Nix](https://nixos.org), the flake of this repository has a
-package of the latest release that brings QEMU, virtiofsd and bubblewrap
-along:
+With [Nix](https://nixos.org), on Linux on amd64 or macOS on Apple silicon,
+the flake of this repository has a package of the latest release. On Linux
+it brings QEMU, virtiofsd and bubblewrap along:
 
 ```
 nix profile install github:The127/aibox

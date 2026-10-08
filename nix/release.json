@@ -1,4 +1,7 @@
 {
   "version": "1.3.0",
-  "hash": "sha256-57mpvhDQODZKIhjCCV0tcfm5kt2CKKR/GmVP2JPezm4="
+  "hashes": {
+    "x86_64-linux": "sha256-57mpvhDQODZKIhjCCV0tcfm5kt2CKKR/GmVP2JPezm4=",
+    "aarch64-darwin": "sha256-Py+erW7CRnOWRtAZRur5S+lTP3dF/8LEKuIlZ9SvqE4="
+  }
 }

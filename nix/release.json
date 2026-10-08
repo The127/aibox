@@ -1,7 +1,7 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "hashes": {
-    "x86_64-linux": "sha256-57mpvhDQODZKIhjCCV0tcfm5kt2CKKR/GmVP2JPezm4=",
-    "aarch64-darwin": "sha256-Py+erW7CRnOWRtAZRur5S+lTP3dF/8LEKuIlZ9SvqE4="
+    "x86_64-linux": "sha256-xqyfN8NKDysAzZqxZoLfi7YKOmdDWoMYQ2DTEssxN7o=",
+    "aarch64-darwin": "sha256-F17Fi2WpfTRZHwy7VcRkeQa5GYjst1bypARqzJyc6dA="
   }
 }

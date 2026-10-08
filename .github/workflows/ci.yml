@@ -41,14 +41,24 @@ jobs:
       - run: just ci
 
   # builds the Nix package of the release in nix/release.json, which checks
-  # its hash
+  # its hashes
   nix:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - run: nix build .#aibox
       - run: ./result/bin/aibox --version
+      # Virtualization.framework runs aibox only while the signature of the
+      # release, with its entitlement, still holds
+      - if: runner.os == 'macOS'
+        run: |
+          codesign --verify --strict result/bin/aibox
+          codesign --display --entitlements - result/bin/aibox | grep com.apple.security.virtualization
 
   # the ruleset of main requires a check named ci, which the jobs of the
   # matrix are not, so this one stands for all of them

@@ -6,8 +6,12 @@
   outputs =
     { self, nixpkgs }:
     let
-      # the package wraps the release binary, which exists for Linux on amd64
-      systems = [ "x86_64-linux" ];
+      # the package takes the release binary, which exists for Linux on
+      # amd64 and macOS on Apple silicon
+      systems = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {

@@ -239,12 +239,31 @@ scripts.
 | `transcript.jsonl` | Everything Claude Code did, as `stream-json`, cut at 256 MiB. |
 | `claude.log` | What Claude Code wrote to standard error, cut at 1 MiB. |
 | `console.log` | The messages of the kernel and the init of the VM. |
-| `share/` | The prompt and the settings. Until aibox starts in the project again, also the bundle of the commit the task started from, with all its history. |
-| `lock` | Locked while the task runs, so that another task leaves its bundle alone. |
+| `share/` | The prompt, the settings and the bundle of the commit the task started from, with all its history, until `aibox tasks clean` removes it. |
+| `lock` | Locked while the task runs, so that `aibox tasks clean` leaves the task alone. |
 
 aibox exits with 1 when the task did not finish. Claude Code failed or ran
 out of time, a step in the VM failed, the VM was stopped, or the VM sent
 results aibox does not take. The folder then holds what the task left.
+
+### Removing old tasks
+
+Every task keeps its folder, and with it a bundle of the history of the
+project. aibox removes nothing on its own. `aibox tasks clean` removes the
+bundles of the tasks that ended and keeps their results. Tasks that run stay
+as they are.
+
+```
+aibox tasks clean
+aibox tasks clean --all --older-than 720h
+```
+
+`--all` removes the whole folders of the tasks that ended, results
+included. `--older-than` limits it to the tasks that started longer ago.
+The command also removes what is left of tasks that failed as they started.
+It names every folder it could not check or clean and then exits with 1.
+A task counts as ended once its aibox ends, so do not clean while an aibox
+that was killed may have left its VM running.
 
 ## Project config
 

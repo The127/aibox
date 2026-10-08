@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,7 +82,7 @@ type taskRun struct {
 	share   string
 	base    string
 	results map[string]*os.File
-	// lock is locked for as long as the task runs, see removeOldInputs
+	// lock is locked for as long as the task runs, see cleanTasks
 	lock *os.File
 }
 
@@ -522,15 +521,24 @@ const (
 	newTaskPrefix = ".new-"
 )
 
+// lockFlags open a lock file without following a link, without waiting
+// for a FIFO and without making a terminal the controlling one.
+const lockFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_NOCTTY
+
 // lockTask opens the lock file in the folder of a task and locks it. Unless
 // it waits, it fails with unix.EWOULDBLOCK while the task runs.
 func lockTask(dir string, flag int, wait bool) (*os.File, error) {
-	// a FIFO must not make the open wait, and only a plain file counts
-	file, err := os.OpenFile(filepath.Join(dir, lockFile), flag|os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0o600) //nolint:gosec // the name is aibox's own
+	file, err := os.OpenFile(filepath.Join(dir, lockFile), flag|lockFlags, 0o600) //nolint:gosec // the name is aibox's own
 	if err != nil {
 		return nil, err
 	}
 
+	return lockOpened(file, wait)
+}
+
+// lockOpened locks the opened lock file, which must be a plain file, or
+// closes it.
+func lockOpened(file *os.File, wait bool) (*os.File, error) {
 	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
 		_ = file.Close()
 
@@ -551,74 +559,8 @@ func lockTask(dir string, flag int, wait bool) (*os.File, error) {
 	return file, nil
 }
 
-// removeOldInputs removes the bundle of the input of every task that runs
-// no more, whenever aibox starts in the project. It holds the whole history
-// of the project, and a task needs it only to start. aibox cannot remove it
-// as the task ends, since it can remove no file once the VM runs. It also
-// removes what is left of folders of tasks that ended before they got their
-// name. A folder whose lock is held, or is no plain file, keeps its bundle.
-func removeOldInputs(tasks string) {
-	entries, err := os.ReadDir(tasks)
-	if err != nil {
-		return
-	}
-
-	root, err := os.OpenRoot(tasks)
-	if err != nil {
-		return
-	}
-
-	defer func() { _ = root.Close() }()
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		dir := filepath.Join(tasks, entry.Name())
-
-		lock, err := lockTask(dir, 0, false)
-
-		// a task of an aibox before the lock file has none. It counts as
-		// ended, even when that aibox still runs it.
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-
-		switch {
-		case !strings.HasPrefix(entry.Name(), newTaskPrefix):
-			removeInput(root, entry.Name())
-		// another aibox may have made the folder a moment ago and not yet
-		// its lock, or not yet its lock file
-		case startedBefore(entry, time.Minute):
-			_ = os.RemoveAll(dir)
-		}
-
-		if lock != nil {
-			_ = lock.Close()
-		}
-	}
-}
-
-// removeInput removes the bundle of the input of the task of the name,
-// without following a link out of its folder.
-func removeInput(tasks *os.Root, name string) {
-	root, err := tasks.OpenRoot(name)
-	if err != nil {
-		return
-	}
-
-	defer func() { _ = root.Close() }()
-
-	_ = root.Remove(filepath.Join("share", task.InputBundle))
-}
-
-// startedBefore tells whether the entry changed longer than d ago.
-func startedBefore(entry fs.DirEntry, d time.Duration) bool {
-	info, err := entry.Info()
-
-	return err == nil && time.Since(info.ModTime()) > d
-}
+// taskIDTime is the layout of the time a task ID starts with.
+const taskIDTime = "20060102-150405"
 
 // taskID is the time the task starts and a random part, so that tasks
 // sort by their start and two that start at once differ.
@@ -628,7 +570,7 @@ func taskID() (string, error) {
 		return "", err
 	}
 
-	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(random), nil
+	return time.Now().Format(taskIDTime) + "-" + hex.EncodeToString(random), nil
 }
 
 func (t *taskRun) writers() map[string]io.Writer {

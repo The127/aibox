@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0](https://github.com/The127/aibox/compare/v1.1.0...v1.2.0) (2026-10-08)
+
+
+### Features
+
+* remove old tasks with aibox tasks clean ([#22](https://github.com/The127/aibox/issues/22)) ([e1bfe03](https://github.com/The127/aibox/commit/e1bfe031f6692161aa052254b23d7fa83692f60e))
+* run a task unattended in the guest ([#15](https://github.com/The127/aibox/issues/15)) ([031ad5b](https://github.com/The127/aibox/commit/031ad5be190f00f7e54f09a47015d315e1264dc5))
+* run a task unattended with aibox task ([#16](https://github.com/The127/aibox/issues/16)) ([5cfc269](https://github.com/The127/aibox/commit/5cfc26954cd9ce25259f4144a5bbaf61dfb1dac5))
+* serve a session without a terminal ([#13](https://github.com/The127/aibox/issues/13)) ([c3b5e54](https://github.com/The127/aibox/commit/c3b5e54487d7ab24cacd95a6b13418b0628110fc))
+* start a task from another commit with --from ([b07edeb](https://github.com/The127/aibox/commit/b07edebbe47011f1ed954e80eee358897fafa467))
+* take the prompt of a task from a file or stdin ([#19](https://github.com/The127/aibox/issues/19)) ([6b56291](https://github.com/The127/aibox/commit/6b56291542f84540d81f76f88d70acbe0ca2b009))
+
+
+### Bug Fixes
+
+* give git in the VM a pager it has ([#24](https://github.com/The127/aibox/issues/24)) ([d240bf0](https://github.com/The127/aibox/commit/d240bf0672410b5ee349022fb1ff66cb1608e89f)), closes [#12](https://github.com/The127/aibox/issues/12)
+* run no filter of the project's .git/config when a task starts ([b07edeb](https://github.com/The127/aibox/commit/b07edebbe47011f1ed954e80eee358897fafa467))
+* stop virtiofsd and QEMU when aibox is killed ([#25](https://github.com/The127/aibox/issues/25)) ([400b662](https://github.com/The127/aibox/commit/400b662c9c1583bc04984d1e403b5fc8f9df96ba))
+
 ## [1.1.0](https://github.com/The127/aibox/compare/v1.0.0...v1.1.0) (2026-10-06)
 
 

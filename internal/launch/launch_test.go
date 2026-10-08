@@ -32,9 +32,18 @@ import (
 func machine(t *testing.T) vm.Machine {
 	t.Helper()
 
-	image := t.TempDir()
+	m, err := machineIn(t.TempDir())
+	require.NoError(t, err)
+
+	return m
+}
+
+// machineIn is a VM whose kernel and disks are empty files in the folder.
+func machineIn(image string) (vm.Machine, error) {
 	for _, name := range []string{"vmlinuz", "os.ext4", "state.ext4"} {
-		require.NoError(t, os.WriteFile(filepath.Join(image, name), nil, 0o600))
+		if err := os.WriteFile(filepath.Join(image, name), nil, 0o600); err != nil {
+			return vm.Machine{}, err
+		}
 	}
 
 	return vm.Machine{
@@ -47,7 +56,7 @@ func machine(t *testing.T) vm.Machine {
 			{Tag: "project", Dir: "/home/someone/project"},
 			{Tag: "home", Dir: "/home/someone/.aibox/home"},
 		},
-	}
+	}, nil
 }
 
 func TestRunStartsVirtiofsdForEachShareBeforeQEMU(t *testing.T) {

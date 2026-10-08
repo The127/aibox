@@ -4,6 +4,7 @@ package launch_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -27,14 +28,17 @@ import (
 	"github.com/the127/aibox/internal/vsockns"
 )
 
-// The test binary also stands in for virtiofsd and QEMU. Run starts it
-// through links named after them, and TestMain picks the fake by that name.
+// The test binary also stands in for virtiofsd, QEMU, bubblewrap and aibox
+// itself. It is started through links named after them, and TestMain picks
+// the fake by that name.
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case "virtiofsd":
 		os.Exit(fakeVirtiofsd(os.Args[1:]))
 	case "qemu":
 		os.Exit(fakeQEMU(os.Args[1:]))
+	case "aibox":
+		os.Exit(fakeAibox())
 	case "bwrap":
 		// the fake returns only when it could not run the command
 		fakeBwrap(os.Args[1:])
@@ -74,6 +78,7 @@ type fakeProcesses struct {
 	qemu             string
 	bwrap            string
 	virtiofsd        string
+	aibox            string
 	records          string
 	proxyListener    chan net.Listener
 	terminalListener chan net.Listener
@@ -97,10 +102,28 @@ func fakes(t *testing.T) *fakeProcesses {
 	self, err := os.Executable()
 	require.NoError(t, err)
 
-	f := &fakeProcesses{
+	f := fakesIn(dir)
+
+	require.NoError(t, os.Symlink(self, f.qemu))
+	require.NoError(t, os.Symlink(self, f.bwrap))
+	require.NoError(t, os.Symlink(self, f.virtiofsd))
+	require.NoError(t, os.Symlink(self, f.aibox))
+	require.NoError(t, os.Mkdir(f.records, 0o700))
+	require.NoError(t, os.Mkdir(f.libraries, 0o700))
+	require.NoError(t, os.WriteFile(f.firmware, nil, 0o600))
+	t.Setenv("AIBOX_FAKE_RECORDS", f.records)
+	t.Setenv("AIBOX_FAKE_DIR", dir)
+
+	return f
+}
+
+// fakesIn are the fakes that fakes put into the folder.
+func fakesIn(dir string) *fakeProcesses {
+	return &fakeProcesses{
 		qemu:             filepath.Join(dir, "qemu"),
 		bwrap:            filepath.Join(dir, "bwrap"),
 		virtiofsd:        filepath.Join(dir, "virtiofsd"),
+		aibox:            filepath.Join(dir, "aibox"),
 		records:          filepath.Join(dir, "records"),
 		consoleLog:       filepath.Join(dir, "console.log"),
 		libraries:        filepath.Join(dir, "lib64"),
@@ -108,16 +131,36 @@ func fakes(t *testing.T) *fakeProcesses {
 		proxyListener:    make(chan net.Listener, 1),
 		terminalListener: make(chan net.Listener, 1),
 	}
+}
 
-	require.NoError(t, os.Symlink(self, f.qemu))
-	require.NoError(t, os.Symlink(self, f.bwrap))
-	require.NoError(t, os.Symlink(self, f.virtiofsd))
-	require.NoError(t, os.Mkdir(f.records, 0o700))
-	require.NoError(t, os.Mkdir(f.libraries, 0o700))
-	require.NoError(t, os.WriteFile(f.firmware, nil, 0o600))
-	t.Setenv("AIBOX_FAKE_RECORDS", f.records)
+// fakeAibox runs the machine with the fakes that fakes put into the folder
+// in AIBOX_FAKE_DIR and QEMU without the sandbox, as aibox would, until it
+// is killed or Run fails.
+func fakeAibox() int {
+	dir := os.Getenv("AIBOX_FAKE_DIR")
 
-	return f
+	image, err := os.MkdirTemp(dir, "image-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake aibox:", err)
+
+		return 1
+	}
+
+	m, err := machineIn(image)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake aibox:", err)
+
+		return 1
+	}
+
+	options := fakesIn(dir).options()
+	options.NoSandbox = true
+	options.Stderr = os.Stderr
+
+	err = launch.Run(context.Background(), m, options)
+	fmt.Fprintln(os.Stderr, "fake aibox: Run returned:", err)
+
+	return 1
 }
 
 // options use TCP listeners in place of vsock and /dev/null in place of the
@@ -302,6 +345,7 @@ func fakeVirtiofsd(args []string) int {
 	}
 
 	record("virtiofsd-"+filepath.Base(socket), args)
+	record("virtiofsd-"+filepath.Base(socket)+"-pid", []string{strconv.Itoa(os.Getpid())})
 	<-stop
 	record("virtiofsd-"+filepath.Base(socket)+"-stopped", nil)
 

@@ -55,6 +55,19 @@ func ExitCode(err error) int {
 	return 0
 }
 
+// printedError is an error the command printed itself.
+type printedError struct{ error }
+
+func (e printedError) Unwrap() error { return e.error }
+
+// Printed reports whether the command printed the error itself already,
+// so that it is not printed once more.
+func Printed(err error) bool {
+	var printed printedError
+
+	return errors.As(err, &printed)
+}
+
 // NewRootCommand returns the top-level aibox command.
 func NewRootCommand() *cli.Command {
 	return newRootCommand(dependencies{

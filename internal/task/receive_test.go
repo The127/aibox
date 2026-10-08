@@ -194,31 +194,31 @@ func TestLineCleanerCleansEachLine(t *testing.T) {
 	// arrange
 	var out bytes.Buffer
 
-	c := task.NewLineCleaner(&out, "vm: ")
+	c := task.NewLineCleaner(&out)
 
 	// act
 	_, err := c.Write([]byte("aibox: one\x1b[31m\naibox: t"))
 	require.NoError(t, err)
-	_, err = c.Write([]byte("wo\n\nlast"))
+	_, err = c.Write([]byte("wo\nlast"))
 	require.NoError(t, err)
 	require.NoError(t, c.Close())
 
 	// assert
-	assert.Equal(t, "vm: aibox: one?[31m\nvm: aibox: two\nvm: \nvm: last\n", out.String())
+	assert.Equal(t, "aibox: one?[31m\naibox: two\nlast\n", out.String())
 }
 
 func TestLineCleanerCutsALongLine(t *testing.T) {
 	// arrange
 	var out bytes.Buffer
 
-	c := task.NewLineCleaner(&out, "vm: ")
+	c := task.NewLineCleaner(&out)
 
 	// act
 	_, err := c.Write([]byte(strings.Repeat("x", 10000) + "\nnext\n"))
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, "vm: "+strings.Repeat("x", 4096)+"\nvm: next\n", out.String())
+	assert.Equal(t, strings.Repeat("x", 4096)+"\nnext\n", out.String())
 }
 
 func TestCheckOfTheSettings(t *testing.T) {
@@ -267,7 +267,7 @@ func TestLineCleanerTakesACRLFForANewline(t *testing.T) {
 	// arrange
 	var out bytes.Buffer
 
-	c := task.NewLineCleaner(&out, "")
+	c := task.NewLineCleaner(&out)
 
 	// act
 	_, err := c.Write([]byte("one\r\ntwo\r"))

@@ -199,12 +199,17 @@ At the end aibox prints how the task went, the last message of Claude Code
 and the command that fetches the changes into a branch of your repository:
 
 ```
-aibox: Claude Code exited with 0
-aibox: 4 turns in 8.321s, about 0.05 USD at API prices, ended by completed
-  | I added a "Purpose" section to the README and committed it as f3572af.
-aibox: the changes end at f3572af8c6df, fetch them with
-  git -c transfer.fsckObjects=true fetch .../changes.bundle aibox/task:aibox/task-20261007-170916-259e07
+17:09:25 aibox[259e07]: Claude Code exited with 0
+17:09:25 aibox[259e07]: 4 turns in 8.321s, about 0.05 USD at API prices, ended by completed
+17:09:25 vm[259e07]: | I added a "Purpose" section to the README and committed it as f3572af.
+17:09:25 aibox[259e07]: the changes end at f3572af8c6df, fetch them with
+17:09:25 aibox[259e07]:   git -c transfer.fsckObjects=true fetch .../changes.bundle aibox/task:aibox/task-20261007-170916-259e07
 ```
+
+Every line of a task starts with the time, where the line comes from and the
+end of the ID of the task, so that tasks that share a log can be told apart.
+`vm` lines come from the VM and say what the task claims. `aibox` lines come
+from the host.
 
 The commits are untrusted until you have read them, like a pull request from
 a stranger. Their authors prove nothing, since the task can set any author.
@@ -213,8 +218,8 @@ a stranger. Their authors prove nothing, since the task can set any author.
   checked that the bundle carries `aibox/task` and nothing else, and needs no
   commit but the one the task started from. The fetch only adds that branch.
 - Read the whole change with `git diff <commit> aibox/task-…`, whatever
-  the single commits look like. Take `<commit>` from the first line aibox
-  prints, `aibox: task … starts from …`, not from `result.json`, which the
+  the single commits look like. Take `<commit>` from the line aibox
+  prints, `aibox[…]: task … starts from …`, not from `result.json`, which the
   VM writes. That is the commit aibox checked the bundle against.
 - Checking out, merging or rebasing the branch puts its files into your
   folder. Then everything in [What the VM writes](#what-the-vm-writes)

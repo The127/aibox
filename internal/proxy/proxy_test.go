@@ -34,6 +34,13 @@ func start(t *testing.T, options proxy.Options) (*url.URL, func() error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
+	return startOn(t, listener, options)
+}
+
+// startOn runs a proxy on the listener, as start does.
+func startOn(t *testing.T, listener net.Listener, options proxy.Options) (*url.URL, func() error) {
+	t.Helper()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
@@ -628,13 +635,41 @@ func TestServeReportsATargetItCannotReach(t *testing.T) {
 	assert.Empty(t, connected, "a target it could not reach was not connected to")
 }
 
+// acceptedListener tells on accepted each time it accepts a connection.
+type acceptedListener struct {
+	net.Listener
+
+	accepted chan struct{}
+}
+
+func (l acceptedListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.accepted <- struct{}{}
+	}
+
+	return conn, err
+}
+
 func TestServeStopsWithAnIdleConnectionOpen(t *testing.T) {
 	// arrange
-	address, stop := start(t, proxy.Options{})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	accepted := make(chan struct{}, 1)
+	address, stop := startOn(t, acceptedListener{Listener: listener, accepted: accepted}, proxy.Options{})
 	idle := dial(t, address)
 
+	// the proxy holds the connection, which would otherwise wait in the
+	// queue of the listener, and be reset when the proxy stops
+	select {
+	case <-accepted:
+	case <-time.After(timeout):
+		t.Fatal("the proxy did not accept the connection")
+	}
+
 	// act
-	err := stop()
+	err = stop()
 
 	// assert
 	require.NoError(t, err)

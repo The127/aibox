@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.0](https://github.com/The127/aibox/compare/v1.2.0...v1.3.0) (2026-10-08)
+
+
+### Features
+
+* install aibox with Nix ([#40](https://github.com/The127/aibox/issues/40)) ([fc478fe](https://github.com/The127/aibox/commit/fc478fea5c036965ffae0e7c76a598919962bda3))
+* keep an API key on the host ([#37](https://github.com/The127/aibox/issues/37)) ([0d754d8](https://github.com/The127/aibox/commit/0d754d8ae124e28278a939faf701588cf4c49280)), closes [#27](https://github.com/The127/aibox/issues/27)
+* log the hosts the proxy connected to ([#34](https://github.com/The127/aibox/issues/34)) ([2c5cf1f](https://github.com/The127/aibox/commit/2c5cf1f896c91ae8ec7fe93a9006a61c7e0d6130)), closes [#20](https://github.com/The127/aibox/issues/20)
+* mark the progress lines that come from the VM ([#31](https://github.com/The127/aibox/issues/31)) ([1d22099](https://github.com/The127/aibox/commit/1d22099de2c780c01f1cd2c234f87ec3db891483)), closes [#29](https://github.com/The127/aibox/issues/29)
+* put the task ID and the time in every line of aibox task ([#32](https://github.com/The127/aibox/issues/32)) ([570e546](https://github.com/The127/aibox/commit/570e546d87e0b1c6015416e066fe923c50b14ca1)), closes [#30](https://github.com/The127/aibox/issues/30)
+
 ## [1.2.0](https://github.com/The127/aibox/compare/v1.1.0...v1.2.0) (2026-10-08)
 
 

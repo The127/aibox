@@ -49,6 +49,30 @@ aibox reads the root certificates before it is confined, because the sandbox
 keeps it from reading them later, and on macOS from asking the system to
 check a certificate. A subscription token is passed into the VM as it is.
 
+The repositories that `git` in the config names go through a git broker on
+the host. aibox asks git on the host for the login of each one before the VM
+starts. It runs git outside any repository and without a terminal, so the
+config of the project, which the VM can write, has no say. The VM gets a git
+config, through `GIT_CONFIG_COUNT` and the variables that go with it, that
+sends the HTTPS and SSH addresses of each repository to
+`http://127.0.0.1:3130`, which the init forwards as the other ports. For
+`CONNECT localhost:3130` the proxy serves the broker in the tunnel. The
+broker speaks the smart HTTP protocol of git and accepts only its requests
+for the repositories of the list, without dot segments or escapes. It sends
+them to `https://HOST/PATH.git`, which the config fixes and not the request,
+with the login of the host and with no credentials or cookies of the VM. It
+refuses a fetch the config does not allow. Of a push it reads the commands
+at the start, which name each ref with its old and new commit, and passes
+the push on only when each one updates or creates a branch of the list, and
+otherwise refuses all of them, since the pack belongs to the whole push. A
+push larger than the buffer of git comes after a probe that is a flush
+alone, which the broker passes on. It
+refuses deletes, tags, signed pushes, push options and pushes from a shallow
+clone, and answers in the format of git, so that git in the VM shows why. It
+cannot tell a force push from another one, since that needs the history.
+Answers that refuse the login or redirect become an error for the VM, so it
+never asks for a login of its own.
+
 The proxy logs each host and port it connected to or refused, once per run,
 and stops after 1000 of each kind so that a VM cannot fill the log. A task
 has a log of its own, and its report names the hosts. The log holds the name

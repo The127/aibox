@@ -214,9 +214,23 @@ dependenciesRules:
         - '**.internal.vsockns$'
         - '**.internal.task$'
         - '**.internal.anthropic$'
+        - '**.internal.gitbroker$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+      standard:
+        - os
+        - os/exec
+        - syscall
+  # the git broker checks the requests of git in the VM and adds the login
+  # of the host, and knows nothing else
+  - package: '**.internal.gitbroker$'
     shouldNotDependsOn:
       internal:
         - '**.internal.**'

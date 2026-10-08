@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"github.com/the127/aibox/internal/anthropic"
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/config"
+	"github.com/the127/aibox/internal/gitbroker"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/image"
 	"github.com/the127/aibox/internal/machine"
@@ -144,6 +147,10 @@ type projectRun struct {
 	// forwarder sends the requests of Claude Code to the Claude API with
 	// the API key, or is nil when the VM gets no key
 	forwarder http.Handler
+	// gitRemotes are the remotes the git broker serves with the logins of
+	// the host, and roots the certificates it checks their servers with
+	gitRemotes []gitbroker.Remote
+	roots      *x509.CertPool
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -190,14 +197,28 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, err
 	}
 
-	var forwarder http.Handler
+	env, err = routeGit(env, cfg.Git, cfg.Allow.LoopbackPorts())
+	if err != nil {
+		return projectRun{}, err
+	}
+
+	remotes, err := gitLogins(ctx, deps, cfg.Git)
+	if err != nil {
+		return projectRun{}, err
+	}
+
+	var (
+		forwarder http.Handler
+		roots     *x509.CertPool
+	)
+
+	if key != "" || len(remotes) > 0 {
+		if roots, err = systemRoots(); err != nil {
+			return projectRun{}, fmt.Errorf("read the root certificates: %w", err)
+		}
+	}
 
 	if key != "" {
-		roots, err := systemRoots()
-		if err != nil {
-			return projectRun{}, fmt.Errorf("read the root certificates for the Claude API: %w", err)
-		}
-
 		forwarder = anthropic.Forwarder(key, roots)
 	}
 
@@ -206,7 +227,10 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, fmt.Errorf("open the log of the proxy: %w", err)
 	}
 
-	return projectRun{image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log), forwarder: forwarder}, nil
+	return projectRun{
+		image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log),
+		forwarder: forwarder, gitRemotes: remotes, roots: roots,
+	}, nil
 }
 
 func (r projectRun) close() { _ = r.log.Close() }
@@ -233,32 +257,122 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 		Stderr:   os.Stderr,
 	}
 
+	spec.Proxy.Local = r.local(r.log)
+
 	if r.forwarder != nil {
-		spec.Proxy.Local = func(host, port string) http.Handler {
-			if host == "localhost" && port == strconv.Itoa(forwarderPort) {
-				return r.forwarder
-			}
-
-			return nil
-		}
-
-		// aibox itself connects to the Claude API
-		if !slices.Contains(spec.Ports, apiPort) {
-			spec.Ports = append(spec.Ports, apiPort)
-		}
-
 		spec.Loopback = append(spec.Loopback, forwarderPort)
+	}
+
+	if len(r.gitRemotes) > 0 {
+		spec.Loopback = append(spec.Loopback, brokerPort)
+	}
+
+	// aibox itself connects to the Claude API and to the git servers
+	if (r.forwarder != nil || len(r.gitRemotes) > 0) && !slices.Contains(spec.Ports, apiPort) {
+		spec.Ports = append(spec.Ports, apiPort)
 	}
 
 	return spec
 }
 
+// local returns the handlers the proxy serves itself on the loopback of
+// the VM: the forwarder of the API key and the git broker, which writes
+// to log. It is nil when the VM gets neither.
+func (r projectRun) local(log io.Writer) func(host, port string) http.Handler {
+	if r.forwarder == nil && len(r.gitRemotes) == 0 {
+		return nil
+	}
+
+	handlers := map[string]http.Handler{}
+
+	if r.forwarder != nil {
+		handlers[strconv.Itoa(forwarderPort)] = r.forwarder
+	}
+
+	if len(r.gitRemotes) > 0 {
+		handlers[strconv.Itoa(brokerPort)] = gitbroker.Broker(r.gitRemotes, r.roots, log)
+	}
+
+	return func(host, port string) http.Handler {
+		if host != "localhost" {
+			return nil
+		}
+
+		return handlers[port]
+	}
+}
+
 // forwarderPort is the port on the loopback of the VM where Claude Code
-// reaches the forwarder, and apiPort the one of the Claude API.
+// reaches the forwarder, brokerPort the one where git reaches the git
+// broker, and apiPort the one of the Claude API and the git servers.
 const (
 	forwarderPort = 3129
+	brokerPort    = 3130
 	apiPort       = 443
 )
+
+// errBrokerPort is a port of the allow list that the git broker takes on
+// the loopback of the VM.
+var errBrokerPort = fmt.Errorf("allow names port %d of the loopback, which the VM needs for git", brokerPort)
+
+// errOwnGitConfig is a git config set by env, where aibox puts the
+// addresses of the git broker.
+var errOwnGitConfig = errors.New("env sets GIT_CONFIG_COUNT, GIT_CONFIG_KEY_* or GIT_CONFIG_VALUE_*, which aibox sets itself for git")
+
+// routeGit adds to the variables for the VM a git config that sends the
+// remotes of the config to the git broker, whether git names them by
+// HTTPS or by SSH. The broker refuses what the config does not allow.
+func routeGit(env []string, remotes []config.GitRemote, loopback []uint16) ([]string, error) {
+	if len(remotes) == 0 {
+		return env, nil
+	}
+
+	if slices.Contains(loopback, brokerPort) {
+		return nil, errBrokerPort
+	}
+
+	if slices.ContainsFunc(env, func(variable string) bool {
+		return strings.HasPrefix(variable, "GIT_CONFIG_COUNT=") || strings.HasPrefix(variable, "GIT_CONFIG_KEY_") || strings.HasPrefix(variable, "GIT_CONFIG_VALUE_")
+	}) {
+		return nil, errOwnGitConfig
+	}
+
+	var count int
+
+	for _, remote := range remotes {
+		host, repository, _ := strings.Cut(remote.Remote, "/")
+		key := fmt.Sprintf("url.http://127.0.0.1:%d/%s.insteadOf", brokerPort, remote.Remote)
+
+		for _, address := range []string{"https://" + remote.Remote, "git@" + host + ":" + repository, "ssh://git@" + host + "/" + repository} {
+			env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", count, key), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", count, address))
+			count++
+		}
+	}
+
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", count)), nil
+}
+
+// gitLogins asks git on the host for its login for each remote, before the
+// VM starts, since aibox can start no programs once it is confined.
+func gitLogins(ctx context.Context, deps dependencies, remotes []config.GitRemote) ([]gitbroker.Remote, error) {
+	var brokered []gitbroker.Remote
+
+	for _, remote := range remotes {
+		login, err := deps.gitLogin(ctx, remote.Remote)
+		if err != nil {
+			return nil, fmt.Errorf("git entry %s: %w", remote.Remote, err)
+		}
+
+		brokered = append(brokered, gitbroker.Remote{
+			Name:  remote.Remote,
+			Fetch: remote.Fetch,
+			Push:  remote.Push,
+			Login: gitbroker.Login{Username: login.Username, Password: login.Password},
+		})
+	}
+
+	return brokered, nil
+}
 
 // errOwnBaseURL is ANTHROPIC_BASE_URL set by the config next to the API key,
 // which would send the requests elsewhere than to the forwarder.

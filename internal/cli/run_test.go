@@ -18,6 +18,7 @@ import (
 
 	"github.com/the127/aibox/internal/anthropic"
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/project"
 )
@@ -89,8 +90,11 @@ func newFixture(t *testing.T) *fixture {
 		stdin:           strings.NewReader(""),
 		lookupEnv:       func(string) (string, bool) { return "", false },
 		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
-		backend:         f.launch,
-		version:         func() string { return f.version },
+		gitLogin: func(context.Context, string) (gitconfig.Login, error) {
+			return gitconfig.Login{Username: "someone", Password: "host-token"}, nil
+		},
+		backend: f.launch,
+		version: func() string { return f.version },
 		imageDigest: func(arch string) (string, bool) {
 			digest, ok := f.digests[arch]
 
@@ -774,6 +778,131 @@ func TestRunRefusesTheLoopbackPortOfTheForwarder(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, errForwarderPort)
 	assert.False(t, f.launch.called)
+}
+
+func TestRunSendsTheRemotesOfTheConfigToTheGitBroker(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow:\n  - example.com:8443\ngit:\n  - remote: github.com/owner/repo\n    fetch: true\n    push:\n      - aibox/*\n")
+
+	var asked []string
+
+	f.deps.gitLogin = func(_ context.Context, remote string) (gitconfig.Login, error) {
+		asked = append(asked, remote)
+
+		return gitconfig.Login{Username: "someone", Password: "host-token"}, nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github.com/owner/repo"}, asked)
+
+	spec := f.launch.spec
+	assert.Equal(t, []string{
+		"GIT_CONFIG_KEY_0=url.http://127.0.0.1:3130/github.com/owner/repo.insteadOf", "GIT_CONFIG_VALUE_0=https://github.com/owner/repo",
+		"GIT_CONFIG_KEY_1=url.http://127.0.0.1:3130/github.com/owner/repo.insteadOf", "GIT_CONFIG_VALUE_1=git@github.com:owner/repo",
+		"GIT_CONFIG_KEY_2=url.http://127.0.0.1:3130/github.com/owner/repo.insteadOf", "GIT_CONFIG_VALUE_2=ssh://git@github.com/owner/repo",
+		"GIT_CONFIG_COUNT=3",
+	}, spec.Env)
+	assert.NotContains(t, strings.Join(spec.Env, "\n"), "host-token")
+	assert.Equal(t, []uint16{3130}, spec.Loopback)
+	assert.Equal(t, []uint16{8443, 443}, spec.Ports)
+	require.NotNil(t, spec.Proxy.Local)
+	assert.NotNil(t, spec.Proxy.Local("localhost", "3130"))
+	assert.Nil(t, spec.Proxy.Local("localhost", "3129"))
+	assert.Nil(t, spec.Proxy.Local("github.com", "3130"))
+}
+
+func TestRunGitConfigSendsEveryFormOfTheRemoteToTheBroker(t *testing.T) {
+	// arrange
+	env, err := routeGit(nil, []config.GitRemote{{Remote: "github.com/owner/repo", Fetch: true}}, nil)
+	require.NoError(t, err)
+
+	for _, address := range []string{
+		"https://github.com/owner/repo",
+		"https://github.com/owner/repo.git",
+		"git@github.com:owner/repo.git",
+		"ssh://git@github.com/owner/repo",
+	} {
+		// act
+		cmd := exec.Command("git", "ls-remote", "--get-url", address) //nolint:gosec // the test's own addresses
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")...)
+		out, err := cmd.Output()
+
+		// assert
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(string(out), "http://127.0.0.1:3130/github.com/owner/repo"), "%s became %s", address, out)
+	}
+}
+
+func TestRunNamesTheRemoteGitHasNoLoginFor(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "git:\n  - remote: github.com/owner/repo\n    fetch: true\n")
+	f.deps.gitLogin = func(context.Context, string) (gitconfig.Login, error) {
+		return gitconfig.Login{}, gitconfig.ErrNoLogin
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, gitconfig.ErrNoLogin)
+	assert.ErrorContains(t, err, "github.com/owner/repo")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesTheLoopbackPortOfTheGitBroker(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow:\n  - 127.0.0.1:3130\ngit:\n  - remote: github.com/owner/repo\n    fetch: true\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, errBrokerPort)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAGitConfigOfEnvNextToTheGitBroker(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - GIT_CONFIG_COUNT=1\ngit:\n  - remote: github.com/owner/repo\n    fetch: true\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.ErrorIs(t, err, errOwnGitConfig)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunServesTheForwarderAndTheGitBrokerTogether(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "env:\n  - ANTHROPIC_API_KEY=sk-real\ngit:\n  - remote: github.com/owner/repo\n    fetch: true\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+
+	spec := f.launch.spec
+	assert.Equal(t, []uint16{3129, 3130}, spec.Loopback)
+	assert.Equal(t, []uint16{443}, spec.Ports)
+	assert.NotNil(t, spec.Proxy.Local("localhost", "3129"))
+	assert.NotNil(t, spec.Proxy.Local("localhost", "3130"))
 }
 
 func TestRunTakesTheFoldersOfAVariableInThePath(t *testing.T) {

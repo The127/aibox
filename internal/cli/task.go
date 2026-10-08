@@ -199,6 +199,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	// the targets of this task, apart from those of other runs
 	network := proxy.NewLog(t.proxyLog)
 	spec.Proxy.OnConnected, spec.Proxy.OnRefused = network.Connected, network.Refused
+	spec.Proxy.Local = r.local(t.proxyLog)
 
 	progress := task.NewLineCleaner(vm)
 	spec.Progress = progress

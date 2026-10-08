@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,6 +304,35 @@ func TestTaskReportsTheTargetsOfTheProxy(t *testing.T) {
 	project, err := os.ReadFile(f.project(t).Log)
 	require.NoError(t, err)
 	assert.Empty(t, string(project), "the targets of a task stay out of the log of the project")
+}
+
+func TestTaskWritesWhatTheGitBrokerRefusedIntoItsOwnLog(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.writeConfig(t, "git:\n  - remote: github.com/owner/repo\n    fetch: true\n")
+	f.sends(t, "", map[string]string{task.ResultFile: `{"claudeExitCode":0}`}, task.ResultFile)
+	vm := f.launch.vm
+	f.launch.vm = func(ctx context.Context, spec backend.Spec) error {
+		broker := spec.Proxy.Local("localhost", "3130")
+		require.NotNil(t, broker)
+		broker.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/github.com/owner/other/info/refs?service=git-upload-pack", nil))
+
+		return vm(ctx, spec)
+	}
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.NoError(t, err)
+
+	log, err := os.ReadFile(filepath.Join(f.taskDir(t), proxyLogFile))
+	require.NoError(t, err)
+	assert.Contains(t, string(log), "git refused github.com/owner/other")
+
+	project, err := os.ReadFile(f.project(t).Log)
+	require.NoError(t, err)
+	assert.Empty(t, string(project))
 }
 
 func TestListTargetsSaysWhenTheLogIsFull(t *testing.T) {

@@ -253,6 +253,100 @@ func TestServeReportsARefusedHost(t *testing.T) {
 	}
 }
 
+func TestServeAnswersALocalTargetItselfOverHTTP(t *testing.T) {
+	// arrange
+	connected := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		Allow:       func(string, string) bool { return false },
+		OnConnected: func(target string) { connected <- target },
+		Local: func(host, port string) http.Handler {
+			if host != "localhost" || port != "3129" {
+				return nil
+			}
+
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, "local "+r.URL.Path) //nolint:gosec // a test handler, the reply is no page
+			})
+		},
+	})
+	conn := dial(t, address)
+
+	// act: the first request comes in the same write as the CONNECT
+	_, err := io.WriteString(conn, "CONNECT localhost:3129 HTTP/1.1\r\nHost: localhost:3129\r\n\r\nGET /one HTTP/1.1\r\nHost: x\r\n\r\n")
+	require.NoError(t, err)
+
+	reader := bufio.NewReader(conn)
+	status, err := reader.ReadString('\n')
+	require.NoError(t, err)
+
+	for line := ""; line != "\r\n"; {
+		line, err = reader.ReadString('\n')
+		require.NoError(t, err)
+	}
+
+	first := readBody(t, reader, "/one")
+
+	_, err = io.WriteString(conn, "GET /two HTTP/1.1\r\nHost: x\r\n\r\n")
+	require.NoError(t, err)
+
+	second := readBody(t, reader, "/two")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established\r\n", status)
+	assert.Equal(t, "local /one", first)
+	assert.Equal(t, "local /two", second)
+	assert.Equal(t, "localhost:3129", <-connected)
+}
+
+func TestServeStopsWithALocalTunnelOpen(t *testing.T) {
+	// arrange
+	address, stop := start(t, proxy.Options{Local: func(string, string) http.Handler { return http.NotFoundHandler() }})
+	status, tunnel := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", status)
+
+	// act
+	err := stop()
+
+	// assert
+	require.NoError(t, err)
+
+	_, err = tunnel.Read(make([]byte, 1))
+	assert.Error(t, err)
+}
+
+func TestServeConnectsToATargetThatIsNotLocal(t *testing.T) {
+	// arrange
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = target.Close() })
+
+	address := serve(t, proxy.Options{Local: func(string, string) http.Handler { return nil }})
+
+	// act
+	status, _ := connect(t, address, target.Addr().String())
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", status)
+}
+
+// readBody reads the response to a GET of path from the tunnel.
+func readBody(t *testing.T, reader *bufio.Reader, path string) string {
+	t.Helper()
+
+	request, err := http.NewRequest(http.MethodGet, path, nil)
+	require.NoError(t, err)
+
+	response, err := http.ReadResponse(reader, request)
+	require.NoError(t, err)
+
+	defer func() { _ = response.Body.Close() }()
+
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+
+	return string(body)
+}
+
 func TestLogWritesEachTargetOnce(t *testing.T) {
 	// arrange
 	var out bytes.Buffer

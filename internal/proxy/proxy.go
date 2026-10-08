@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -36,6 +37,10 @@ type Options struct {
 	Hint string
 	// Resolve looks a host name up. Nil uses the system resolver.
 	Resolve func(ctx context.Context, host string) ([]net.IP, error)
+	// Local returns the handler that answers a target itself, over HTTP in
+	// the tunnel, or nil for a target the proxy connects to. A target it
+	// answers needs no place on the allow list.
+	Local func(host, port string) http.Handler
 	// Pinned returns the addresses a name stands for without asking DNS,
 	// such as localhost. They are dialed even when they are not public. Nil,
 	// or no addresses, resolves the name as usual.
@@ -78,8 +83,18 @@ func Serve(ctx context.Context, listener net.Listener, options Options) error {
 func handle(ctx context.Context, conn net.Conn, options Options) {
 	reader := bufio.NewReader(conn)
 
-	host, port, ok := handshake(conn, reader, options)
+	host, port, local, ok := handshake(conn, reader, options)
 	if !ok {
+		return
+	}
+
+	if local != nil {
+		if options.OnConnected != nil {
+			options.OnConnected(net.JoinHostPort(host, port))
+		}
+
+		serveLocal(ctx, conn, reader, local)
+
 		return
 	}
 
@@ -119,15 +134,16 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 }
 
 // handshake reads the CONNECT request and returns the host and port to
-// reach. It answers the client itself when there is nothing to reach.
-func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port string, ok bool) {
+// reach, or the handler that answers them. It answers the client itself
+// when there is nothing to reach.
+func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port string, local http.Handler, ok bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 
 	request, err := http.ReadRequest(reader)
 	if err != nil {
 		writeError(conn, http.StatusBadRequest, "")
 
-		return "", "", false
+		return "", "", nil, false
 	}
 
 	_ = conn.SetReadDeadline(time.Time{})
@@ -135,24 +151,94 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port
 	if request.Method != http.MethodConnect {
 		writeError(conn, http.StatusMethodNotAllowed, "")
 
-		return "", "", false
+		return "", "", nil, false
 	}
 
 	host, port, err = net.SplitHostPort(request.Host)
 	if err != nil || host == "" || port == "" {
 		writeError(conn, http.StatusBadRequest, "")
 
-		return "", "", false
+		return "", "", nil, false
+	}
+
+	if options.Local != nil {
+		if local = options.Local(host, port); local != nil {
+			return host, port, local, true
+		}
 	}
 
 	if options.Allow != nil && !options.Allow(host, port) {
 		refuse(conn, request.Host, reasonNotAllowed, options)
 
-		return "", "", false
+		return "", "", nil, false
 	}
 
-	return host, port, true
+	return host, port, nil, true
 }
+
+// serveLocal answers the tunnel with the handler until the client closes it
+// or the context ends.
+func serveLocal(ctx context.Context, conn net.Conn, reader *bufio.Reader, handler http.Handler) {
+	writeTunnelOK(conn)
+
+	// the reader may hold bytes the client sent right after its request
+	listener := &oneConn{conn: bufferedConn{Conn: conn, reader: reader}, done: make(chan struct{})}
+
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: handshakeTimeout,
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateClosed || state == http.StateHijacked {
+				_ = listener.Close()
+			}
+		},
+		ErrorLog: log.New(io.Discard, "", 0),
+	}
+
+	stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+	defer stop()
+
+	_ = server.Serve(listener)
+}
+
+// bufferedConn reads what the reader of the handshake holds before the rest
+// of the connection.
+type bufferedConn struct {
+	net.Conn
+
+	reader *bufio.Reader
+}
+
+func (c bufferedConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
+
+// oneConn is a listener of a single connection. Accept returns it once and
+// then waits until it is closed.
+type oneConn struct {
+	conn     net.Conn
+	accepted bool
+	once     sync.Once
+	done     chan struct{}
+}
+
+func (l *oneConn) Accept() (net.Conn, error) {
+	if !l.accepted {
+		l.accepted = true
+
+		return l.conn, nil
+	}
+
+	<-l.done
+
+	return nil, net.ErrClosed
+}
+
+func (l *oneConn) Close() error {
+	l.once.Do(func() { close(l.done) })
+
+	return nil
+}
+
+func (l *oneConn) Addr() net.Addr { return l.conn.LocalAddr() }
 
 // refuse answers with a 403 that says why, so that the program inside the
 // VM can report it. The hint says where to allow the host, which only helps

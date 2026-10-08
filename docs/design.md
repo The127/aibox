@@ -37,6 +37,18 @@ address the allow list names for that port. So programs that ignore the proxy
 variables reach the port too, and the server sees the `Host` it expects,
 since many local servers refuse other names against DNS rebinding.
 
+An API key of the Claude Console in `env` stays on the host. The VM gets a
+placeholder and `ANTHROPIC_BASE_URL=http://127.0.0.1:3129`, and the init
+listens on that port as on the others. For `CONNECT localhost:3129` the
+proxy dials nothing and answers HTTP in the tunnel itself. It sends each
+request under `/v1/`, and the check Claude Code makes at `/api/hello`, to
+`https://api.anthropic.com`, whatever host the request names. It refuses a
+path with dot segments or escapes, drops the credentials the VM sent and
+adds the key. The log of the proxy shows these requests as `localhost:3129`.
+aibox reads the root certificates before it is confined, because the sandbox
+keeps it from reading them later, and on macOS from asking the system to
+check a certificate. A subscription token is passed into the VM as it is.
+
 The proxy logs each host and port it connected to or refused, once per run,
 and stops after 1000 of each kind so that a VM cannot fill the log. A task
 has a log of its own, and its report names the hosts. The log holds the name

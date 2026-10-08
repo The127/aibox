@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.0](https://github.com/The127/aibox/compare/v1.3.0...v1.4.0) (2026-10-08)
+
+
+### Features
+
+* a git broker with rules per repository ([#41](https://github.com/The127/aibox/issues/41)) ([39c1300](https://github.com/The127/aibox/commit/39c1300e25a868ce827e352cb11e60a8bedd079d)), closes [#17](https://github.com/The127/aibox/issues/17)
+* install aibox with Nix on macOS ([#43](https://github.com/The127/aibox/issues/43)) ([8c722d6](https://github.com/The127/aibox/commit/8c722d61425b00ba0ece258db882edf59e6a0375))
+* reach git servers over SSH when git has no HTTPS login ([#46](https://github.com/The127/aibox/issues/46)) ([fb4b2cd](https://github.com/The127/aibox/commit/fb4b2cd1ff7aa080bf55e8d56eb9afb28da371cb))
+
 ## [1.3.0](https://github.com/The127/aibox/compare/v1.2.0...v1.3.0) (2026-10-08)
 
 

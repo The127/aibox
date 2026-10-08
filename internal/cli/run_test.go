@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,7 @@ func newFixture(t *testing.T) *fixture {
 		gitLogin: func(context.Context, string) (gitconfig.Login, error) {
 			return gitconfig.Login{Username: "someone", Password: "host-token"}, nil
 		},
+		sshKeys: func() (sshKeys, error) { return nil, errors.New("no SSH agent and no known hosts") },
 		backend: f.launch,
 		version: func() string { return f.version },
 		imageDigest: func(arch string) (string, bool) {
@@ -840,7 +842,55 @@ func TestRunGitConfigSendsEveryFormOfTheRemoteToTheBroker(t *testing.T) {
 	}
 }
 
-func TestRunNamesTheRemoteGitHasNoLoginFor(t *testing.T) {
+// fakeSSHKeys answer for every host with target, or with err.
+type fakeSSHKeys struct {
+	target gitconfig.SSHTarget
+	err    error
+	asked  []string
+	closed bool
+}
+
+func (k *fakeSSHKeys) For(_ context.Context, host string) (gitconfig.SSHTarget, error) {
+	k.asked = append(k.asked, host)
+
+	return k.target, k.err
+}
+
+func (k *fakeSSHKeys) Close() { k.closed = true }
+
+func TestRunTakesTheSSHKeysWhenGitHasNoLoginForHTTPS(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "git:\n  - remote: github.com/owner/repo\n    fetch: true\n  - remote: github.com/owner/other\n    fetch: true\n")
+	f.deps.gitLogin = func(context.Context, string) (gitconfig.Login, error) {
+		return gitconfig.Login{}, gitconfig.ErrNoLogin
+	}
+
+	keys := &fakeSSHKeys{target: gitconfig.SSHTarget{Address: "ssh.github.com:443", User: "git", Keys: []string{"/home/someone/.ssh/id_ed25519"}}}
+	loads := 0
+	f.deps.sshKeys = func() (sshKeys, error) {
+		loads++
+
+		return keys, nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, loads)
+	assert.Equal(t, []string{"github.com", "github.com"}, keys.asked)
+	assert.True(t, keys.closed, "the agent is let go when the run ends")
+	assert.Contains(t, f.stderr.String(), "aibox: git has no login for HTTPS for github.com/owner/repo, so the broker reaches it over SSH as git@ssh.github.com:443 with /home/someone/.ssh/id_ed25519")
+
+	spec := f.launch.spec
+	assert.Equal(t, []uint16{443}, spec.Ports)
+	assert.NotNil(t, spec.Proxy.Local("localhost", "3130"))
+}
+
+func TestRunAllowsAiboxThePortOfTheSSHServer(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
@@ -848,14 +898,49 @@ func TestRunNamesTheRemoteGitHasNoLoginFor(t *testing.T) {
 	f.deps.gitLogin = func(context.Context, string) (gitconfig.Login, error) {
 		return gitconfig.Login{}, gitconfig.ErrNoLogin
 	}
+	f.deps.sshKeys = func() (sshKeys, error) {
+		return &fakeSSHKeys{target: gitconfig.SSHTarget{Address: "github.com:22", User: "git"}}, nil
+	}
 
 	// act
 	err := f.run("--image", image)
 
 	// assert
-	require.ErrorIs(t, err, gitconfig.ErrNoLogin)
-	assert.ErrorContains(t, err, "github.com/owner/repo")
-	assert.False(t, f.launch.called)
+	require.NoError(t, err)
+	assert.Equal(t, []uint16{443, 22}, f.launch.spec.Ports)
+}
+
+func TestRunNamesBothWaysWhenNeitherHTTPSNorSSHWorks(t *testing.T) {
+	cases := map[string]struct {
+		keys func() (sshKeys, error)
+		err  error
+	}{
+		"no SSH key":      {func() (sshKeys, error) { return &fakeSSHKeys{err: gitconfig.ErrNoSSHKey}, nil }, gitconfig.ErrNoSSHKey},
+		"an unknown host": {func() (sshKeys, error) { return &fakeSSHKeys{err: gitconfig.ErrUnknownHost}, nil }, gitconfig.ErrUnknownHost},
+		"no known hosts":  {func() (sshKeys, error) { return nil, fs.ErrPermission }, fs.ErrPermission},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.writeConfig(t, "git:\n  - remote: github.com/owner/repo\n    fetch: true\n")
+			f.deps.gitLogin = func(context.Context, string) (gitconfig.Login, error) {
+				return gitconfig.Login{}, gitconfig.ErrNoLogin
+			}
+			f.deps.sshKeys = c.keys
+
+			// act
+			err := f.run("--image", image)
+
+			// assert
+			require.ErrorIs(t, err, c.err)
+			assert.ErrorContains(t, err, "github.com/owner/repo")
+			assert.ErrorContains(t, err, "no login for HTTPS")
+			assert.False(t, f.launch.called)
+		})
+	}
 }
 
 func TestRunRefusesTheLoopbackPortOfTheGitBroker(t *testing.T) {

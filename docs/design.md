@@ -73,6 +73,30 @@ cannot tell a force push from another one, since that needs the history.
 Answers that refuse the login or redirect become an error for the VM, so it
 never asks for a login of its own.
 
+When git on the host has no login for a repository, the broker reaches it
+over SSH as `git@HOST`. Before the VM starts, aibox asks `ssh -G` for the
+host name, the port, the key files, the agent and the known hosts ssh would
+use, takes the keys of the agent and the key files without a passphrase
+among them, and reads the known hosts. It refuses a host the config reaches
+through a proxy. The connection to the agent stays open, since it signs for the
+broker later, and the port of the server joins the ports aibox may connect
+to. The broker asks the server only for the types of key the known hosts
+hold for it, and refuses a server they do not know. It logs in once per
+repository and opens a session on that connection for each request, at
+most four at a time, and logs in again when the connection broke. HTTP is
+stateless and SSH is not, so for each request of git in the VM the broker
+runs the service on the server once. For the advertisement it passes on
+what the server advertises, with the line that names the service over
+HTTP, and then ends the service. For a request it skips the advertisement,
+sends the body, decompressed when git compressed it for HTTP, and passes on
+the answer. Git in the VM sends `Git-Protocol`, which the broker passes on
+as `GIT_PROTOCOL` so that a fetch runs in version 2. Logging in, opening
+and closing a session, the advertisement and each silence in an answer have
+a time limit, a request git in the VM gives up on ends its session, and what the server says on its standard error goes into the
+error and the log. The checks of a push are the same as over HTTPS. A
+server path that starts with `-` or `~` is refused in the config, since the
+server would read it as an option or a home folder.
+
 The proxy logs each host and port it connected to or refused, once per run,
 and stops after 1000 of each kind so that a VM cannot fill the log. A task
 has a log of its own, and its report names the hosts. The log holds the name

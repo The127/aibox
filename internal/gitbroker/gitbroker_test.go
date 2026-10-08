@@ -119,6 +119,13 @@ type safeWriter struct {
 	w  *bytes.Buffer
 }
 
+func (s *safeWriter) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.w.String()
+}
+
 func (s *safeWriter) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

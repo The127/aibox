@@ -40,6 +40,8 @@ func TestLoadRejectsARemoteThatIsNotHostAndPath(t *testing.T) {
 		"github.com/owner/re po",
 		"github.com/owner/repo?x",
 		"*.github.com/owner/repo",
+		"github.com/-owner/repo",
+		"github.com/~owner/repo",
 	} {
 		t.Run(remote, func(t *testing.T) {
 			// arrange

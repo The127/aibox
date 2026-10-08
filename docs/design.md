@@ -132,6 +132,12 @@ nosuid.
   and a copy of the kernel. Devices, the disks and the sockets reach it as
   open files from aibox, and it filters its own syscalls.
   `aibox run --no-sandbox` runs it without bubblewrap, for debugging.
+- QEMU and virtiofsd end with aibox, even when aibox is killed or crashes.
+  bubblewrap kills QEMU in the sandbox when aibox dies. virtiofsd, and QEMU
+  without the sandbox, get SIGKILL from the kernel then, since aibox starts
+  them with a parent death signal. The kernel sends that signal when the
+  thread that started the program ends, so aibox starts all of them from
+  one thread that lives as long as aibox does.
 - Once QEMU runs, aibox restricts itself too: no new privileges, Landlock
   rules that let it read `/etc` for DNS and connect only to the ports of the
   allow list, and a seccomp filter that refuses ptrace, mount, namespace and

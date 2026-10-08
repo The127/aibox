@@ -262,8 +262,9 @@ aibox tasks clean --all --older-than 720h
 included. `--older-than` limits it to the tasks that started longer ago.
 The command also removes what is left of tasks that failed as they started.
 It names every folder it could not check or clean and then exits with 1.
-A task counts as ended once its aibox ends, so do not clean while an aibox
-that was killed may have left its VM running.
+A task counts as ended once its aibox ends. On Linux the kernel stops QEMU
+and virtiofsd when aibox dies, even when it is killed, so a killed aibox
+leaves no VM running.
 
 ## Project config
 

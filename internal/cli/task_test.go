@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
+	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/task"
 )
 
@@ -262,6 +264,51 @@ func TestTaskStampsWhatTheLauncherPrints(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Regexp(t, stamped(f.taskDir(t), "aibox", "the proxy stopped", "qemu: a warning"), f.stderr.String())
+}
+
+func TestTaskReportsTheTargetsOfTheProxy(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.sends(t, "", map[string]string{task.ResultFile: `{"claudeExitCode":0}`}, task.ResultFile)
+	vm := f.launch.vm
+	f.launch.vm = func(ctx context.Context, spec backend.Spec) error {
+		for i := range 7 {
+			spec.Proxy.OnConnected(fmt.Sprintf("host%d.example:443", i))
+		}
+
+		spec.Proxy.OnConnected("host0.example:443")
+		spec.Proxy.OnRefused("evil\x1b[31m.example:443")
+
+		return vm(ctx, spec)
+	}
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.NoError(t, err)
+
+	dir := f.taskDir(t)
+	assert.Regexp(t, stamped(dir, "aibox",
+		"the VM connected to host0.example:443, host1.example:443, host2.example:443, host3.example:443, host4.example:443 and 2 more",
+		"the proxy refused evil?[31m.example:443"), f.stderr.String())
+
+	log, err := os.ReadFile(filepath.Join(dir, proxyLogFile)) //nolint:gosec // the folder is the test's own
+	require.NoError(t, err)
+	assert.Equal(t, 8, strings.Count(string(log), "\n"))
+	assert.Contains(t, string(log), `connected "host6.example:443"`)
+	assert.Contains(t, string(log), `refused "evil\x1b[31m.example:443"`)
+
+	project, err := os.ReadFile(f.project(t).Log)
+	require.NoError(t, err)
+	assert.Empty(t, string(project), "the targets of a task stay out of the log of the project")
+}
+
+func TestListTargetsSaysWhenTheLogIsFull(t *testing.T) {
+	targets := proxy.Targets{List: []string{"a:1", "b:2", "c:3", "d:4", "e:5", "f:6"}, Full: true}
+
+	assert.Equal(t, "a:1, b:2, c:3, d:4, e:5 and 1 more, and more that were not logged", listTargets(targets))
+	assert.Equal(t, "a:1", listTargets(proxy.Targets{List: []string{"a:1"}}))
 }
 
 func TestTaskLeavesAnErrorBeforeItHasAnIDToMain(t *testing.T) {

@@ -91,8 +91,8 @@ see all of your files.
 The VM keeps a home folder and a disk for each project, so the login of
 Claude Code, `~/.claude`, and tools installed into `/usr/local` survive
 restarts. The messages of the kernel and the init go into `console.log`, and
-the hosts the proxy refused into `proxy.log`, both in the folder of the
-project below `~/.aibox/projects`.
+the hosts and ports the proxy connected to or refused into `proxy.log`, each
+once per run, both in the folder of the project below `~/.aibox/projects`.
 
 ## Tasks
 
@@ -120,8 +120,9 @@ aibox task --model sonnet "fix the flaky test in internal/proxy"
   as for `aibox run`. Other tasks and `aibox run` never see the home or the
   disk, so several tasks can run at once.
 - The project config applies as for `aibox run`: `allow`, `mounts`, `path`,
-  `env`, `memory`, `cpus` and `disk`. Hosts the proxy refused go into the
-  `proxy.log` of the project.
+  `env`, `memory`, `cpus` and `disk`. The hosts the proxy connected to or
+  refused go into a `proxy.log` of the task, not into the one of the
+  project.
 
 A task can use everything the config gives it, and nobody stops it. It can
 reach every host on the allow list, and every port of your machine that the
@@ -131,8 +132,9 @@ Code is told to push or open a pull request only when your prompt asks for
 it, only to a repository whose URL your prompt names, and only to a new
 branch, but nothing enforces that. A pushed branch or pull request can start
 the CI of the repository, with its secrets. What Claude Code says it
-published is its own word, and aibox logs only the hosts the proxy refused,
-not the ones it let through. Text it reads, in the project or from the
+published is its own word. aibox names the hosts the proxy connected to, but
+not what went through those connections, so a push to `github.com` and a
+fetch from it look the same. Text it reads, in the project or from the
 network, can steer it. So before you run a task, take out of the config the
 hosts, ports and secrets the task does not need.
 
@@ -195,10 +197,12 @@ page. For many tasks, or tasks for a team, use an API key.
 
 ### Results
 
-At the end aibox prints how the task went, the last message of Claude Code
-and the command that fetches the changes into a branch of your repository:
+At the end aibox prints the hosts the VM connected to, how the task went,
+the last message of Claude Code and the command that fetches the changes
+into a branch of your repository:
 
 ```
+17:09:25 aibox[259e07]: the VM connected to api.anthropic.com:443
 17:09:25 aibox[259e07]: Claude Code exited with 0
 17:09:25 aibox[259e07]: 4 turns in 8.321s, about 0.05 USD at API prices, ended by completed
 17:09:25 vm[259e07]: | I added a "Purpose" section to the README and committed it as f3572af.
@@ -244,6 +248,7 @@ scripts.
 | `transcript.jsonl` | Everything Claude Code did, as `stream-json`, cut at 256 MiB. |
 | `claude.log` | What Claude Code wrote to standard error, cut at 1 MiB. |
 | `console.log` | The messages of the kernel and the init of the VM. |
+| `proxy.log` | Each host and port the proxy connected to or refused for the task, once, with the time it first did, up to 1000 of each kind. aibox writes it, not the VM. It shows the name the VM asked for, not what went through. |
 | `share/` | The prompt, the settings and the bundle of the commit the task started from, with all its history, until `aibox tasks clean` removes it. |
 | `lock` | Locked while the task runs, so that `aibox tasks clean` leaves the task alone. |
 

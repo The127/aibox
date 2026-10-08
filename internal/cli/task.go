@@ -23,6 +23,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/task"
 )
 
@@ -46,6 +47,14 @@ var (
 // aibox stops the VM: the boot and the git steps before and after Claude
 // Code, which have 10 minutes each in the VM.
 const taskSlack = 25 * time.Minute
+
+// proxyLogFile is the file in the folder of a task that the proxy writes
+// the targets of the task to.
+const proxyLogFile = "proxy.log"
+
+// maxListedTargets is how many targets of each kind the report of a task
+// names. The log of the proxy has them all.
+const maxListedTargets = 5
 
 // maxPromptBytes is how long the prompt of a task may be, its arguments and
 // its file together.
@@ -82,6 +91,8 @@ type taskRun struct {
 	share   string
 	base    string
 	results map[string]*os.File
+	// proxyLog is where the proxy writes the targets of this task alone
+	proxyLog *os.File
 	// lock is locked for as long as the task runs, see cleanTasks
 	lock *os.File
 }
@@ -185,6 +196,10 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	spec.Task = t.share
 	spec.ConsoleLog = filepath.Join(t.dir, "console.log")
 
+	// the targets of this task, apart from those of other runs
+	network := proxy.NewLog(t.proxyLog)
+	spec.Proxy.OnConnected, spec.Proxy.OnRefused = network.Connected, network.Refused
+
 	progress := task.NewLineCleaner(vm)
 	spec.Progress = progress
 
@@ -227,6 +242,8 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 
 	receiveErr := <-received
 
+	reportNetwork(host, network)
+
 	// aibox can remove it until it is confined, and the backend removes it
 	// once the VM has it, so it is gone either way
 	_ = os.Remove(spec.State)
@@ -255,6 +272,40 @@ func finishLog(host, vm *task.LogWriter, err error) error {
 	_ = host.Close()
 
 	return err
+}
+
+// reportNetwork says which targets the proxy connected to and which it
+// refused. The proxy on the host saw them, so this is no word of the VM,
+// but it shows only what the VM asked for, not what went through.
+func reportNetwork(host io.Writer, log *proxy.Log) {
+	connected, refused := log.Targets()
+
+	if len(connected.List) > 0 {
+		_, _ = fmt.Fprintf(host, "the VM connected to %s\n", listTargets(connected))
+	}
+
+	if len(refused.List) > 0 {
+		_, _ = fmt.Fprintf(host, "the proxy refused %s\n", listTargets(refused))
+	}
+}
+
+// listTargets names the first targets, cleaned, since the VM chose them.
+func listTargets(targets proxy.Targets) string {
+	names := make([]string, 0, maxListedTargets)
+	for _, target := range targets.List[:min(len(targets.List), maxListedTargets)] {
+		names = append(names, task.CleanLine(target))
+	}
+
+	list := strings.Join(names, ", ")
+
+	switch more := len(targets.List) - len(names); {
+	case targets.Full:
+		list += fmt.Sprintf(" and %d more, and more that were not logged", more)
+	case more > 0:
+		list += fmt.Sprintf(" and %d more", more)
+	}
+
+	return list
 }
 
 // shortID is the random end of the ID of a task, which tells it apart from
@@ -502,6 +553,11 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 		t.results[name] = file
 	}
 
+	// aibox writes it, never the VM
+	if t.proxyLog, err = os.OpenFile(filepath.Join(t.dir, proxyLogFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err != nil {
+		return nil, fmt.Errorf("make %s: %w", proxyLogFile, err)
+	}
+
 	started = true
 
 	return t, nil
@@ -615,6 +671,10 @@ func (t *taskRun) writers() map[string]io.Writer {
 func (t *taskRun) close() {
 	for _, file := range t.results {
 		_ = file.Close()
+	}
+
+	if t.proxyLog != nil {
+		_ = t.proxyLog.Close()
 	}
 
 	_ = t.lock.Close()

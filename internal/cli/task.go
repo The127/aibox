@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/urfave/cli/v3"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/task"
@@ -33,6 +34,7 @@ var (
 	errNoPrompt     = errors.New("task needs a prompt, as arguments, with --file, or on stdin")
 	errLongPrompt   = errors.New("the prompt is longer than 1 MiB, its arguments and its file together")
 	errNoText       = errors.New("the prompt is not UTF-8 text")
+	errNoLockFile   = errors.New("the lock of the task is no plain file")
 	errNoPromptFile = errors.New("the file of the prompt must be a plain file, use --file - for a pipe")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
 	errNoCommit     = errors.New("task must start in a git repository, from a commit")
@@ -80,6 +82,8 @@ type taskRun struct {
 	share   string
 	base    string
 	results map[string]*os.File
+	// lock is locked for as long as the task runs, see cleanTasks
+	lock *os.File
 }
 
 func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
@@ -395,11 +399,42 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 		return nil, err
 	}
 
-	t := &taskRun{
-		dir:     filepath.Join(projectDir, "tasks", id),
-		base:    base,
-		results: map[string]*os.File{},
+	tasks := filepath.Join(projectDir, "tasks")
+	if err := os.MkdirAll(tasks, 0o700); err != nil {
+		return nil, fmt.Errorf("make the folder of the tasks: %w", err)
 	}
+
+	// the folder gets its name only once it holds its lock, so that no
+	// other task takes it for the folder of a task that ended
+	newDir, err := os.MkdirTemp(tasks, newTaskPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("make the folder of the task: %w", err)
+	}
+
+	t := &taskRun{dir: newDir, base: base, results: map[string]*os.File{}}
+
+	// a task that cannot start leaves neither its lock nor its folder
+	started := false
+
+	defer func() {
+		if !started {
+			t.close()
+
+			_ = os.RemoveAll(t.dir)
+		}
+	}()
+
+	// another aibox may hold the lock for a moment, as it looks for tasks
+	// that ended
+	if t.lock, err = lockTask(newDir, os.O_CREATE, true); err != nil {
+		return nil, fmt.Errorf("lock the task: %w", err)
+	}
+
+	if err := os.Rename(newDir, filepath.Join(tasks, id)); err != nil {
+		return nil, fmt.Errorf("name the folder of the task: %w", err)
+	}
+
+	t.dir = filepath.Join(tasks, id)
 	t.share = filepath.Join(t.dir, "share")
 
 	// the VM user stands for the person in the share, but on macOS it sees
@@ -431,13 +466,13 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 	for _, name := range []string{task.TranscriptFile, task.LogFile, task.ChangesFile, task.ResultFile} {
 		file, err := os.OpenFile(filepath.Join(t.dir, name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the names are aibox's own
 		if err != nil {
-			t.close()
-
 			return nil, fmt.Errorf("make %s: %w", name, err)
 		}
 
 		t.results[name] = file
 	}
+
+	started = true
 
 	return t, nil
 }
@@ -477,6 +512,56 @@ func bundleCommit(cwd, commit, bundle, tmp string) error {
 	return nil
 }
 
+const (
+	// lockFile is the file in the folder of a task that the task holds a
+	// lock on while it runs
+	lockFile = "lock"
+	// newTaskPrefix starts the name of the folder of a task until it holds
+	// its lock
+	newTaskPrefix = ".new-"
+)
+
+// lockFlags open a lock file without following a link, without waiting
+// for a FIFO and without making a terminal the controlling one.
+const lockFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_NOCTTY
+
+// lockTask opens the lock file in the folder of a task and locks it. Unless
+// it waits, it fails with unix.EWOULDBLOCK while the task runs.
+func lockTask(dir string, flag int, wait bool) (*os.File, error) {
+	file, err := os.OpenFile(filepath.Join(dir, lockFile), flag|lockFlags, 0o600) //nolint:gosec // the name is aibox's own
+	if err != nil {
+		return nil, err
+	}
+
+	return lockOpened(file, wait)
+}
+
+// lockOpened locks the opened lock file, which must be a plain file, or
+// closes it.
+func lockOpened(file *os.File, wait bool) (*os.File, error) {
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+
+		return nil, errors.Join(errNoLockFile, err)
+	}
+
+	how := unix.LOCK_EX | unix.LOCK_NB
+	if wait {
+		how = unix.LOCK_EX
+	}
+
+	if err := unix.Flock(int(file.Fd()), how); err != nil {
+		_ = file.Close()
+
+		return nil, err
+	}
+
+	return file, nil
+}
+
+// taskIDTime is the layout of the time a task ID starts with.
+const taskIDTime = "20060102-150405"
+
 // taskID is the time the task starts and a random part, so that tasks
 // sort by their start and two that start at once differ.
 func taskID() (string, error) {
@@ -485,7 +570,7 @@ func taskID() (string, error) {
 		return "", err
 	}
 
-	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(random), nil
+	return time.Now().Format(taskIDTime) + "-" + hex.EncodeToString(random), nil
 }
 
 func (t *taskRun) writers() map[string]io.Writer {
@@ -501,6 +586,8 @@ func (t *taskRun) close() {
 	for _, file := range t.results {
 		_ = file.Close()
 	}
+
+	_ = t.lock.Close()
 }
 
 // report tells the person how the task went and where its results are,

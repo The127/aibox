@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
@@ -671,4 +672,47 @@ func TestTaskRefusesAFromThatIsNoCommit(t *testing.T) {
 			assert.False(t, f.launch.called)
 		})
 	}
+}
+
+func TestATaskHoldsItsLockWhileItRuns(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+
+	var lockErr error
+
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		_, lockErr = lockTask(filepath.Dir(spec.Task), 0, false)
+
+		return errors.New("stop")
+	}
+
+	// act
+	_ = f.task("fix it")
+
+	// assert
+	require.ErrorIs(t, lockErr, unix.EWOULDBLOCK)
+
+	lock, err := lockTask(f.taskDir(t), 0, false)
+	require.NoError(t, err, "the lock outlives the task")
+	require.NoError(t, lock.Close())
+}
+
+func TestATaskThatCannotStartLeavesNoFolder(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.deps.gitIdentity = func(string) gitconfig.Identity { return gitconfig.Identity{} }
+	tasks := filepath.Join(f.project(t).Dir, "tasks")
+	require.NoError(t, os.MkdirAll(tasks, 0o700))
+	// the bundle fails, since an object of the commit is gone
+	blob := strings.TrimSpace(f.git(t, "rev-parse", "HEAD:README"))
+	require.NoError(t, os.Remove(filepath.Join(f.cwd, ".git", "objects", blob[:2], blob[2:])))
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.Error(t, err)
+	entries, err := os.ReadDir(tasks)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }

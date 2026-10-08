@@ -95,7 +95,7 @@ func NewRootCommand() *cli.Command {
 		edit:            runEditor,
 		version:         version.Get,
 		imageDigest:     image.Digest,
-		fetchImage:      image.Fetcher{BaseURL: image.ReleasesURL, Client: image.NewClient(), Progress: showProgress(os.Stderr)}.Fetch,
+		fetchImage:      fetchImage(os.Stderr),
 		stdout:          os.Stdout,
 		stderr:          os.Stderr,
 	})
@@ -119,12 +119,27 @@ func aiboxDir() (string, error) {
 	return filepath.Join(home, ".aibox"), nil
 }
 
+// fetchImage downloads images from the releases and shows the progress on
+// w.
+func fetchImage(w io.Writer) func(ctx context.Context, version, arch, digest, dir string) error {
+	show, end := showProgress(w)
+	fetcher := image.Fetcher{BaseURL: image.ReleasesURL, Client: image.NewClient(), Progress: show}
+
+	return func(ctx context.Context, version, arch, digest, dir string) error {
+		defer end()
+
+		return fetcher.Fetch(ctx, version, arch, digest, dir)
+	}
+}
+
 // showProgress writes how much of a download arrived, in MB, on one line
-// that it rewrites when the count changes.
-func showProgress(w io.Writer) func(done, total int64) {
+// that it rewrites when the count changes. end ends the line once the
+// download is over, also when it failed or its size was not known, so that
+// what follows starts on a line of its own.
+func showProgress(w io.Writer) (show func(done, total int64), end func()) {
 	shown := int64(-1)
 
-	return func(done, total int64) {
+	show = func(done, total int64) {
 		mb := done >> 20
 		if mb == shown {
 			return
@@ -137,9 +152,15 @@ func showProgress(w io.Writer) func(done, total int64) {
 		} else {
 			_, _ = fmt.Fprintf(w, "\raibox: %d MB", mb)
 		}
+	}
 
-		if done == total {
+	end = func() {
+		if shown >= 0 {
 			_, _ = fmt.Fprintln(w)
 		}
+
+		shown = -1
 	}
+
+	return show, end
 }

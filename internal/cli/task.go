@@ -47,6 +47,10 @@ var (
 // Code, which have 10 minutes each in the VM.
 const taskSlack = 25 * time.Minute
 
+// vmPrefix starts every line of a task that comes from the VM, so that it
+// cannot pass for a line of aibox.
+const vmPrefix = "vm: "
+
 // maxPromptBytes is how long the prompt of a task may be, its arguments and
 // its file together.
 const maxPromptBytes = 1 << 20
@@ -179,7 +183,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Task = t.share
 	spec.ConsoleLog = filepath.Join(t.dir, "console.log")
 
-	progress := task.NewLineCleaner(deps.stderr)
+	progress := task.NewLineCleaner(deps.stderr, vmPrefix)
 	spec.Progress = progress
 
 	results, resultsWriter := io.Pipe()
@@ -608,7 +612,7 @@ func (t *taskRun) report(stdout, stderr io.Writer) error {
 	say("%s", summary(result))
 
 	for _, warning := range result.Warnings {
-		say("aibox: warning: %s\n", task.CleanLine(warning))
+		say("%swarning: %s\n", vmPrefix, task.CleanLine(warning))
 	}
 
 	head, err := t.changes()

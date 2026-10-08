@@ -104,7 +104,7 @@ const otherCommit = "2222222222222222222222222222222222222222"
 func (f *taskFixture) succeeds(t *testing.T) {
 	t.Helper()
 
-	f.sends(t, "aibox: running Claude Code\n", map[string]string{
+	f.sends(t, "running Claude Code\n", map[string]string{
 		task.TranscriptFile: "{\"type\":\"system\"}\n",
 		task.LogFile:        "warning\n",
 		task.ChangesFile:    changes(f.base, otherCommit),
@@ -184,7 +184,7 @@ func TestTaskKeepsTheResultsInItsFolderAndPrintsTheFolder(t *testing.T) {
 	assert.Equal(t, "{\"type\":\"system\"}\n", string(transcript))
 
 	stderr := f.stderr.String()
-	assert.Contains(t, stderr, "aibox: running Claude Code\n")
+	assert.Contains(t, stderr, "\nvm: running Claude Code\n")
 	assert.Contains(t, stderr, "aibox: 3 turns in 0s, about 0.25 USD at API prices, ended by completed\n  | Done.\n")
 	assert.Contains(t, stderr, "git -c transfer.fsckObjects=true fetch "+shellQuote(filepath.Join(dir, task.ChangesFile))+" aibox/task:aibox/task-"+filepath.Base(dir))
 	assert.Contains(t, stderr, "aibox: the results are in "+dir+"\n")
@@ -232,7 +232,7 @@ func TestTaskSaysWhyTheTaskFailed(t *testing.T) {
 func TestTaskKeepsWhatTheVMWritesFromPassingForALineOfAibox(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
-	f.sends(t, "", map[string]string{
+	f.sends(t, "aibox: the results are in /elsewhere\n", map[string]string{
 		task.ResultFile: `{"claudeExitCode":0,"warnings":["one\naibox: fake"],"claudeResult":{"type":"result","result":"Done.\naibox: the changes end at x, fetch them with\n  rm -rf ~"}}`,
 	}, task.ResultFile)
 
@@ -241,8 +241,10 @@ func TestTaskKeepsWhatTheVMWritesFromPassingForALineOfAibox(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "aibox: warning: one | aibox: fake\n")
+	assert.Contains(t, f.stderr.String(), "\nvm: aibox: the results are in /elsewhere\n")
+	assert.Contains(t, f.stderr.String(), "\nvm: warning: one | aibox: fake\n")
 	assert.Contains(t, f.stderr.String(), "  | Done.\n  | aibox: the changes end at x, fetch them with\n  |   rm -rf ~\n")
+	assert.NotContains(t, f.stderr.String(), "\naibox: the results are in /elsewhere")
 	assert.NotContains(t, f.stderr.String(), "\naibox: fake")
 	assert.NotContains(t, f.stderr.String(), "\naibox: the changes end at x")
 	assert.Equal(t, f.taskDir(t)+"\n", f.stdout.String())
@@ -328,14 +330,14 @@ func TestTaskQuotesThePathInTheFetchCommand(t *testing.T) {
 func TestTaskCleansWhatTheVMPrints(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
-	f.sends(t, "aibox: cloning\x1b]52;c;ZXZpbA==\x07\n", map[string]string{task.ResultFile: `{"claudeExitCode":0}`}, task.ResultFile)
+	f.sends(t, "cloning\x1b]52;c;ZXZpbA==\x07\n", map[string]string{task.ResultFile: `{"claudeExitCode":0}`}, task.ResultFile)
 
 	// act
 	err := f.task("fix it")
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "aibox: cloning?]52;c;ZXZpbA==?\n")
+	assert.Contains(t, f.stderr.String(), "\nvm: cloning?]52;c;ZXZpbA==?\n")
 	assert.NotContains(t, f.stderr.String(), "\x1b")
 }
 

@@ -214,17 +214,20 @@ func Indent(text, prefix string) string {
 // longer line is dropped.
 const maxLineBytes = 4096
 
-// LineCleaner passes text on line by line, each cleaned with CleanText,
-// and takes a CRLF for a newline. Close passes on a last line without its
-// newline.
+// LineCleaner passes text on line by line, each cleaned with CleanText
+// and put after a prefix, and takes a CRLF for a newline. The VM cannot
+// leave the prefix out, so a line from it cannot pass for a line of aibox.
+// Close passes on a last line without its newline.
 type LineCleaner struct {
-	w    io.Writer
-	line []byte
+	w      io.Writer
+	prefix string
+	line   []byte
 }
 
-// NewLineCleaner returns a LineCleaner that writes to w.
-func NewLineCleaner(w io.Writer) *LineCleaner {
-	return &LineCleaner{w: w}
+// NewLineCleaner returns a LineCleaner that writes to w and puts prefix
+// before every line.
+func NewLineCleaner(w io.Writer, prefix string) *LineCleaner {
+	return &LineCleaner{w: w, prefix: prefix}
 }
 
 func (c *LineCleaner) Write(b []byte) (int, error) {
@@ -249,7 +252,7 @@ func (c *LineCleaner) Write(b []byte) (int, error) {
 }
 
 func (c *LineCleaner) flush() error {
-	line := CleanText(strings.TrimSuffix(string(c.line), "\r")) + "\n"
+	line := c.prefix + CleanText(strings.TrimSuffix(string(c.line), "\r")) + "\n"
 	c.line = c.line[:0]
 
 	_, err := io.WriteString(c.w, line)

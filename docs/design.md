@@ -100,7 +100,10 @@ tells the init that it runs a task.
 - The host reads the header of the bundle without git. It refuses a bundle
   that carries another ref than `aibox/task` or needs a commit other than the
   one the task started from. Text from the VM is cleaned of control
-  characters before it reaches the terminal.
+  characters before it reaches the terminal. The host starts every
+  progress line from the VM with `vm: `, so that it cannot pass for a line
+  of aibox. The interactive session passes the terminal of the VM through,
+  so this holds only for tasks.
 - The files of the results are opened before the VM starts, since aibox
   confines itself once the VM runs and can open no file then. For the same
   reason a task cannot remove the bundle of its input when it ends. `aibox

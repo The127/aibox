@@ -744,8 +744,8 @@ func TestTaskSendsItsResultsAndWhatItDoesOverASession(t *testing.T) {
 
 	r := readResults(t, &out)
 	assert.Equal(t, []string{"transcript.jsonl", "claude.log", "changes.bundle", "result.json"}, r.names)
-	assert.Contains(t, progress.String(), "aibox: cloning the input\n")
-	assert.Contains(t, progress.String(), "aibox: bundling the changes\n")
+	assert.Contains(t, progress.String(), "cloning the input\n")
+	assert.Contains(t, progress.String(), "bundling the changes\n")
 	require.NoError(t, <-served)
 }
 

@@ -102,7 +102,11 @@ tells the init that it runs a task.
   one the task started from. Text from the VM is cleaned of control
   characters before it reaches the terminal.
 - The files of the results are opened before the VM starts, since aibox
-  confines itself once the VM runs and can open no file then.
+  confines itself once the VM runs and can open no file then. For the same
+  reason a task cannot remove the bundle of its input when it ends. aibox
+  removes the bundles of the tasks that run no more whenever it starts in
+  the project. Each task holds a lock on a file in its folder while it runs,
+  and its folder gets its name only once it holds the lock.
 
 ## Containers and VMs inside the VM
 

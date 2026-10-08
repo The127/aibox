@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/urfave/cli/v3"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/task"
@@ -33,6 +35,7 @@ var (
 	errNoPrompt     = errors.New("task needs a prompt, as arguments, with --file, or on stdin")
 	errLongPrompt   = errors.New("the prompt is longer than 1 MiB, its arguments and its file together")
 	errNoText       = errors.New("the prompt is not UTF-8 text")
+	errNoLockFile   = errors.New("the lock of the task is no plain file")
 	errNoPromptFile = errors.New("the file of the prompt must be a plain file, use --file - for a pipe")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
 	errNoCommit     = errors.New("task must start in a git repository, from a commit")
@@ -80,6 +83,8 @@ type taskRun struct {
 	share   string
 	base    string
 	results map[string]*os.File
+	// lock is locked for as long as the task runs, see removeOldInputs
+	lock *os.File
 }
 
 func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
@@ -395,11 +400,42 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 		return nil, err
 	}
 
-	t := &taskRun{
-		dir:     filepath.Join(projectDir, "tasks", id),
-		base:    base,
-		results: map[string]*os.File{},
+	tasks := filepath.Join(projectDir, "tasks")
+	if err := os.MkdirAll(tasks, 0o700); err != nil {
+		return nil, fmt.Errorf("make the folder of the tasks: %w", err)
 	}
+
+	// the folder gets its name only once it holds its lock, so that no
+	// other task takes it for the folder of a task that ended
+	newDir, err := os.MkdirTemp(tasks, newTaskPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("make the folder of the task: %w", err)
+	}
+
+	t := &taskRun{dir: newDir, base: base, results: map[string]*os.File{}}
+
+	// a task that cannot start leaves neither its lock nor its folder
+	started := false
+
+	defer func() {
+		if !started {
+			t.close()
+
+			_ = os.RemoveAll(t.dir)
+		}
+	}()
+
+	// another aibox may hold the lock for a moment, as it looks for tasks
+	// that ended
+	if t.lock, err = lockTask(newDir, os.O_CREATE, true); err != nil {
+		return nil, fmt.Errorf("lock the task: %w", err)
+	}
+
+	if err := os.Rename(newDir, filepath.Join(tasks, id)); err != nil {
+		return nil, fmt.Errorf("name the folder of the task: %w", err)
+	}
+
+	t.dir = filepath.Join(tasks, id)
 	t.share = filepath.Join(t.dir, "share")
 
 	// the VM user stands for the person in the share, but on macOS it sees
@@ -431,13 +467,13 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 	for _, name := range []string{task.TranscriptFile, task.LogFile, task.ChangesFile, task.ResultFile} {
 		file, err := os.OpenFile(filepath.Join(t.dir, name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the names are aibox's own
 		if err != nil {
-			t.close()
-
 			return nil, fmt.Errorf("make %s: %w", name, err)
 		}
 
 		t.results[name] = file
 	}
+
+	started = true
 
 	return t, nil
 }
@@ -477,6 +513,113 @@ func bundleCommit(cwd, commit, bundle, tmp string) error {
 	return nil
 }
 
+const (
+	// lockFile is the file in the folder of a task that the task holds a
+	// lock on while it runs
+	lockFile = "lock"
+	// newTaskPrefix starts the name of the folder of a task until it holds
+	// its lock
+	newTaskPrefix = ".new-"
+)
+
+// lockTask opens the lock file in the folder of a task and locks it. Unless
+// it waits, it fails with unix.EWOULDBLOCK while the task runs.
+func lockTask(dir string, flag int, wait bool) (*os.File, error) {
+	// a FIFO must not make the open wait, and only a plain file counts
+	file, err := os.OpenFile(filepath.Join(dir, lockFile), flag|os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0o600) //nolint:gosec // the name is aibox's own
+	if err != nil {
+		return nil, err
+	}
+
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+
+		return nil, errors.Join(errNoLockFile, err)
+	}
+
+	how := unix.LOCK_EX | unix.LOCK_NB
+	if wait {
+		how = unix.LOCK_EX
+	}
+
+	if err := unix.Flock(int(file.Fd()), how); err != nil {
+		_ = file.Close()
+
+		return nil, err
+	}
+
+	return file, nil
+}
+
+// removeOldInputs removes the bundle of the input of every task that runs
+// no more, whenever aibox starts in the project. It holds the whole history
+// of the project, and a task needs it only to start. aibox cannot remove it
+// as the task ends, since it can remove no file once the VM runs. It also
+// removes what is left of folders of tasks that ended before they got their
+// name. A folder whose lock is held, or is no plain file, keeps its bundle.
+func removeOldInputs(tasks string) {
+	entries, err := os.ReadDir(tasks)
+	if err != nil {
+		return
+	}
+
+	root, err := os.OpenRoot(tasks)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = root.Close() }()
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		dir := filepath.Join(tasks, entry.Name())
+
+		lock, err := lockTask(dir, 0, false)
+
+		// a task of an aibox before the lock file has none. It counts as
+		// ended, even when that aibox still runs it.
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+
+		switch {
+		case !strings.HasPrefix(entry.Name(), newTaskPrefix):
+			removeInput(root, entry.Name())
+		// another aibox may have made the folder a moment ago and not yet
+		// its lock, or not yet its lock file
+		case startedBefore(entry, time.Minute):
+			_ = os.RemoveAll(dir)
+		}
+
+		if lock != nil {
+			_ = lock.Close()
+		}
+	}
+}
+
+// removeInput removes the bundle of the input of the task of the name,
+// without following a link out of its folder.
+func removeInput(tasks *os.Root, name string) {
+	root, err := tasks.OpenRoot(name)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = root.Close() }()
+
+	_ = root.Remove(filepath.Join("share", task.InputBundle))
+}
+
+// startedBefore tells whether the entry changed longer than d ago.
+func startedBefore(entry fs.DirEntry, d time.Duration) bool {
+	info, err := entry.Info()
+
+	return err == nil && time.Since(info.ModTime()) > d
+}
+
 // taskID is the time the task starts and a random part, so that tasks
 // sort by their start and two that start at once differ.
 func taskID() (string, error) {
@@ -501,6 +644,8 @@ func (t *taskRun) close() {
 	for _, file := range t.results {
 		_ = file.Close()
 	}
+
+	_ = t.lock.Close()
 }
 
 // report tells the person how the task went and where its results are,

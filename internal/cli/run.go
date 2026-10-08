@@ -162,6 +162,8 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
 	}
 
+	removeOldInputs(filepath.Join(p.Dir, "tasks"))
+
 	cfg, err := config.Load(p.Config)
 	if err != nil {
 		return projectRun{}, err

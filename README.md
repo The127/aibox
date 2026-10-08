@@ -239,7 +239,8 @@ scripts.
 | `transcript.jsonl` | Everything Claude Code did, as `stream-json`, cut at 256 MiB. |
 | `claude.log` | What Claude Code wrote to standard error, cut at 1 MiB. |
 | `console.log` | The messages of the kernel and the init of the VM. |
-| `share/` | The prompt, the settings and the bundle of the commit the task started from, with all its history. |
+| `share/` | The prompt and the settings. Until aibox starts in the project again, also the bundle of the commit the task started from, with all its history. |
+| `lock` | Locked while the task runs, so that another task leaves its bundle alone. |
 
 aibox exits with 1 when the task did not finish. Claude Code failed or ran
 out of time, a step in the VM failed, the VM was stopped, or the VM sent

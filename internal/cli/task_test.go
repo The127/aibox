@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
@@ -671,4 +672,111 @@ func TestTaskRefusesAFromThatIsNoCommit(t *testing.T) {
 			assert.False(t, f.launch.called)
 		})
 	}
+}
+
+func TestTaskRemovesTheInputsOfTasksThatRunNoMore(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.succeeds(t)
+	tasks := filepath.Join(f.project(t).Dir, "tasks")
+
+	write := func(name string) {
+		path := filepath.Join(tasks, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+	}
+
+	for _, dir := range []string{"ended", "running", "older"} {
+		write(filepath.Join(dir, "share", task.InputBundle))
+		write(filepath.Join(dir, "share", task.PromptFile))
+	}
+
+	write(filepath.Join("ended", lockFile))
+	write(filepath.Join("running", lockFile))
+	write(filepath.Join(".new-stale", "share", task.PromptFile))
+	write(filepath.Join(".new-fresh", "share", task.PromptFile))
+	write(filepath.Join(".new-unlocked", lockFile))
+	write(filepath.Join(".new-locked", lockFile))
+	write(filepath.Join(".new-fresh-unlocked", lockFile))
+	write(filepath.Join("linked", lockFile))
+	write(filepath.Join("elsewhere", task.InputBundle))
+	require.NoError(t, os.Symlink(filepath.Join(tasks, "elsewhere"), filepath.Join(tasks, "linked", "share")))
+	write(filepath.Join("fifo", "share", task.InputBundle))
+	require.NoError(t, syscall.Mkfifo(filepath.Join(tasks, "fifo", lockFile), 0o600))
+
+	old := time.Now().Add(-time.Hour)
+	for _, dir := range []string{".new-stale", ".new-unlocked", ".new-locked"} {
+		require.NoError(t, os.Chtimes(filepath.Join(tasks, dir), old, old))
+	}
+
+	locked, err := lockTask(filepath.Join(tasks, ".new-locked"), 0, false)
+	require.NoError(t, err)
+
+	defer func() { _ = locked.Close() }()
+
+	running, err := lockTask(filepath.Join(tasks, "running"), 0, false)
+	require.NoError(t, err)
+
+	defer func() { _ = running.Close() }()
+
+	// act
+	err = f.task("fix it")
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(tasks, "ended", "share", task.InputBundle))
+	assert.FileExists(t, filepath.Join(tasks, "ended", "share", task.PromptFile))
+	assert.NoFileExists(t, filepath.Join(tasks, "older", "share", task.InputBundle))
+	assert.FileExists(t, filepath.Join(tasks, "running", "share", task.InputBundle))
+	assert.NoDirExists(t, filepath.Join(tasks, ".new-stale"))
+	assert.DirExists(t, filepath.Join(tasks, ".new-fresh"))
+	assert.NoDirExists(t, filepath.Join(tasks, ".new-unlocked"))
+	assert.DirExists(t, filepath.Join(tasks, ".new-locked"))
+	assert.DirExists(t, filepath.Join(tasks, ".new-fresh-unlocked"))
+	assert.FileExists(t, filepath.Join(tasks, "elsewhere", task.InputBundle))
+	assert.FileExists(t, filepath.Join(tasks, "fifo", "share", task.InputBundle))
+	assert.FileExists(t, filepath.Join(f.launch.spec.Task, task.InputBundle))
+}
+
+func TestATaskHoldsItsLockWhileItRuns(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+
+	var lockErr error
+
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		_, lockErr = lockTask(filepath.Dir(spec.Task), 0, false)
+
+		return errors.New("stop")
+	}
+
+	// act
+	_ = f.task("fix it")
+
+	// assert
+	require.ErrorIs(t, lockErr, unix.EWOULDBLOCK)
+
+	lock, err := lockTask(f.taskDir(t), 0, false)
+	require.NoError(t, err, "the lock outlives the task")
+	require.NoError(t, lock.Close())
+}
+
+func TestATaskThatCannotStartLeavesNoFolder(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.deps.gitIdentity = func(string) gitconfig.Identity { return gitconfig.Identity{} }
+	tasks := filepath.Join(f.project(t).Dir, "tasks")
+	require.NoError(t, os.MkdirAll(tasks, 0o700))
+	// the bundle fails, since an object of the commit is gone
+	blob := strings.TrimSpace(f.git(t, "rev-parse", "HEAD:README"))
+	require.NoError(t, os.Remove(filepath.Join(f.cwd, ".git", "objects", blob[:2], blob[2:])))
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.Error(t, err)
+	entries, err := os.ReadDir(tasks)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }

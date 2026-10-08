@@ -47,10 +47,6 @@ var (
 // Code, which have 10 minutes each in the VM.
 const taskSlack = 25 * time.Minute
 
-// vmPrefix starts every line of a task that comes from the VM, so that it
-// cannot pass for a line of aibox.
-const vmPrefix = "vm: "
-
 // maxPromptBytes is how long the prompt of a task may be, its arguments and
 // its file together.
 const maxPromptBytes = 1 << 20
@@ -90,7 +86,7 @@ type taskRun struct {
 	lock *os.File
 }
 
-func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
+func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err error) {
 	if deps.uid() == 0 {
 		return errRoot
 	}
@@ -165,6 +161,12 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer t.close()
 
+	// from here on, every line of the task carries its ID, the error too
+	log := task.NewLog(deps.stderr, shortID(t.dir), time.Now)
+	host, vm := log.Writer("aibox"), log.Writer("vm")
+
+	defer func() { err = finishLog(host, vm, err) }()
+
 	// the full name, since a name may stand for a tag or a ref that a VM
 	// wrote into .git as well as for the branch the person means
 	start := "the last commit " + short(base)
@@ -174,16 +176,16 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		start = short(base)
 	}
 
-	_, _ = fmt.Fprintf(deps.stderr, "aibox: task %s starts from %s, booting the VM\n", filepath.Base(t.dir), start)
+	_, _ = fmt.Fprintf(host, "task %s starts from %s, booting the VM\n", filepath.Base(t.dir), start)
 
 	spec := r.spec(cmd)
-	spec.Stderr = deps.stderr
+	spec.Stderr = host
 	spec.State = filepath.Join(t.dir, "state.ext4")
 	spec.RemoveState = true
 	spec.Task = t.share
 	spec.ConsoleLog = filepath.Join(t.dir, "console.log")
 
-	progress := task.NewLineCleaner(deps.stderr, vmPrefix)
+	progress := task.NewLineCleaner(vm)
 	spec.Progress = progress
 
 	results, resultsWriter := io.Pipe()
@@ -231,12 +233,36 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	if err := outcome(ctx, runErr, receiveErr, limit); err != nil {
 		_, _ = fmt.Fprintln(deps.stdout, t.dir)
-		_, _ = fmt.Fprintf(deps.stderr, "aibox: what the task left is in %s\n", t.dir)
+		_, _ = fmt.Fprintf(host, "what the task left is in %s\n", t.dir)
 
 		return err
 	}
 
-	return t.report(deps.stdout, deps.stderr)
+	return t.report(deps.stdout, host, vm)
+}
+
+// finishLog writes what is left in the writers of the log, and the error
+// with the ID of the task, so that aibox does not print it once more.
+func finishLog(host, vm *task.LogWriter, err error) error {
+	_ = vm.Close()
+
+	// aibox ends without a word when it is interrupted
+	if err != nil && !errors.Is(err, context.Canceled) {
+		_, _ = fmt.Fprintf(host, "%v\n", err)
+		err = printedError{err}
+	}
+
+	_ = host.Close()
+
+	return err
+}
+
+// shortID is the random end of the ID of a task, which tells it apart from
+// the tasks that ran with it.
+func shortID(dir string) string {
+	id := filepath.Base(dir)
+
+	return id[strings.LastIndex(id, "-")+1:]
 }
 
 // outcome is the one error that says why the run of the task did not
@@ -596,8 +622,8 @@ func (t *taskRun) close() {
 
 // report tells the person how the task went and where its results are,
 // and returns an error when it did not go through.
-func (t *taskRun) report(stdout, stderr io.Writer) error {
-	say := func(format string, args ...any) { _, _ = fmt.Fprintf(stderr, format, args...) }
+func (t *taskRun) report(stdout, host, vm io.Writer) error {
+	say := func(format string, args ...any) { _, _ = fmt.Fprintf(host, format, args...) }
 
 	content, err := readAll(t.results[task.ResultFile])
 	if err != nil {
@@ -609,10 +635,10 @@ func (t *taskRun) report(stdout, stderr io.Writer) error {
 		return fmt.Errorf("%w: %s: %w", task.ErrBadResults, task.ResultFile, err)
 	}
 
-	say("%s", summary(result))
+	summary(host, vm, result)
 
 	for _, warning := range result.Warnings {
-		say("%swarning: %s\n", vmPrefix, task.CleanLine(warning))
+		_, _ = fmt.Fprintf(vm, "warning: %s\n", task.CleanLine(warning))
 	}
 
 	head, err := t.changes()
@@ -620,17 +646,17 @@ func (t *taskRun) report(stdout, stderr io.Writer) error {
 	// the VM said already when there are no changes
 	switch {
 	case err != nil:
-		say("aibox: %v\n", err)
+		say("%v\n", err)
 	case head == "":
 	default:
 		bundle := filepath.Join(t.dir, task.ChangesFile)
 		branch := strings.TrimPrefix(task.Branch, "refs/heads/")
-		say("aibox: the changes end at %s, fetch them with\n  git -c transfer.fsckObjects=true fetch %s %s:%s-%s\n", short(head), shellQuote(bundle), branch, branch, filepath.Base(t.dir))
+		say("the changes end at %s, fetch them with\n  git -c transfer.fsckObjects=true fetch %s %s:%s-%s\n", short(head), shellQuote(bundle), branch, branch, filepath.Base(t.dir))
 	}
 
 	// the folder goes to stdout alone, for scripts
 	_, _ = fmt.Fprintln(stdout, t.dir)
-	say("aibox: the results are in %s\n", t.dir)
+	say("the results are in %s\n", t.dir)
 
 	switch {
 	case result.Error != "":
@@ -666,19 +692,17 @@ func (t *taskRun) changes() (string, error) {
 	return bundle.Check(t.base)
 }
 
-// summary is what the last line of Claude Code says, cleaned, since the
-// task may have written it.
-func summary(result task.Result) string {
-	var b strings.Builder
-
+// summary tells how Claude Code ended, and what its last message says,
+// cleaned, from the VM, since the task may have written it.
+func summary(host, vm io.Writer, result task.Result) {
 	if result.ClaudeExitCode != nil {
-		fmt.Fprintf(&b, "aibox: Claude Code exited with %d", *result.ClaudeExitCode)
+		line := fmt.Sprintf("Claude Code exited with %d", *result.ClaudeExitCode)
 
 		if result.TimedOut {
-			b.WriteString(" after it ran out of time")
+			line += " after it ran out of time"
 		}
 
-		b.WriteString("\n")
+		_, _ = fmt.Fprintln(host, line)
 	}
 
 	var last struct {
@@ -690,22 +714,22 @@ func summary(result task.Result) string {
 		Duration int     `json:"duration_ms"`
 	}
 
-	if json.Unmarshal(result.ClaudeResult, &last) == nil && last.Type == "result" {
-		fmt.Fprintf(&b, "aibox: %d turns in %s, about %.2f USD at API prices", last.Turns, time.Duration(last.Duration)*time.Millisecond, last.Cost)
-
-		if last.Reason != "" {
-			fmt.Fprintf(&b, ", ended by %s", task.CleanLine(last.Reason))
-		}
-
-		b.WriteString("\n")
-
-		// the last message of Claude Code, which the task wrote
-		if text := strings.TrimSpace(last.Result); text != "" {
-			fmt.Fprintf(&b, "%s\n", task.Indent(cut(text, 2000), "  | "))
-		}
+	if json.Unmarshal(result.ClaudeResult, &last) != nil || last.Type != "result" {
+		return
 	}
 
-	return b.String()
+	line := fmt.Sprintf("%d turns in %s, about %.2f USD at API prices", last.Turns, time.Duration(last.Duration)*time.Millisecond, last.Cost)
+
+	if last.Reason != "" {
+		line += ", ended by " + task.CleanLine(last.Reason)
+	}
+
+	_, _ = fmt.Fprintln(host, line)
+
+	// the last message of Claude Code, which the task wrote
+	if text := strings.TrimSpace(last.Result); text != "" {
+		_, _ = fmt.Fprintln(vm, task.Indent(cut(text, 2000), "| "))
+	}
 }
 
 func cut(text string, n int) string {

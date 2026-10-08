@@ -28,7 +28,7 @@ func run() int {
 		return exitInterrupted
 	}
 
-	if err != nil {
+	if err != nil && !cli.Printed(err) {
 		fmt.Fprintln(os.Stderr, "aibox:", err)
 	}
 

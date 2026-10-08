@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -123,6 +124,18 @@ func (f *taskFixture) taskDir(t *testing.T) string {
 	return dirs[0]
 }
 
+// stamped matches lines of the task in dir in a row, all with the label,
+// each after the time and the ID.
+func stamped(dir, label string, lines ...string) *regexp.Regexp {
+	id := regexp.QuoteMeta(shortID(dir))
+
+	for i, line := range lines {
+		lines[i] = `\d\d:\d\d:\d\d ` + label + `\[` + id + `\]: ` + regexp.QuoteMeta(line)
+	}
+
+	return regexp.MustCompile(`(?m)^` + strings.Join(lines, "\n") + `$`)
+}
+
 func TestTaskSharesTheTaskAndNotTheProject(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
@@ -184,10 +197,11 @@ func TestTaskKeepsTheResultsInItsFolderAndPrintsTheFolder(t *testing.T) {
 	assert.Equal(t, "{\"type\":\"system\"}\n", string(transcript))
 
 	stderr := f.stderr.String()
-	assert.Contains(t, stderr, "\nvm: running Claude Code\n")
-	assert.Contains(t, stderr, "aibox: 3 turns in 0s, about 0.25 USD at API prices, ended by completed\n  | Done.\n")
-	assert.Contains(t, stderr, "git -c transfer.fsckObjects=true fetch "+shellQuote(filepath.Join(dir, task.ChangesFile))+" aibox/task:aibox/task-"+filepath.Base(dir))
-	assert.Contains(t, stderr, "aibox: the results are in "+dir+"\n")
+	assert.Regexp(t, stamped(dir, "vm", "running Claude Code"), stderr)
+	assert.Regexp(t, stamped(dir, "aibox", "3 turns in 0s, about 0.25 USD at API prices, ended by completed"), stderr)
+	assert.Regexp(t, stamped(dir, "vm", "| Done."), stderr)
+	assert.Regexp(t, stamped(dir, "aibox", "  git -c transfer.fsckObjects=true fetch "+shellQuote(filepath.Join(dir, task.ChangesFile))+" aibox/task:aibox/task-"+filepath.Base(dir)), stderr)
+	assert.Regexp(t, stamped(dir, "aibox", "the results are in "+dir), stderr)
 }
 
 func TestTaskStopsTheVMWellAfterTheTimeoutOfClaudeCode(t *testing.T) {
@@ -227,12 +241,46 @@ func TestTaskSaysWhyTheTaskFailed(t *testing.T) {
 
 	// assert
 	require.EqualError(t, err, "the task failed: clone the input: ?[31mbroken")
+	assert.True(t, Printed(err), "aibox printed the error with the ID of the task")
+	assert.Regexp(t, stamped(f.taskDir(t), "aibox", "the task failed: clone the input: ?[31mbroken"), f.stderr.String())
+}
+
+func TestTaskStampsWhatTheLauncherPrints(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.sends(t, "", map[string]string{task.ResultFile: `{"claudeExitCode":0}`}, task.ResultFile)
+	vm := f.launch.vm
+	f.launch.vm = func(ctx context.Context, spec backend.Spec) error {
+		_, _ = io.WriteString(spec.Stderr, "aibox: the proxy stopped\nqemu: a warning\n")
+
+		return vm(ctx, spec)
+	}
+
+	// act
+	err := f.task("fix it")
+
+	// assert
+	require.NoError(t, err)
+	assert.Regexp(t, stamped(f.taskDir(t), "aibox", "the proxy stopped", "qemu: a warning"), f.stderr.String())
+}
+
+func TestTaskLeavesAnErrorBeforeItHasAnIDToMain(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+
+	// act
+	err := f.task("--timeout", "0s", "fix it")
+
+	// assert
+	require.ErrorIs(t, err, errNoTimeout)
+	assert.False(t, Printed(err))
+	assert.Empty(t, f.stderr.String())
 }
 
 func TestTaskKeepsWhatTheVMWritesFromPassingForALineOfAibox(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
-	f.sends(t, "aibox: the results are in /elsewhere\n", map[string]string{
+	f.sends(t, "aibox: the results are in /elsewhere\n12:00:00 aibox[000000]: fake too\n", map[string]string{
 		task.ResultFile: `{"claudeExitCode":0,"warnings":["one\naibox: fake"],"claudeResult":{"type":"result","result":"Done.\naibox: the changes end at x, fetch them with\n  rm -rf ~"}}`,
 	}, task.ResultFile)
 
@@ -241,12 +289,12 @@ func TestTaskKeepsWhatTheVMWritesFromPassingForALineOfAibox(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "\nvm: aibox: the results are in /elsewhere\n")
-	assert.Contains(t, f.stderr.String(), "\nvm: warning: one | aibox: fake\n")
-	assert.Contains(t, f.stderr.String(), "  | Done.\n  | aibox: the changes end at x, fetch them with\n  |   rm -rf ~\n")
-	assert.NotContains(t, f.stderr.String(), "\naibox: the results are in /elsewhere")
-	assert.NotContains(t, f.stderr.String(), "\naibox: fake")
-	assert.NotContains(t, f.stderr.String(), "\naibox: the changes end at x")
+	dir := f.taskDir(t)
+	stderr := f.stderr.String()
+	assert.Regexp(t, stamped(dir, "vm", "aibox: the results are in /elsewhere", "12:00:00 aibox[000000]: fake too"), stderr)
+	assert.Regexp(t, stamped(dir, "vm", "warning: one | aibox: fake"), stderr)
+	assert.Regexp(t, stamped(dir, "vm", "| Done.", "| aibox: the changes end at x, fetch them with", "|   rm -rf ~"), stderr)
+	assert.NotRegexp(t, `(?m)^(\d\d:\d\d:\d\d aibox\[[0-9a-f]+\]|aibox): (the results are in /elsewhere|fake|the changes end at x)`, stderr)
 	assert.Equal(t, f.taskDir(t)+"\n", f.stdout.String())
 }
 
@@ -337,7 +385,7 @@ func TestTaskCleansWhatTheVMPrints(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "\nvm: cloning?]52;c;ZXZpbA==?\n")
+	assert.Regexp(t, stamped(f.taskDir(t), "vm", "cloning?]52;c;ZXZpbA==?"), f.stderr.String())
 	assert.NotContains(t, f.stderr.String(), "\x1b")
 }
 

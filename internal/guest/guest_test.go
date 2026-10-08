@@ -697,7 +697,8 @@ func TestRunSendsTheResultsOfATaskToTheHost(t *testing.T) {
 	results := readResults(t, strings.NewReader(sys.screen.String()))
 	assert.Equal(t, []string{"result.json"}, results.names)
 	assert.Contains(t, results.result.Error, "read the settings of the task")
-	assert.Contains(t, sys.errScreen.String(), "aibox: read the settings of the task")
+	assert.True(t, strings.HasPrefix(sys.errScreen.String(), "read the settings of the task"))
+	assert.NotContains(t, sys.errScreen.String(), "aibox: ", "the host marks the line, not the VM")
 }
 
 func TestRunPowersOffWhenTheOverlayCannotBecomeTheRoot(t *testing.T) {

@@ -110,11 +110,11 @@ func (t *taskRun) run(w io.Writer) int {
 
 	if err := t.steps(); err != nil {
 		t.result.Error = err.Error()
-		t.say("aibox: %v\n", err)
+		t.say("%v\n", err)
 	}
 
 	if err := t.finish(); err != nil {
-		t.say("aibox: send the results: %v\n", err)
+		t.say("send the results: %v\n", err)
 
 		return 1
 	}
@@ -142,7 +142,7 @@ func (t *taskRun) steps() error {
 		return fmt.Errorf("set the git identity: %w", err)
 	}
 
-	t.say("aibox: cloning the input\n")
+	t.say("cloning the input\n")
 
 	bundle := filepath.Join(t.input, task.InputBundle)
 	if err := t.git(nil, "-c", "advice.detachedHead=false", "clone", "--quiet", "--", bundle, "."); err != nil {
@@ -166,7 +166,7 @@ func (t *taskRun) steps() error {
 
 	t.result.Base = base
 
-	t.say("aibox: running Claude Code\n")
+	t.say("running Claude Code\n")
 
 	if err := t.claude(settings); err != nil {
 		return fmt.Errorf("run Claude Code: %w", err)
@@ -177,7 +177,7 @@ func (t *taskRun) steps() error {
 	if err := t.commitLeftovers(); err != nil {
 		warning := fmt.Sprintf("commit what the task left uncommitted: %v", err)
 		t.result.Warnings = append(t.result.Warnings, warning)
-		t.say("aibox: %s\n", warning)
+		t.say("%s\n", warning)
 	}
 
 	// the task may have moved to another branch, and its last commit is
@@ -194,12 +194,12 @@ func (t *taskRun) steps() error {
 	t.result.Head = head
 
 	if head == base {
-		t.say("aibox: the task made no changes\n")
+		t.say("the task made no changes\n")
 
 		return nil
 	}
 
-	t.say("aibox: bundling the changes\n")
+	t.say("bundling the changes\n")
 
 	return t.bundle(base)
 }
@@ -320,7 +320,7 @@ func (t *taskRun) claude(settings task.Settings) error {
 	t.result.TimedOut = run.timedOut
 
 	if t.result.TimedOut {
-		t.say("aibox: Claude Code ran out of time\n")
+		t.say("Claude Code ran out of time\n")
 	}
 
 	for _, o := range []*output{transcript, log} {
@@ -345,7 +345,7 @@ func (t *taskRun) commitLeftovers() error {
 		return nil
 	}
 
-	t.say("aibox: committing what the task left uncommitted\n")
+	t.say("committing what the task left uncommitted\n")
 
 	if err := t.git(nil, "add", "--all"); err != nil {
 		return err

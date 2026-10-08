@@ -16,7 +16,7 @@ var notAlphanumeric = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
 // Project is the folder aibox keeps for one project. Dir is that folder.
 // Home is the home folder of the VM, Config the config file, Log the log of
-// refused hosts, ConsoleLog the console of the last run of the VM and
+// the proxy, ConsoleLog the console of the last run of the VM and
 // State the disk the VM keeps its installed tools and caches on. Home is
 // shared into the VM and State is its second disk.
 type Project struct {

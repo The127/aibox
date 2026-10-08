@@ -37,6 +37,12 @@ address the allow list names for that port. So programs that ignore the proxy
 variables reach the port too, and the server sees the `Host` it expects,
 since many local servers refuse other names against DNS rebinding.
 
+The proxy logs each host and port it connected to or refused, once per run,
+and stops after 1000 of each kind so that a VM cannot fill the log. A task
+has a log of its own, and its report names the hosts. The log holds the name
+the VM put in its `CONNECT` and the port, not the address it reached behind
+a name nor what went through, so it cannot tell a push from a fetch.
+
 ## Terminal
 
 The terminal is an SSH session over vsock. The init of the VM runs Claude

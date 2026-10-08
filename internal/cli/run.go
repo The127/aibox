@@ -128,7 +128,7 @@ func folders(deps dependencies) (cwd, aibox string, err error) {
 
 // projectRun is what booting the VM for the project in the current folder
 // needs, for any command: the image, the folders of the project, its
-// config, the mounts, the variables and the log of refused hosts.
+// config, the mounts, the variables and the log of the proxy.
 type projectRun struct {
 	image   string
 	project project.Project
@@ -136,6 +136,8 @@ type projectRun struct {
 	mounts  []backend.Mount
 	env     []string
 	log     *os.File
+	// proxyLog writes the hosts the proxy connected to or refused into log
+	proxyLog *proxy.Log
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -179,10 +181,10 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 
 	log, err := os.OpenFile(p.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return projectRun{}, fmt.Errorf("open the log of refused hosts: %w", err)
+		return projectRun{}, fmt.Errorf("open the log of the proxy: %w", err)
 	}
 
-	return projectRun{image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log}, nil
+	return projectRun{image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log)}, nil
 }
 
 func (r projectRun) close() { _ = r.log.Close() }
@@ -198,10 +200,11 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 		Unsandboxed: cmd.Bool("no-sandbox"),
 		Env:         r.env,
 		Proxy: proxy.Options{
-			Allow:     r.config.Allow.Allows,
-			Pinned:    r.config.Allow.Pinned,
-			OnRefused: proxy.RefusalLog(r.log),
-			Hint:      "Add it to " + r.project.Config + " to allow it.",
+			Allow:       r.config.Allow.Allows,
+			Pinned:      r.config.Allow.Pinned,
+			OnConnected: r.proxyLog.Connected,
+			OnRefused:   r.proxyLog.Refused,
+			Hint:        "Add it to " + r.project.Config + " to allow it.",
 		},
 		Ports:    r.config.Allow.Ports(),
 		Loopback: r.config.Allow.LoopbackPorts(),

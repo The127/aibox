@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -252,21 +253,79 @@ func TestServeReportsARefusedHost(t *testing.T) {
 	}
 }
 
-func TestRefusalLogWritesEachHostOnce(t *testing.T) {
+func TestLogWritesEachTargetOnce(t *testing.T) {
 	// arrange
-	var log bytes.Buffer
-	refused := proxy.RefusalLog(&log)
+	var out bytes.Buffer
+	log := proxy.NewLog(&out)
 
 	// act
-	refused("evil.example:443")
-	refused("evil.example:443")
-	refused("evil.example:80")
+	log.Refused("evil.example:443")
+	log.Refused("evil.example:443")
+	log.Connected("github.com:443")
+	log.Connected("github.com:443")
+	log.Refused("evil.example:80")
+	log.Connected("evil.example:443")
 
 	// assert
-	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
-	require.Len(t, lines, 2)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 4)
 	assert.Regexp(t, `^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ refused "evil.example:443"$`, lines[0])
-	assert.Contains(t, lines[1], `refused "evil.example:80"`)
+	assert.Contains(t, lines[1], `connected "github.com:443"`)
+	assert.Contains(t, lines[2], `refused "evil.example:80"`)
+	assert.Contains(t, lines[3], `connected "evil.example:443"`)
+
+	connected, refused := log.Targets()
+	assert.Equal(t, []string{"github.com:443", "evil.example:443"}, connected.List)
+	assert.Equal(t, []string{"evil.example:443", "evil.example:80"}, refused.List)
+	assert.False(t, connected.Full)
+	assert.False(t, refused.Full)
+}
+
+func TestLogStopsAtItsLimit(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+	log := proxy.NewLog(&out)
+
+	// act
+	for i := range 1005 {
+		log.Refused(fmt.Sprintf("host%d.example:443", i))
+	}
+
+	log.Connected("github.com:443")
+
+	// assert
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 1002)
+	assert.Contains(t, lines[1000], "refused 1000 targets, later ones are left out")
+	assert.Contains(t, lines[1001], `connected "github.com:443"`, "the refused ones do not crowd out the others")
+
+	connected, refused := log.Targets()
+	assert.Len(t, refused.List, 1000)
+	assert.True(t, refused.Full)
+	assert.Equal(t, []string{"github.com:443"}, connected.List)
+	assert.False(t, connected.Full)
+}
+
+func TestServeReportsATargetItConnectedTo(t *testing.T) {
+	// arrange
+	connected := make(chan string, 1)
+	address := serve(t, proxy.Options{OnConnected: func(target string) { connected <- target }})
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = target.Close() })
+
+	// act
+	status, _ := connect(t, address, target.Addr().String())
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", status)
+
+	select {
+	case got := <-connected:
+		assert.Equal(t, target.Addr().String(), got)
+	case <-time.After(timeout):
+		t.Fatal("OnConnected was not called")
+	}
 }
 
 // resolveTo is a resolver that answers every name with the addresses.
@@ -461,7 +520,8 @@ func TestServeRefusesATargetWithoutAHost(t *testing.T) {
 
 func TestServeReportsATargetItCannotReach(t *testing.T) {
 	// arrange
-	address := serve(t, proxy.Options{})
+	connected := make(chan string, 1)
+	address := serve(t, proxy.Options{OnConnected: func(target string) { connected <- target }})
 	closed, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
@@ -471,6 +531,7 @@ func TestServeReportsATargetItCannotReach(t *testing.T) {
 
 	// assert
 	assert.Equal(t, "HTTP/1.1 502 Bad Gateway", status)
+	assert.Empty(t, connected, "a target it could not reach was not connected to")
 }
 
 func TestServeStopsWithAnIdleConnectionOpen(t *testing.T) {

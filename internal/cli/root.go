@@ -29,9 +29,11 @@ type dependencies struct {
 	stdin       io.Reader
 	lookupEnv   func(name string) (string, bool)
 	gitIdentity func(dir string) gitconfig.Identity
-	backend     backend.Backend
-	edit        func(editor, path string) error
-	version     func() string
+	// gitLogin is the login git on the host has for a remote
+	gitLogin func(ctx context.Context, remote string) (gitconfig.Login, error)
+	backend  backend.Backend
+	edit     func(editor, path string) error
+	version  func() string
 	// imageDigest is the digest of the image this aibox was released with
 	imageDigest func(arch string) (string, bool)
 	// fetchImage downloads the image of the release into dir
@@ -79,6 +81,7 @@ func NewRootCommand() *cli.Command {
 		stdin:           os.Stdin,
 		lookupEnv:       os.LookupEnv,
 		gitIdentity:     gitconfig.Read,
+		gitLogin:        gitconfig.LoginFor,
 		backend:         newBackend(),
 		edit:            runEditor,
 		version:         version.Get,

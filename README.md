@@ -131,7 +131,7 @@ aibox task --model sonnet "fix the flaky test in internal/proxy"
   as for `aibox run`. Other tasks and `aibox run` never see the home or the
   disk, so several tasks can run at once.
 - The project config applies as for `aibox run`: `allow`, `mounts`, `path`,
-  `env`, `memory`, `cpus` and `disk`. The hosts the proxy connected to or
+  `env`, `git`, `memory`, `cpus` and `disk`. The hosts the proxy connected to or
   refused go into a `proxy.log` of the task, not into the one of the
   project.
 
@@ -147,7 +147,9 @@ published is its own word. aibox names the hosts the proxy connected to, but
 not what went through those connections, so a push to `github.com` and a
 fetch from it look the same. Text it reads, in the project or from the
 network, can steer it. So before you run a task, take out of the config the
-hosts, ports and secrets the task does not need.
+hosts, ports and secrets the task does not need. [git](#git) in the config
+lets a task fetch and push without a token in the VM, and only to the
+branches you name.
 
 | Flag | Meaning |
 |---|---|
@@ -338,6 +340,11 @@ path:
 env:
   - GOFLAGS=-mod=mod
   - GITHUB_TOKEN
+git:
+  - remote: github.com/owner/repo
+    fetch: true
+    push:
+      - aibox/*
 ```
 
 ### allow
@@ -464,6 +471,63 @@ the proxy variables, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and
 `ANTHROPIC_API_KEY` is the exception to passing values on. For `aibox run`
 as for tasks, the key stays on your machine and the VM gets a placeholder,
 see [Login](#login).
+
+### git
+
+The repositories git in the VM may fetch from and push to with the git login
+of your machine. The login stays on your machine.
+
+```yaml
+git:
+  - remote: github.com/owner/repo
+    fetch: true
+    push:
+      - aibox/*
+      - feature/login
+  - remote: github.com/owner/private-module
+    fetch: true
+```
+
+- `remote` is the host and the path of the repository, without `https://`
+  and without `.git`.
+- `fetch: true` allows clone and fetch.
+- `push` lists the branches a push may create or update. `*` stands for any
+  part of a name without a `/`, so `aibox/*` allows `aibox/fix` but not
+  `aibox/a/b`, and `*` alone allows `main` too. aibox refuses pushes to
+  other branches, deletes, tags, and pushes from a shallow clone. When one
+  branch of a push is refused, the whole push is.
+- aibox refuses repositories the list does not name.
+
+git in the VM uses the repositories as usual, by the addresses
+`https://HOST/PATH`, `git@HOST:PATH` and `ssh://git@HOST/PATH`: `git clone`,
+`git fetch` and `git push`. aibox sends these requests to a broker on your
+machine, which adds the login and passes on what the list allows. When it
+refuses, git in the VM shows why. The broker writes what it refused, and each
+push it passed on, into `proxy.log`. The host does not need to be on the
+allow list for git. `go get` of a private module works with `GOPRIVATE` set
+in `env`. For a host other than GitHub, Go first asks the host over HTTPS
+where the module is, so that host needs to be on the allow list too.
+
+Before the VM starts, aibox asks git on your machine for the login of each
+repository, as `git push` over HTTPS would, and stops when git has none. If
+you use git over SSH, set up a login for HTTPS first, for example with
+`gh auth setup-git` for GitHub. aibox reads the login once, so restart aibox
+when it expires.
+
+What the broker cannot stop:
+
+- A force push to a branch the list allows. The broker sees which branches a
+  push updates, but not whether it drops commits. Protect the branches that
+  matter on the server, for example with branch protection on GitHub.
+- Code the VM pushes is code you have not read. A pushed branch can start
+  the CI of the repository, with changes to its workflows and with its
+  secrets.
+- With `push` alone and no `fetch`, the VM still sees the names of all
+  branches and tags and the commits they point to, since git needs them to
+  push. It does not get the files.
+
+With `git`, aibox sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
+`GIT_CONFIG_VALUE_*` in the VM, so `env` cannot set them.
 
 ## Documentation
 

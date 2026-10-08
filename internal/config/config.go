@@ -155,6 +155,9 @@ type Config struct {
 	Path []string `yaml:"path"`
 	// Env are variables for the command in the VM.
 	Env []Variable `yaml:"env"`
+	// Git are the repositories git in the VM may fetch from and push to
+	// with the git login of the host.
+	Git []GitRemote `yaml:"git"`
 }
 
 // Variable is an environment variable for the command in the VM. With
@@ -349,6 +352,16 @@ allow:
 # env:
 #   - GOFLAGS=-mod=mod
 #   - GITHUB_TOKEN
+
+# Repositories git in the VM may use with the git login of this machine,
+# which stays here. fetch allows clone and fetch, push the branches a push
+# may create or update. aibox refuses deletes, tags and other repositories.
+# For example:
+# git:
+#   - remote: github.com/owner/repo
+#     fetch: true
+#     push:
+#       - aibox/*
 `
 
 // Default is the config of a project that has no config file yet.
@@ -446,6 +459,10 @@ func parse(content []byte) (Config, error) {
 	}
 
 	if err := checkLoopback(cfg.Allow); err != nil {
+		return Config{}, err
+	}
+
+	if err := checkGit(cfg.Git); err != nil {
 		return Config{}, err
 	}
 

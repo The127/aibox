@@ -28,11 +28,31 @@ func TestKilledAiboxTakesVirtiofsdAndQEMUWithoutTheSandboxAlong(t *testing.T) {
 	stderr := &syncBuffer{}
 	aibox := exec.Command(f.aibox) //nolint:gosec // the link to the test binary
 	aibox.Stderr = stderr
+	// Run makes a folder for the sockets there, which a killed aibox
+	// cannot remove. The name is short, since the path of a socket has a
+	// limit and t.TempDir holds the name of the test.
+	tmp, err := os.MkdirTemp("", "aibox-test-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+	aibox.Env = append(os.Environ(), "TMPDIR="+tmp)
 	// fakes that outlive aibox hold the pipe of its standard error
 	aibox.WaitDelay = time.Second
 	require.NoError(t, aibox.Start())
 
 	var pids []int
+
+	// a failed test leaves neither aibox nor the fakes behind
+	t.Cleanup(func() {
+		_ = aibox.Process.Kill()
+		_ = aibox.Wait()
+
+		// a fake that ended may have left its number to another process
+		for _, pid := range pids {
+			if alive(pid) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
 
 	require.Eventually(t, func() bool {
 		pids = nil
@@ -53,13 +73,6 @@ func TestKilledAiboxTakesVirtiofsdAndQEMUWithoutTheSandboxAlong(t *testing.T) {
 
 		return true
 	}, 10*time.Second, 10*time.Millisecond, "the fakes did not start: %s", stderr)
-
-	// a failed test leaves no fakes behind
-	t.Cleanup(func() {
-		for _, pid := range pids {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-	})
 
 	// act
 	require.NoError(t, aibox.Process.Kill())
@@ -92,6 +105,9 @@ func TestStartedChildOutlivesTheThreadThatAskedForIt(t *testing.T) {
 	}()
 
 	require.NoError(t, <-started)
+
+	// a failed test leaves no child behind
+	t.Cleanup(func() { _ = child.Process.Kill() })
 
 	exited := make(chan error, 1)
 

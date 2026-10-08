@@ -428,11 +428,10 @@ func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options 
 	qemu.Stderr = notAFile{options.Stderr}
 	qemu.ExtraFiles = files.extra
 
-	// bubblewrap kills QEMU in the sandbox when aibox dies, with
-	// --die-with-parent. Without the sandbox the kernel does it
-	if options.NoSandbox {
-		qemu.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-	}
+	// the kernel kills QEMU when aibox dies. In the sandbox bubblewrap does
+	// it too, with --die-with-parent, but only once it runs, so this also
+	// covers the moment before
+	qemu.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 
 	err := start(qemu)
 

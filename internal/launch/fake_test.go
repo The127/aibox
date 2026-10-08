@@ -38,7 +38,8 @@ func TestMain(m *testing.M) {
 	case "qemu":
 		os.Exit(fakeQEMU(os.Args[1:]))
 	case "aibox":
-		os.Exit(fakeAibox())
+		fakeAibox()
+		os.Exit(1)
 	case "bwrap":
 		// the fake returns only when it could not run the command
 		fakeBwrap(os.Args[1:])
@@ -135,22 +136,23 @@ func fakesIn(dir string) *fakeProcesses {
 
 // fakeAibox runs the machine with the fakes that fakes put into the folder
 // in AIBOX_FAKE_DIR and QEMU without the sandbox, as aibox would, until it
-// is killed or Run fails.
-func fakeAibox() int {
+// is killed or Run fails. It returns only when it could not run the
+// machine.
+func fakeAibox() {
 	dir := os.Getenv("AIBOX_FAKE_DIR")
 
 	image, err := os.MkdirTemp(dir, "image-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fake aibox:", err)
 
-		return 1
+		return
 	}
 
 	m, err := machineIn(image)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fake aibox:", err)
 
-		return 1
+		return
 	}
 
 	options := fakesIn(dir).options()
@@ -159,8 +161,6 @@ func fakeAibox() int {
 
 	err = launch.Run(context.Background(), m, options)
 	fmt.Fprintln(os.Stderr, "fake aibox: Run returned:", err)
-
-	return 1
 }
 
 // options use TCP listeners in place of vsock and /dev/null in place of the

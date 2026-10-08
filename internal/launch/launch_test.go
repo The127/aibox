@@ -41,7 +41,7 @@ func machine(t *testing.T) vm.Machine {
 // machineIn is a VM whose kernel and disks are empty files in the folder.
 func machineIn(image string) (vm.Machine, error) {
 	for _, name := range []string{"vmlinuz", "os.ext4", "state.ext4"} {
-		if err := os.WriteFile(filepath.Join(image, name), nil, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(image, name), nil, 0o600); err != nil { //nolint:gosec // image is a temp folder of the test or the fake aibox
 			return vm.Machine{}, err
 		}
 	}

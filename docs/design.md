@@ -97,8 +97,8 @@ error and the log. The checks of a push are the same as over HTTPS. A
 server path that starts with `-` or `~` is refused in the config, since the
 server would read it as an option or a home folder.
 
-The proxy logs each host and port it connected to or refused, once per run,
-and stops after 1000 of each kind so that a VM cannot fill the log. A task
+The proxy logs each host and port it connected to or refused, once per run.
+A task
 has a log of its own, and its report names the hosts. The log holds the name
 the VM put in its `CONNECT` and the port, not the address it reached behind
 a name nor what went through, so it cannot tell a push from a fetch.

@@ -303,7 +303,7 @@ func (b *broker) checkPush(w http.ResponseWriter, r *http.Request, remote Remote
 		}
 
 		// git sends the whole push before it reads the answer
-		_, _ = io.Copy(io.Discard, io.LimitReader(body, maxDrain))
+		_, _ = io.Copy(io.Discard, body)
 
 		for i := range refusals {
 			if refusals[i].reason == "" {
@@ -324,11 +324,6 @@ func (b *broker) checkPush(w http.ResponseWriter, r *http.Request, remote Remote
 
 	return true
 }
-
-// maxDrain is how much of a refused push the broker reads before it
-// answers, since git reads the answer only once it sent the push. A larger
-// push sees the connection close instead of the reasons.
-const maxDrain = 64 << 20
 
 // allowedUpdate returns why the config does not allow the command, or
 // nothing when it does.
@@ -386,15 +381,10 @@ type readCloser struct {
 // requestKey carries the request to the rewrite and the error handler.
 type requestKey struct{}
 
-// eventLog writes what the broker refused and the pushes it passed on, up
-// to maxEvents lines, so that a VM that keeps trying cannot fill the log.
 type eventLog struct {
-	mu    sync.Mutex
-	w     io.Writer
-	lines int
+	mu sync.Mutex
+	w  io.Writer
 }
-
-const maxEvents = 1000
 
 func (l *eventLog) add(format string, args ...any) {
 	if l.w == nil {
@@ -405,17 +395,7 @@ func (l *eventLog) add(format string, args ...any) {
 	defer l.mu.Unlock()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-
-	switch {
-	case l.lines > maxEvents:
-		return
-	case l.lines == maxEvents:
-		_, _ = fmt.Fprintf(l.w, "%s git %d events, later ones are left out\n", now, maxEvents)
-	default:
-		_, _ = fmt.Fprintf(l.w, "%s git %s\n", now, sanitize(fmt.Sprintf(format, args...)))
-	}
-
-	l.lines++
+	_, _ = fmt.Fprintf(l.w, "%s git %s\n", now, sanitize(fmt.Sprintf(format, args...)))
 }
 
 // sanitize keeps a line of the log one plain line, whatever the VM sent:

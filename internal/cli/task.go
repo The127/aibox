@@ -281,28 +281,25 @@ func finishLog(host, vm *task.LogWriter, err error) error {
 func reportNetwork(host io.Writer, log *proxy.Log) {
 	connected, refused := log.Targets()
 
-	if len(connected.List) > 0 {
+	if len(connected) > 0 {
 		_, _ = fmt.Fprintf(host, "the VM connected to %s\n", listTargets(connected))
 	}
 
-	if len(refused.List) > 0 {
+	if len(refused) > 0 {
 		_, _ = fmt.Fprintf(host, "the proxy refused %s\n", listTargets(refused))
 	}
 }
 
 // listTargets names the first targets, cleaned, since the VM chose them.
-func listTargets(targets proxy.Targets) string {
+func listTargets(targets []string) string {
 	names := make([]string, 0, maxListedTargets)
-	for _, target := range targets.List[:min(len(targets.List), maxListedTargets)] {
+	for _, target := range targets[:min(len(targets), maxListedTargets)] {
 		names = append(names, task.CleanLine(target))
 	}
 
 	list := strings.Join(names, ", ")
 
-	switch more := len(targets.List) - len(names); {
-	case targets.Full:
-		list += fmt.Sprintf(" and %d more, and more that were not logged", more)
-	case more > 0:
+	if more := len(targets) - len(names); more > 0 {
 		list += fmt.Sprintf(" and %d more", more)
 	}
 

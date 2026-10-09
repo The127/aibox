@@ -277,7 +277,7 @@ scripts.
 | `transcript.jsonl` | Everything Claude Code did, as `stream-json`, cut at 256 MiB. |
 | `claude.log` | What Claude Code wrote to standard error, cut at 1 MiB. |
 | `console.log` | The messages of the kernel and the init of the VM. |
-| `proxy.log` | Each host and port the proxy connected to or refused for the task, once, with the time it first did, up to 1000 of each kind. aibox writes it, not the VM. It shows the name the VM asked for, not what went through. |
+| `proxy.log` | Each host and port the proxy connected to or refused for the task, once, with the time it first did. aibox writes it, not the VM. It shows the name the VM asked for, not what went through. |
 | `share/` | The prompt, the settings and the bundle of the commit the task started from, with all its history, until `aibox tasks clean` removes it. |
 | `lock` | Locked while the task runs, so that `aibox tasks clean` leaves the task alone. |
 

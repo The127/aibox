@@ -21,8 +21,6 @@ const (
 	flush = "0000"
 	// maxPktLine is the longest pkt-line git sends.
 	maxPktLine = 65520
-	// maxCommands is how many refs one push may update.
-	maxCommands = 1000
 )
 
 var (
@@ -30,7 +28,6 @@ var (
 	errShallow      = errors.New("a push from a shallow clone, which aibox does not pass on")
 	errPushCert     = errors.New("a signed push, which aibox does not pass on")
 	errPushOptions  = errors.New("push options, which aibox does not pass on")
-	errTooManyRefs  = fmt.Errorf("more than %d refs in one push", maxCommands)
 	errNoCommands   = errors.New("a push that updates nothing")
 	errMixedObjects = errors.New("object IDs of two lengths in one command")
 )
@@ -65,10 +62,6 @@ func readPush(r *bufio.Reader) (push, error) {
 
 		if line == nil {
 			break
-		}
-
-		if len(p.commands) == maxCommands {
-			return push{}, errTooManyRefs
 		}
 
 		text := strings.TrimSuffix(string(line), "\n")

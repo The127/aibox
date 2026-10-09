@@ -52,7 +52,6 @@ func TestReadPushRefusesWhatItCannotCheck(t *testing.T) {
 		"not a hex length":         {"zzzz", errBadPktLine},
 		"a space in the ref":       {pktLine(oldID+" "+newID+" refs/heads/a b\n") + flush, errBadPktLine},
 		"two lengths of object ID": {pktLine(oldID+" "+strings.Repeat("2", 64)+" refs/heads/a\n") + flush, errMixedObjects},
-		"too many refs":            {strings.Repeat(pktLine(oldID+" "+newID+" refs/heads/a\n"), maxCommands+1) + flush, errTooManyRefs},
 	}
 
 	for name, c := range cases {

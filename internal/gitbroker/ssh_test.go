@@ -45,6 +45,7 @@ type testSSHServer struct {
 	// rounds counts the requests of git in the VM that negotiate a fetch:
 	// each POST but the one of ls-refs in protocol version 2
 	rounds int
+	refuse bool
 }
 
 // drop breaks every connection to the server, as a network that went away.
@@ -118,6 +119,16 @@ func (s *testSSHServer) serveConn(conn net.Conn, config *ssh.ServerConfig, root 
 	go ssh.DiscardRequests(requests)
 
 	for newChannel := range channels {
+		s.mu.Lock()
+		refuse := s.refuse
+		s.mu.Unlock()
+
+		if refuse {
+			_ = newChannel.Reject(ssh.ResourceShortage, "too many sessions")
+
+			continue
+		}
+
 		channel, requests, err := newChannel.Accept()
 		if err != nil {
 			continue
@@ -496,6 +507,38 @@ func TestBrokerOverSSHPassesOnWhatTheServerSays(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, out, "the server sent no advertisement of git: the server said:")
 	assert.Contains(t, log.String(), "does not appear to be a git repository")
+}
+
+func TestBrokerKeepsTheConnectionWhenTheServerRefusesASession(t *testing.T) {
+	// arrange
+	s := newServer(t)
+	s.repository(t, "owner/repo")
+	server := newTestSSHServer(t, s.root)
+	brokerURL, _ := server.broker(t, server.remote(t))
+	clone(t, brokerURL)
+
+	server.mu.Lock()
+	server.refuse = true
+	server.mu.Unlock()
+
+	// act
+	refused, err := git(t, "", "clone", brokerURL+"/example.com/owner/repo", filepath.Join(t.TempDir(), "refused"))
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, refused, "the server refused a session: too many sessions")
+
+	server.mu.Lock()
+	server.refuse = false
+	server.mu.Unlock()
+
+	out, err := git(t, "", "clone", brokerURL+"/example.com/owner/repo", filepath.Join(t.TempDir(), "again"))
+	require.NoError(t, err, out)
+
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	assert.Equal(t, 1, server.logins)
 }
 
 func TestBrokerLogsInAgainWhenTheConnectionBroke(t *testing.T) {

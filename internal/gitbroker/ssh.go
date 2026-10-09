@@ -37,18 +37,6 @@ const (
 	// dialTimeout is how long the broker waits for a server to connect
 	// and log in.
 	dialTimeout = 30 * time.Second
-	// maxSessions is how many requests of git in the VM may run on one
-	// server at once.
-	maxSessions = 4
-	// maxAdvertisement is how much a server may advertise before the
-	// broker gives up on it.
-	maxAdvertisement = 32 << 20
-	// maxRequest is how large the request of a fetch may grow when the
-	// broker decompresses it.
-	maxRequest = 256 << 20
-	// maxStderr is how much of what the server says on its standard error
-	// the broker keeps for the message to git in the VM.
-	maxStderr = 4 << 10
 	// sessionTimeout is how long the server may take to open a session
 	// and to close one.
 	sessionTimeout = 10 * time.Second
@@ -64,11 +52,10 @@ type sshServer struct {
 	// waiting for it.
 	lock   chan struct{}
 	client *ssh.Client
-	slots  chan struct{}
 }
 
 func newSSHServer() *sshServer {
-	return &sshServer{lock: make(chan struct{}, 1), slots: make(chan struct{}, maxSessions)}
+	return &sshServer{lock: make(chan struct{}, 1)}
 }
 
 // serveSSH answers a request of git in the VM by running the service on
@@ -86,7 +73,7 @@ func (b *broker) serveSSH(w http.ResponseWriter, r *http.Request, req request, r
 
 	defer done()
 
-	stderr := &limitedBuffer{limit: maxStderr}
+	stderr := &lockedBuffer{}
 	session.Stderr = stderr
 
 	if protocol := r.Header.Get("Git-Protocol"); gitProtocol.MatchString(protocol) {
@@ -187,26 +174,12 @@ func (b *broker) serveSSH(w http.ResponseWriter, r *http.Request, req request, r
 	<-sent
 }
 
-// session opens a session on the server of the remote, and logs in first
-// when the broker has no connection yet or the one it had broke. It waits
-// for a free slot, and the session ends when the request does. done ends
-// the session and gives the slot back.
 func (b *broker) session(ctx context.Context, remote Remote) (*ssh.Session, func(), error) {
 	server := b.sshServers[remote.Name]
 
 	select {
-	case server.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	}
-
-	release := func() { <-server.slots }
-
-	select {
 	case server.lock <- struct{}{}:
 	case <-ctx.Done():
-		release()
-
 		return nil, nil, ctx.Err()
 	}
 
@@ -215,8 +188,6 @@ func (b *broker) session(ctx context.Context, remote Remote) (*ssh.Session, func
 	<-server.lock
 
 	if err != nil {
-		release()
-
 		return nil, nil, err
 	}
 
@@ -225,15 +196,14 @@ func (b *broker) session(ctx context.Context, remote Remote) (*ssh.Session, func
 	return session, func() {
 		stop()
 		_ = session.Close()
-		release()
 	}, nil
 }
 
 // openSession opens a session on the connection of the server, and logs in
 // again once when there is none or it broke. A connection that does not
-// answer within sessionTimeout counts as broken. The caller holds the lock.
-// A server that refuses a session for another reason, such as too many
-// sessions, loses the connection too, and with it the sessions on it.
+// answer within sessionTimeout counts as broken. A server that refuses the
+// session, for example since it has too many, keeps the connection, so that
+// the sessions on it go on. The caller holds the lock.
 func (b *broker) openSession(ctx context.Context, server *sshServer, remote Remote) (*ssh.Session, error) {
 	for range 2 {
 		if server.client == nil {
@@ -252,6 +222,11 @@ func (b *broker) openSession(ctx context.Context, server *sshServer, remote Remo
 
 		if err == nil {
 			return session, nil
+		}
+
+		var refused *ssh.OpenChannelError
+		if errors.As(err, &refused) {
+			return nil, fmt.Errorf("the server refused a session: %s", refused.Message)
 		}
 
 		_ = client.Close()
@@ -305,12 +280,7 @@ func requestBody(r *http.Request, req request) (io.Reader, error) {
 	case encoding == "":
 		return r.Body, nil
 	case encoding == "gzip" && req.service == uploadPack:
-		body, err := gzip.NewReader(r.Body)
-		if err != nil {
-			return nil, err
-		}
-
-		return &limitedReader{r: body, left: maxRequest}, nil
+		return gzip.NewReader(r.Body)
 	default:
 		return nil, fmt.Errorf("git sent a request compressed with %q, which aibox does not read", encoding)
 	}
@@ -321,19 +291,12 @@ var errNoAdvertisement = errors.New("the server sent no advertisement of git")
 // readAdvertisement reads what a service sends first, up to the flush
 // that ends it, and returns it when keep is set.
 func readAdvertisement(r *bufio.Reader, keep bool) ([]byte, error) {
-	var (
-		advertisement []byte
-		size          int
-	)
+	var advertisement []byte
 
 	for {
 		line, raw, err := readPktLine(r)
 		if err != nil {
 			return nil, errNoAdvertisement
-		}
-
-		if size += len(raw); size > maxAdvertisement {
-			return nil, fmt.Errorf("the server advertised more than %d MiB", maxAdvertisement>>20)
 		}
 
 		if keep {
@@ -344,26 +307,6 @@ func readAdvertisement(r *bufio.Reader, keep bool) ([]byte, error) {
 			return advertisement, nil
 		}
 	}
-}
-
-// limitedReader reads up to left bytes and then fails, so that a request
-// that is too large ends with an error and not cut off.
-type limitedReader struct {
-	r    io.Reader
-	left int64
-}
-
-var errRequestTooLarge = fmt.Errorf("git sent a request larger than %d MiB", maxRequest>>20)
-
-func (l *limitedReader) Read(p []byte) (int, error) {
-	if l.left <= 0 {
-		return 0, errRequestTooLarge
-	}
-
-	n, err := l.r.Read(p[:min(int64(len(p)), l.left)])
-	l.left -= int64(n)
-
-	return n, err
 }
 
 // idleReader reads from r and gives the idle timer of the answer more time
@@ -399,7 +342,7 @@ func wait(session *ssh.Session) error {
 
 // serverError adds to the error what the server said, which tells, for
 // example, that the repository does not exist.
-func serverError(err error, session *ssh.Session, stderr *limitedBuffer) error {
+func serverError(err error, session *ssh.Session, stderr *lockedBuffer) error {
 	_ = session.Close()
 	_ = wait(session)
 
@@ -413,32 +356,27 @@ func serverError(err error, session *ssh.Session, stderr *limitedBuffer) error {
 // logExit waits for the service and logs it when it ended with an error
 // and said why. A fetch over several requests ends each but the last one
 // early, so git in the VM gets what the server sent either way.
-func (b *broker) logExit(req request, session *ssh.Session, stderr *limitedBuffer) {
+func (b *broker) logExit(req request, session *ssh.Session, stderr *lockedBuffer) {
 	var exit *ssh.ExitError
 	if err := wait(session); errors.As(err, &exit) && strings.TrimSpace(stderr.String()) != "" {
 		b.log.add("%s %s ended with %d: %s", req.remote, req.service, exit.ExitStatus(), strings.TrimSpace(stderr.String()))
 	}
 }
 
-// limitedBuffer keeps the first limit bytes written to it.
-type limitedBuffer struct {
-	mu    sync.Mutex
-	limit int
-	buf   bytes.Buffer
+// lockedBuffer is written by the session while the broker reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
 }
 
-func (l *limitedBuffer) Write(p []byte) (int, error) {
+func (l *lockedBuffer) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if room := l.limit - l.buf.Len(); room > 0 {
-		l.buf.Write(p[:min(len(p), room)])
-	}
-
-	return len(p), nil
+	return l.buf.Write(p)
 }
 
-func (l *limitedBuffer) String() string {
+func (l *lockedBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 

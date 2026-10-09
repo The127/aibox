@@ -303,7 +303,7 @@ func (b *broker) checkPush(w http.ResponseWriter, r *http.Request, remote Remote
 		}
 
 		// git sends the whole push before it reads the answer
-		_, _ = io.Copy(io.Discard, io.LimitReader(body, maxDrain))
+		_, _ = io.Copy(io.Discard, body)
 
 		for i := range refusals {
 			if refusals[i].reason == "" {
@@ -324,11 +324,6 @@ func (b *broker) checkPush(w http.ResponseWriter, r *http.Request, remote Remote
 
 	return true
 }
-
-// maxDrain is how much of a refused push the broker reads before it
-// answers, since git reads the answer only once it sent the push. A larger
-// push sees the connection close instead of the reasons.
-const maxDrain = 64 << 20
 
 // allowedUpdate returns why the config does not allow the command, or
 // nothing when it does.

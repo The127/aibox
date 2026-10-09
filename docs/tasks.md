@@ -112,8 +112,9 @@ nothing for it. It sends each request under `/v1/`, and the check Claude
 Code makes at `/api/hello`, to `https://api.anthropic.com`, whatever host the
 request names. It refuses a path with dot segments or escapes, drops the
 credentials the VM sent and adds the key. `proxy.log` shows these requests
-as `localhost:3129`. aibox reads the root certificates for this before it
-confines itself.
+as `localhost:3129`. aibox reads the root certificates before it confines
+itself, because the sandbox keeps it from reading them later, and on macOS
+from asking the system to check a certificate.
 
 A subscription token goes into the VM as it is, since Anthropic's terms let
 no one but you handle it. In the VM, Claude Code and every program the task

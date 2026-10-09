@@ -1,8 +1,9 @@
 # Introduction
 
-aibox runs [Claude Code](https://code.claude.com) inside a microVM. Claude
-Code sees only the files you give it, and it reaches the network only
-through a proxy that lets through the hosts you allow.
+aibox runs [Claude Code](https://code.claude.com) in a microVM on your
+machine. In the VM, Claude Code has the files you give it and no others of
+yours. It reaches the network through a proxy that lets through only the
+hosts you allow.
 
 - `aibox run` shares the project folder into the VM, writable, and starts
   Claude Code in it, to work with you.

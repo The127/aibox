@@ -12,8 +12,8 @@ your machine like other tools, through [`mounts`](config.md#mounts) and
 - Limits such as `--memory` and `--pids-limit` of podman apply.
 - Setuid programs inside an image do not work, since the state disk is
   mounted nosuid.
-- On Linux the VM has `/dev/kvm` for VMs of its own. On macOS it has
-  `/dev/kvm` where Virtualization.framework offers nested virtualization,
+- The VM has `/dev/kvm` for VMs of its own. On Linux this needs nested
+  virtualization on the host. On macOS the VM has `/dev/kvm` where Virtualization.framework offers nested virtualization,
   which Apple documents for M3 and newer with macOS 15 or newer. Elsewhere
   such VMs run in software.
 

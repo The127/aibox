@@ -53,7 +53,9 @@ programs it runs and what they write.
 - **Gatekeeper on macOS.** The VM can set and remove the extended attributes
   of files in the project, `com.apple.quarantine` among them, and the files
   it makes carry none. So Gatekeeper never checks a program that comes out of
-  the VM. Virtualization.framework has no option against it.
+  the VM. Virtualization.framework has no option against it. Like
+  everything the VM writes, such a program is untrusted until you have read
+  it.
 
 To report a vulnerability, see
 [SECURITY.md](https://github.com/The127/aibox/blob/main/SECURITY.md).
@@ -110,8 +112,11 @@ To report a vulnerability, see
   macOS the process of Virtualization.framework does, and it also serves the
   shares, so nothing is left. On Linux aibox starts QEMU and virtiofsd with a
   parent death signal, so the kernel kills them when aibox dies, and
-  bubblewrap does the same for QEMU. That this works with the real virtiofsd
-  is not yet tested.
+  bubblewrap does the same for QEMU. The kernel sends that signal when the
+  thread that started the program ends, so aibox starts all of them from one
+  thread that lives as long as aibox does. virtiofsd forks the process that
+  serves the share, which ends by a signal of its own. That this works with
+  the real virtiofsd is not yet tested.
 - aibox refuses to start in your home folder, above it, or above `~/.aibox`.
   It compares folders rather than paths, so a symlink, another case on a file
   system that ignores case, or a bind mount does not get past it. On a Mac

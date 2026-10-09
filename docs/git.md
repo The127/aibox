@@ -92,6 +92,7 @@ With `git`, aibox sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
   credentials and cookies of the VM. An answer that refuses the login or
   redirects becomes an error for the VM, so git in the VM never asks for a
   login of its own.
+- It refuses a fetch the config does not allow.
 - Of a push the broker reads the commands at the start, which name each ref
   with its old and new commit. It passes the push on only when each command
   updates or creates a branch of the list. Otherwise it refuses all of them,
@@ -124,5 +125,6 @@ Over SSH:
   silence in an answer have a time limit. A request git in the VM gives up
   on ends its session. What the server writes to its standard error goes
   into the error and the log.
+- The checks of a push are the same as over HTTPS.
 - A path on the server that starts with `-` or `~` is refused in the
   config, since the server would read it as an option or a home folder.

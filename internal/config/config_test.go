@@ -431,6 +431,21 @@ func TestLoadRejectsADiskSizeThatDoesNotFitAFile(t *testing.T) {
 	assert.ErrorIs(t, err, config.ErrDiskTooLarge)
 }
 
+func TestLoadAcceptsTheSmallestAndLargestSizes(t *testing.T) {
+	for _, content := range []string{"disk: 1\n", "disk: 1048576\n", "memory: 1\n", "cpus: 1\n"} {
+		t.Run(content, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestLoadWritesTheDiskKeyAsAnExample(t *testing.T) {
 	// arrange
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -615,7 +630,7 @@ func TestLoadRejectsAnUnknownPreset(t *testing.T) {
 func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
 	entries := []string{
 		"*", "*.", "https://example.com", "a b", "",
-		"example.com:", "example.com:x", "example.com:0", "example.com:0443", "example.com:+443", "example.com:70000",
+		"example.com:", "example.com:x", "example.com:0", "example.com:0443", "example.com:+443", "example.com:65536", "example.com:70000",
 		"[::1]", "::1", "a:b:c",
 	}
 
@@ -631,6 +646,18 @@ func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
 			assert.ErrorIs(t, err, config.ErrBadHost)
 		})
 	}
+}
+
+func TestLoadAcceptsTheSmallestAndLargestPort(t *testing.T) {
+	// arrange
+	path := write(t, "allow:\n  - example.com:1\n  - example.com:65535\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, config.Hosts{"example.com:1", "example.com:65535"}, cfg.Allow)
 }
 
 func TestPortsAreTheDistinctPortsOfTheAllowList(t *testing.T) {

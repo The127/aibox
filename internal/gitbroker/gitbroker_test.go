@@ -2,6 +2,7 @@ package gitbroker
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -393,6 +394,23 @@ func TestBrokerRefusesWhatIsNoRequestOfGit(t *testing.T) {
 	s.repository(t, "owner/repo")
 	brokerURL, _ := s.broker(t, Remote{Name: "example.com/owner/repo", Fetch: true, Push: []string{"*"}, Login: login})
 
+	for _, request := range []struct{ method, target string }{
+		{http.MethodPost, "/example.com/owner/repo/info/refs?service=git-upload-pack"},
+		{http.MethodGet, "/example.com/owner/repo/git-upload-pack"},
+		{http.MethodGet, "/example.com/owner/repo/git-receive-pack"},
+		{http.MethodPut, "/example.com/owner/repo/git-receive-pack"},
+	} {
+		// act
+		r, err := http.NewRequestWithContext(t.Context(), request.method, brokerURL+request.target, strings.NewReader(flush))
+		require.NoError(t, err)
+		response, err := http.DefaultClient.Do(r)
+
+		// assert
+		require.NoError(t, err)
+		_ = response.Body.Close()
+		assert.Equal(t, http.StatusForbidden, response.StatusCode, request.method+" "+request.target)
+	}
+
 	for _, target := range []string{
 		"/example.com/owner/repo",
 		"/example.com/owner/repo/info/refs",
@@ -419,6 +437,130 @@ func TestBrokerRefusesWhatIsNoRequestOfGit(t *testing.T) {
 	defer s.mu.Unlock()
 
 	assert.Empty(t, s.headers)
+}
+
+func TestBrokerRefusesAPushToARemoteThatAllowsOnlyFetch(t *testing.T) {
+	// arrange
+	s := newServer(t)
+	s.repository(t, "owner/repo")
+	bare := filepath.Join(s.root, "owner/repo.git")
+	brokerURL, _ := s.broker(t, Remote{Name: "example.com/owner/repo", Fetch: true, Login: login})
+	dir := clone(t, brokerURL)
+	gitOK(t, dir, "commit", "--allow-empty", "-m", "second")
+	before := gitOK(t, bare, "for-each-ref")
+
+	// act
+	out, err := git(t, dir, "push", "origin", "HEAD:aibox/work")
+
+	// assert
+	require.Error(t, err)
+	assert.Contains(t, out, "the config allows no branches to push to")
+	assert.Equal(t, before, gitOK(t, bare, "for-each-ref"))
+}
+
+func TestBrokerSaysWhenTheServerRefusesOrRedirects(t *testing.T) {
+	cases := map[string]struct {
+		status int
+		says   string
+	}{
+		"a refusal":  {http.StatusForbidden, "check the git login of the host and its access to the repository (HTTP 403)"},
+		"a redirect": {http.StatusFound, "the server redirects to https://elsewhere.example.com/owner/repo.git, name that address in the config instead (HTTP 302)"},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", "https://elsewhere.example.com/owner/repo.git")
+				w.WriteHeader(c.status)
+			}))
+			t.Cleanup(upstream.Close)
+
+			target, err := url.Parse(upstream.URL)
+			require.NoError(t, err)
+
+			remotes := []Remote{{Name: "example.com/owner/repo", Fetch: true, Login: login}}
+			broker := httptest.NewServer(newBroker(remotes, func(string) *url.URL { return target }, http.DefaultTransport, nil))
+			t.Cleanup(broker.Close)
+
+			// act
+			response, err := http.Get(broker.URL + "/example.com/owner/repo/info/refs?service=git-upload-pack") //nolint:noctx // a test against a local server
+
+			// assert
+			require.NoError(t, err)
+
+			defer func() { _ = response.Body.Close() }()
+
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadGateway, response.StatusCode)
+			assert.Contains(t, string(body), c.says)
+			assert.Empty(t, response.Header.Get("Location"))
+		})
+	}
+}
+
+func TestBrokerPassesOnACompressedFetchRequest(t *testing.T) {
+	// arrange
+	s := newServer(t)
+	s.repository(t, "owner/repo")
+	brokerURL, _ := s.broker(t, Remote{Name: "example.com/owner/repo", Fetch: true, Login: login})
+
+	// act
+	response, err := postCompressed(t, brokerURL+"/example.com/owner/repo/git-upload-pack", "application/x-git-upload-pack-request",
+		pktLine("command=ls-refs\n")+"0001"+pktLine("ref-prefix refs/heads/\n")+flush)
+
+	// assert
+	require.NoError(t, err)
+
+	defer func() { _ = response.Body.Close() }()
+
+	answer, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode, string(answer))
+	assert.Contains(t, string(answer), "refs/heads/main")
+}
+
+func TestBrokerRefusesACompressedPush(t *testing.T) {
+	// arrange
+	s := newServer(t)
+	s.repository(t, "owner/repo")
+	brokerURL, _ := s.broker(t, Remote{Name: "example.com/owner/repo", Fetch: true, Push: []string{"aibox/*"}, Login: login})
+
+	// act
+	response, err := postCompressed(t, brokerURL+"/example.com/owner/repo/git-receive-pack", "application/x-git-receive-pack-request",
+		pktLine(oldID+" "+newID+" refs/heads/aibox/a\x00report-status\n")+flush)
+
+	// assert
+	require.NoError(t, err)
+	_ = response.Body.Close()
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	assert.Empty(t, s.headers, "the server got nothing")
+}
+
+// postCompressed sends body compressed with gzip, as git does with the
+// requests of a long fetch, in protocol version 2.
+func postCompressed(t *testing.T, target, contentType, body string) (*http.Response, error) {
+	t.Helper()
+
+	var compressed bytes.Buffer
+
+	writer := gzip.NewWriter(&compressed)
+	_, err := io.WriteString(writer, body)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, &compressed)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Content-Encoding", "gzip")
+	request.Header.Set("Git-Protocol", "version=2")
+
+	return http.DefaultClient.Do(request)
 }
 
 func TestBrokerPushesMoreThanTheBufferOfGit(t *testing.T) {

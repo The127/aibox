@@ -84,6 +84,15 @@ func TestAllowedUpdateChecksTheBranch(t *testing.T) {
 		"a reflog expression": {command{oldID, newID, "refs/heads/aibox/a@{1}"}, false},
 		"a glob character":    {command{oldID, newID, "refs/heads/aibox/*"}, false},
 		"another namespace":   {command{oldID, newID, "refs/heads/../aibox/a"}, false},
+		"a space":             {command{oldID, newID, "refs/heads/aibox/a b"}, false},
+		"a control character": {command{oldID, newID, "refs/heads/aibox/a\x01b"}, false},
+		"a delete character":  {command{oldID, newID, "refs/heads/aibox/a\x7fb"}, false},
+		"a tilde":             {command{oldID, newID, "refs/heads/aibox/a~1"}, false},
+		"a caret":             {command{oldID, newID, "refs/heads/aibox/a^1"}, false},
+		"a colon":             {command{oldID, newID, "refs/heads/aibox/a:b"}, false},
+		"a question mark":     {command{oldID, newID, "refs/heads/aibox/a?"}, false},
+		"a bracket":           {command{oldID, newID, "refs/heads/aibox/a[b"}, false},
+		"a backslash":         {command{oldID, newID, "refs/heads/aibox/a\\b"}, false},
 	}
 
 	for name, c := range cases {

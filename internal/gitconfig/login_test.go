@@ -71,3 +71,17 @@ func TestLoginForIgnoresTheRepositoryOfTheCurrentFolder(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, gitconfig.ErrNoLogin)
 }
+
+func TestLoginForKeepsTheVariablesAfterThoseOfARepository(t *testing.T) {
+	// arrange: the variable of the repository comes first, the config of
+	// the helper after it
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), ".git"))
+	helper(t, "echo username=someone; echo password=the-token")
+
+	// act
+	login, err := gitconfig.LoginFor(context.Background(), "github.com/owner/repo")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, gitconfig.Login{Username: "someone", Password: "the-token"}, login)
+}

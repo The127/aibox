@@ -193,6 +193,25 @@ func TestSSHKeysForFollowTheSSHConfig(t *testing.T) {
 	samePublic(t, work, target.Signers[0])
 }
 
+func TestSSHKeysForTakeEachKeyFileOfTheConfig(t *testing.T) {
+	// arrange: the first key only the agent can use, the second from its
+	// file
+	dir := sshHome(t, "github.com")
+	first := writeKey(t, filepath.Join(dir, "first"), "secret")
+	second := writeKey(t, filepath.Join(dir, "second"), "")
+	runAgent(t, first)
+	keys := loadKeys(t, sshConfig(t, dir, "Host github.com\n  IdentityFile ~/.ssh/first\n  IdentityFile ~/.ssh/second\n  IdentitiesOnly yes\n"))
+
+	// act
+	target, err := keys.For(context.Background(), "github.com")
+
+	// assert
+	require.NoError(t, err)
+	require.Len(t, target.Signers, 2)
+	samePublic(t, first, target.Signers[0])
+	samePublic(t, second, target.Signers[1])
+}
+
 func TestSSHKeysForTakeAKeyWithAPassphraseFromTheAgent(t *testing.T) {
 	// arrange
 	dir := sshHome(t, "github.com")

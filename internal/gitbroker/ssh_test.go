@@ -468,22 +468,9 @@ func TestBrokerOverSSHTakesACompressedFetchRequest(t *testing.T) {
 	server := newTestSSHServer(t, s.root)
 	brokerURL, _ := server.broker(t, server.remote(t))
 
-	// git compresses the requests of a long negotiation
-	var body bytes.Buffer
-
-	compressed := gzip.NewWriter(&body)
-	_, err := io.WriteString(compressed, pktLine("command=ls-refs\n")+"0001"+pktLine("ref-prefix refs/heads/\n")+"0000")
-	require.NoError(t, err)
-	require.NoError(t, compressed.Close())
-
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, brokerURL+"/example.com/owner/repo/git-upload-pack", &body)
-	require.NoError(t, err)
-	request.Header.Set("Content-Type", "application/x-git-upload-pack-request")
-	request.Header.Set("Content-Encoding", "gzip")
-	request.Header.Set("Git-Protocol", "version=2")
-
 	// act
-	response, err := http.DefaultClient.Do(request)
+	response, err := postCompressed(t, brokerURL+"/example.com/owner/repo/git-upload-pack", "application/x-git-upload-pack-request",
+		pktLine("command=ls-refs\n")+"0001"+pktLine("ref-prefix refs/heads/\n")+flush)
 
 	// assert
 	require.NoError(t, err)

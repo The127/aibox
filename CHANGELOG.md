@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/The127/aibox/compare/v1.4.0...v1.4.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* drop limits of the git broker and the proxy log ([#56](https://github.com/The127/aibox/issues/56)) ([b2d9977](https://github.com/The127/aibox/commit/b2d9977db07f5232160d8fa23480be603e6e827a))
+* end the line of the download progress once the download is over ([#51](https://github.com/The127/aibox/issues/51)) ([96cf376](https://github.com/The127/aibox/commit/96cf376b8f7827eeb3fdb0b6d71e6c232b14080a))
+
 ## [1.4.0](https://github.com/The127/aibox/compare/v1.3.0...v1.4.0) (2026-10-08)
 
 

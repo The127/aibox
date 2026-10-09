@@ -92,7 +92,7 @@ With `push` but no `fetch`, the VM still sees the names of all branches and
 tags and the commits they point to, because git needs them to push. It
 doesn't get the files.
 
-Note that with `git`, aibox sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
+With `git`, aibox sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
 `GIT_CONFIG_VALUE_*` in the VM, so you can't set them in `env`.
 
 ## How the broker works

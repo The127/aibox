@@ -1,73 +1,62 @@
 # Security
 
-aibox assumes that everything in the VM can turn against you. A prompt or a
-file in a repository can steer Claude Code, so aibox doesn't trust Claude
-Code, the programs it runs or anything they write.
+A prompt or a file in a repository can steer Claude Code. So aibox doesn't
+trust anything in the VM: not Claude Code, not the programs it runs, and not
+what they write.
 
 To report a vulnerability, see
 [SECURITY.md](https://github.com/The127/aibox/blob/main/SECURITY.md).
 
 ## What aibox protects
 
-Your other files. With `aibox run` the VM sees your project folder. A task
-only sees a clone of a commit. Both also see the folders you list in
-`mounts` and your skills in `~/.claude/skills`, read-only. The VM sees no
-other files of yours. aibox won't start in your home folder or above it.
-
-The network. The VM has no network card. It can only reach the hosts on the
-allow list, through a proxy on your machine. aibox refuses a name that
-resolves to your machine's own networks, unless the list names that address
-itself. A port on your machine's loopback is only reachable when the list
-names it. See [allow](config.md#allow).
-
-Your API key. `ANTHROPIC_API_KEY` stays on your machine. The VM gets a
-placeholder, and aibox adds the real key to the requests that go to the
-Claude API. See [API key](tasks.md#api-key).
-
-Your git login. It stays on your machine too. A broker adds it to git's
-requests from the VM, but only for the repositories and branches the config
-names. See [Git](git.md).
-
-Your machine, from the programs that run the VM. On Linux QEMU runs in a
-bubblewrap sandbox, and aibox locks itself down with Landlock and seccomp. On
-macOS aibox locks itself down with Seatbelt. See
-[The host side](#the-host-side).
-
-The VM image. aibox only takes the image whose SHA-256 was built into its
-release.
+- The VM can't see your other files. With `aibox run` it sees your project
+  folder. A task only sees a clone of a commit. Both also see the folders
+  you list in `mounts` and your skills in `~/.claude/skills`, read-only.
+  aibox won't start in your home folder or above it.
+- The VM can only reach the hosts on the allow list. It has no network card,
+  only a proxy on your machine. aibox refuses a name that resolves to your
+  machine's own networks, unless the list names that address itself. A port
+  on your machine's loopback is only reachable when the list names it. See
+  [allow](config.md#allow).
+- Your API key stays on your machine. The VM gets a placeholder, and aibox
+  adds the real key to the requests that go to the Claude API. See
+  [API key](tasks.md#api-key).
+- Your git login stays on your machine too. A broker adds it to git's
+  requests from the VM, but only for the repositories and branches the
+  config names. See [Git](git.md).
+- The programs that run the VM are locked down. On Linux QEMU runs in a
+  bubblewrap sandbox, and aibox restricts itself with Landlock and seccomp.
+  On macOS aibox restricts itself with Seatbelt. See
+  [The host side](#the-host-side).
+- aibox only boots the image whose SHA-256 was built into its release.
 
 ## What aibox does not protect
 
-What the VM writes into the project. That includes `.git`, and files that
-tools on your machine run without asking. Read
-[What the VM writes](what-the-vm-writes.md).
-
-What you allow. The VM can reach every host on the allow list and every port
-of your machine the list names. It can use every secret in `env` and push to
-every branch the `git` list names. A subscription token goes into the VM as
-it is, so the VM can read it. A task can use all of this, with nobody there
-to stop it. See [Tasks](tasks.md).
-
-What goes through an allowed connection. `proxy.log` shows the host and port
-the VM asked for. It doesn't show the address behind the host, or what was
-sent. A push to `github.com` and a fetch from it look the same.
-
-What a task says about itself. Claude Code's last message, `result.json` and
-the authors of the commits all come from the VM.
-
-Force pushes and CI. The git broker can't tell a force push to an allowed
-branch from a normal push. A pushed branch can start the repository's CI,
-with its secrets. See
-[What the broker can't stop](git.md#what-the-broker-cant-stop).
-
-Spending. The only limit on time or spending that aibox enforces itself is a
-task's `--timeout`. Give an API key a spend limit in the Console.
-
-Gatekeeper on macOS. The VM can set and remove extended attributes on files
-in the project, including `com.apple.quarantine`, and files it creates have
-none. So Gatekeeper never checks a program that comes out of the VM.
-Virtualization.framework has no option to prevent that. Like everything the
-VM writes, such a program is untrusted until you've read it.
+- What the VM writes into the project. That includes `.git`, and files that
+  tools on your machine run without asking. Read
+  [What the VM writes](what-the-vm-writes.md).
+- What you allow. The VM can reach every host on the allow list and every
+  port of your machine the list names. It can use every secret in `env` and
+  push to every branch the `git` list names. A subscription token goes into
+  the VM as it is, so the VM can read it. A task can use all of this, with
+  nobody there to stop it. See [Tasks](tasks.md).
+- What goes through an allowed connection. `proxy.log` shows the host and
+  port the VM asked for. It doesn't show the address behind the host, or
+  what was sent. A push to `github.com` and a fetch from it look the same.
+- What a task says about itself. Claude Code's last message, `result.json`
+  and the authors of the commits all come from the VM.
+- Force pushes and CI. The git broker can't tell a force push to an allowed
+  branch from a normal push. A pushed branch can start the repository's CI,
+  with its secrets. See
+  [What the broker can't stop](git.md#what-the-broker-cant-stop).
+- Spending. The only limit on time or spending that aibox enforces itself
+  is a task's `--timeout`. Give an API key a spend limit in the Console.
+- Gatekeeper on macOS. The VM can set and remove extended attributes on
+  files in the project, including `com.apple.quarantine`, and files it
+  creates have none. So Gatekeeper never checks a program that comes out of
+  the VM. Virtualization.framework has no option to prevent that. Like
+  everything the VM writes, such a program is untrusted until you've read
+  it.
 
 ## How it works
 

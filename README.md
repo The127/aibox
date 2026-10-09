@@ -16,7 +16,7 @@ You can use aibox in two ways:
 - `aibox run` starts Claude Code in your project folder, like you would on
   your machine. Changes show up in the folder right away.
 - `aibox task` hands Claude Code a job to do on its own. It works on a clone
-  of your repository and you get its commits back to review. The VM is
+  of the last commit and you get its commits back to review. The VM is
   deleted afterwards.
 
 aibox runs on Linux with QEMU and on macOS with Virtualization.framework. The
@@ -31,8 +31,8 @@ before you start.
 
 Claude Code's own sandbox only covers shell commands. Its file tools, MCP
 servers and hooks still run on your machine. A Docker container covers the
-whole process, but shares your kernel. A VM has its own kernel, so getting
-out means breaking the hypervisor. aibox keeps that VM small, with no
+whole process, but shares your kernel. A VM has its own kernel, so a kernel
+bug alone is not enough to get out. aibox keeps that VM small, with no
 network card and a proxy as its only way to the network.
 [Why a VM](https://the127.github.io/aibox/introduction.html#why-a-vm)
 compares aibox with these, Apple's container tool and Docker Sandboxes.
@@ -85,9 +85,10 @@ aibox config edit
 
 ## Your first task
 
-A task has nobody there to log in, so it takes a token from your shell
-instead. First make one with `claude setup-token` and export it as
-`CLAUDE_CODE_OAUTH_TOKEN`. Then add it to `env` in the project config:
+A task works on a clone of the last commit, with nobody there to log in. So
+it takes a token from your shell instead. First make one with
+`claude setup-token` and export it as `CLAUDE_CODE_OAUTH_TOKEN`. Then add it
+to `env` in the project config:
 
 ```yaml
 env:

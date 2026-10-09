@@ -15,7 +15,7 @@ This opens the config in the same editor git would use: `$VISUAL`, then
 `$EDITOR`, then `vi`. Pass `--editor` to pick another one. When you close
 the editor, aibox checks the file and tells you about mistakes.
 
-Note that an editor that returns right away, like `code` without `--wait`,
+An editor that returns right away, like `code` without `--wait`,
 gets checked before you've made your changes.
 
 Here is a full example:
@@ -110,10 +110,10 @@ This works for any protocol over TCP, also for programs that don't use the
 proxy. A program in the VM can't listen on such a port itself. Port 3128
 can't be allowed, because the VM's proxy is there.
 
-Note that the server runs as you, on your machine, outside the VM, and does
-what the VM asks it to. An IDE's MCP server, for example, often has no login
-and can run commands and change files outside the project. Allowing its
-port lets the VM out. Only allow a port for a server you'd trust with
+Keep in mind that the server runs as you, on your machine, outside the VM,
+and does what the VM asks it to. An IDE's MCP server, for example, often has
+no login and can run commands and change files outside the project.
+Allowing its port lets the VM out. Only allow a port for a server you'd trust with
 whatever the VM asks of it.
 
 ### How it works
@@ -137,12 +137,13 @@ The size in GiB of the disk that keeps the VM's `/usr/local` and `~/.cache`
 between runs. The default is 16. The disk only takes up space on your
 machine as it fills.
 
-Note that the size is fixed when the first run creates the disk. Changing it
+The size is fixed when the first run creates the disk. Changing it
 later has no effect.
 
 ## mounts
 
-Folders on your machine that the VM can read, written as `host:guest`.
+Folders on your machine that the VM can read, but not write. Write them as
+`host:guest`.
 `guest` is the path in the VM. A host path starting with `~/` starts in your
 home folder.
 
@@ -156,8 +157,9 @@ home folder.
   folder on your machine, a running VM may not see it.
 - On macOS the VM runs arm64 Linux, so Mac programs don't run in it.
 
-Your skills in `~/.claude/skills` are always mounted read-only, at the same
-place in the VM's home, so Claude Code finds them. A symlink in there that
+If you have skills in `~/.claude/skills`, aibox mounts them read-only at the
+same place in the VM's home, so Claude Code finds them. A mount of your own
+at that place takes over. A symlink in there that
 points outside the folder doesn't work in the VM. Your settings, plugins and
 MCP servers are not shared. The VM starts with its own.
 

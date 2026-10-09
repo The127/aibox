@@ -1,9 +1,8 @@
 # Tasks
 
-A task gives Claude Code a job and lets it work on its own, without you
-watching. It runs in a fresh VM on a clone of your repository. When it's
-done, you get its commits back as a git bundle to review, and the VM is
-deleted.
+A task is a job Claude Code does on its own while you do something else. It
+runs in a fresh VM on a clone of the last commit. When it's done, you get its
+commits back as a git bundle to review, and the VM is deleted.
 
 ```
 aibox task --model sonnet "fix the flaky test in internal/proxy"
@@ -67,7 +66,7 @@ VM, and only to branches you name, use [git](git.md) in the config.
 | `--model` | The model Claude Code uses. Without it, Claude Code uses its default. |
 | `--max-turns` | The most turns Claude Code takes. |
 | `--max-budget-usd` | The most Claude Code may spend by its own estimate, in US dollars at API prices. See [Cost](#cost). |
-| `--timeout` | How long Claude Code may work before it's stopped. The default is 1h, the most is 30 days. |
+| `--timeout` | How long Claude Code may work before it's stopped. 1h by default, up to 30 days. |
 
 `--memory`, `--cpus`, `--image` and `--no-sandbox` work like they do for
 `aibox run`.
@@ -94,7 +93,7 @@ A few rules apply:
 - The prompt can be up to 1 MiB of UTF-8 text, the arguments and the file
   together.
 
-Note that a plan you haven't committed only reaches the task as its prompt.
+A plan you haven't committed only reaches the task as its prompt.
 It's not a file in `/project`.
 
 ## Login
@@ -126,7 +125,7 @@ in the VM can read the key, send it somewhere or put it into a commit.
 But while the task runs, it can still spend the key through aibox, on any
 request to the Claude API. Give the key a spend limit in the Console.
 
-Note that this only works for programs that use `ANTHROPIC_BASE_URL`. Other
+This only works for programs that use `ANTHROPIC_BASE_URL`. Other
 programs in the VM only get the placeholder. aibox refuses a config that
 sets `ANTHROPIC_BASE_URL` itself next to the key.
 
@@ -197,7 +196,7 @@ author.
    `result.json`, because the VM writes that file. The printed commit is the
    one aibox checked the bundle against.
 
-Note that checking out, merging or rebasing the branch puts its files into
+Checking out, merging or rebasing the branch puts its files into
 your project folder. From then on, everything in
 [What the VM writes](what-the-vm-writes.md) applies.
 

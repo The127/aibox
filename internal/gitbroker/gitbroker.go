@@ -381,15 +381,10 @@ type readCloser struct {
 // requestKey carries the request to the rewrite and the error handler.
 type requestKey struct{}
 
-// eventLog writes what the broker refused and the pushes it passed on, up
-// to maxEvents lines, so that a VM that keeps trying cannot fill the log.
 type eventLog struct {
-	mu    sync.Mutex
-	w     io.Writer
-	lines int
+	mu sync.Mutex
+	w  io.Writer
 }
-
-const maxEvents = 1000
 
 func (l *eventLog) add(format string, args ...any) {
 	if l.w == nil {
@@ -400,17 +395,7 @@ func (l *eventLog) add(format string, args ...any) {
 	defer l.mu.Unlock()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-
-	switch {
-	case l.lines > maxEvents:
-		return
-	case l.lines == maxEvents:
-		_, _ = fmt.Fprintf(l.w, "%s git %d events, later ones are left out\n", now, maxEvents)
-	default:
-		_, _ = fmt.Fprintf(l.w, "%s git %s\n", now, sanitize(fmt.Sprintf(format, args...)))
-	}
-
-	l.lines++
+	_, _ = fmt.Fprintf(l.w, "%s git %s\n", now, sanitize(fmt.Sprintf(format, args...)))
 }
 
 // sanitize keeps a line of the log one plain line, whatever the VM sent:

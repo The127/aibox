@@ -254,9 +254,8 @@ aibox tasks clean --all --older-than 720h
 command also removes what's left of tasks that failed while starting. If it
 can't check or clean a folder, it names it and exits with 1.
 
-A task counts as ended once its aibox process ends. On macOS the VM ends
-with aibox, even when aibox is killed. On Linux it should too, but that's
-not tested with the real virtiofsd yet.
+A task counts as ended once its aibox process ends. The VM ends with aibox,
+even when aibox is killed.
 
 ## How a task runs
 

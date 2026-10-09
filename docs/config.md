@@ -111,6 +111,13 @@ and can run commands and change files outside the project, so allowing its
 port lets the VM out. Allow a port only for a server you would let do what
 the VM asks.
 
+How it works: aibox tells the init of the VM the ports on its kernel command
+line. The init listens on `127.0.0.1` in the VM for each port and sends each
+connection to the proxy as `localhost` and the port. For `localhost` the
+proxy does not ask DNS. It dials the one loopback address the allow list
+names for that port. So the server sees the `Host` it expects, since many
+local servers refuse other names to guard against DNS rebinding.
+
 ## memory, cpus
 
 The memory of the VM in MiB and its number of CPUs. The flags `--memory` and

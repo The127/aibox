@@ -107,6 +107,14 @@ get the placeholder too, and work only if they follow `ANTHROPIC_BASE_URL`.
 aibox refuses a config that sets `ANTHROPIC_BASE_URL` itself next to the
 key.
 
+The port is `127.0.0.1:3129`. The proxy answers on it itself and dials
+nothing for it. It sends each request under `/v1/`, and the check Claude
+Code makes at `/api/hello`, to `https://api.anthropic.com`, whatever host the
+request names. It refuses a path with dot segments or escapes, drops the
+credentials the VM sent and adds the key. `proxy.log` shows these requests
+as `localhost:3129`. aibox reads the root certificates for this before it
+confines itself.
+
 A subscription token goes into the VM as it is, since Anthropic's terms let
 no one but you handle it. In the VM, Claude Code and every program the task
 runs can read it. A task that text has steered can send it to a host of the
@@ -197,3 +205,54 @@ It names every folder it could not check or clean and then exits with 1.
 A task counts as ended once its aibox ends. On macOS the VM ends with
 aibox, even when aibox is killed. On Linux it should too, but that is not
 yet tested with the real virtiofsd.
+
+## How a task runs
+
+`aibox task` boots the same VM as `aibox run`, without a terminal. The kernel
+command line tells the init that it runs a task.
+
+- aibox writes the prompt, the settings and a bundle of the commit the task
+  starts from into the folder of the task. The VM gets that folder as a
+  read-only share. Since git bundles refs only, the bundle comes from an
+  empty repository that borrows the objects of the project and has the
+  commit as its `HEAD`. The project gets no new ref.
+- The project folder and the home of the project are not shared. The mounts
+  of the config and your skills are, read-only as for `aibox run`.
+- Each task gets a new state disk, which the init formats, and the home and
+  the project are folders on it. aibox removes the file of the disk as soon
+  as the VM has it open, so the disk is gone when the VM is. Tasks do not
+  lock the project, so they run next to each other and next to `aibox run`.
+- The init clones the bundle, removes the remote and switches to the branch
+  `aibox/task`. It runs `claude --print` as the user, with
+  `bypassPermissions`, `stream-json` output and
+  [`image/task.md`](https://github.com/The127/aibox/blob/main/image/task.md)
+  as an extra system prompt. Then it commits what is left and makes a bundle
+  of the branch.
+- The git steps of aibox run with hooks and fsmonitor off, since the
+  repository came from the task. Filters the task sets up still run, inside
+  the VM.
+- Each step runs in a new cgroup, and the init kills that cgroup when the
+  step ends, so nothing a step started outlives it. The git steps before
+  Claude Code have 10 minutes together, and the ones after it have 10 more.
+  Claude Code has the timeout of the task. aibox stops the VM 25 minutes
+  after the timeout at the latest.
+- The results come back over the SSH session, as a tar on its standard
+  output. The init sends each file once it is complete, and `result.json`
+  last. Progress goes over its standard error.
+- aibox accepts only files it knows by name. Each must be a plain file, sent
+  once, and within a size limit. When aibox refuses the results, it stops
+  the VM.
+- aibox reads the header of the bundle without git, and checks that it
+  carries `aibox/task` and nothing else and needs no commit but the one the
+  task started from.
+- aibox cleans the text from the VM of control characters before it reaches
+  your terminal. It puts the time, the source and the end of the ID in front
+  of each line from the VM itself, so a line from the VM cannot pass for a
+  line of aibox. `aibox run` passes the terminal of the VM through, so this
+  holds only for tasks.
+- aibox opens the files of the results before the VM starts, since it
+  confines itself once the VM runs and can open no file then. For the same
+  reason a task cannot remove the bundle of its input when it ends, and
+  `aibox tasks clean` does it later. Each task locks a file in its folder
+  while it runs, and its folder gets its name only once it holds the lock,
+  so `aibox tasks clean` leaves a running task alone.

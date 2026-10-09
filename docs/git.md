@@ -74,3 +74,55 @@ with `ssh-add -c`, limits what a fault in aibox could do with it.
 
 With `git`, aibox sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
 `GIT_CONFIG_VALUE_*` in the VM, so `env` cannot set them.
+
+## How the broker works
+
+- aibox asks git on your machine for the login of each repository before the
+  VM starts. It runs git outside any repository and without a terminal, so
+  the config of the project, which the VM can write, has no say.
+- git in the VM gets a config that sends the HTTPS and SSH addresses of each
+  repository to `http://127.0.0.1:3130`. The init forwards that port to the
+  proxy as it does the ports of the allow list, and the proxy serves the
+  broker there.
+- The broker speaks the smart HTTP protocol of git. It accepts only the
+  requests of git, only for the repositories of the list, and only without
+  dot segments or escapes in the path.
+- It sends each request to `https://HOST/PATH.git`, which the config fixes
+  and not the request. It adds the login of the host and drops the
+  credentials and cookies of the VM. An answer that refuses the login or
+  redirects becomes an error for the VM, so git in the VM never asks for a
+  login of its own.
+- Of a push the broker reads the commands at the start, which name each ref
+  with its old and new commit. It passes the push on only when each command
+  updates or creates a branch of the list. Otherwise it refuses all of them,
+  since the pack belongs to the whole push. It also refuses deletes, tags,
+  signed pushes, push options and pushes from a shallow clone, and answers
+  in the format of git, so that git in the VM shows why. A push larger than
+  the buffer of git starts with a probe that is a flush alone, which the
+  broker passes on.
+
+Over SSH:
+
+- aibox asks `ssh -G` for the host name, the port, the key files, the agent
+  and the known hosts ssh would use, and reads the known hosts and the keys
+  before the VM starts. The port of the server joins the ports aibox may
+  connect to.
+- The broker asks the server only for the types of key the known hosts
+  hold for it.
+- It logs in once per repository and opens a session on that connection for
+  each request, at most four at a time. It logs in again when the
+  connection broke.
+- HTTP is stateless and SSH is not, so for each request of git in the VM
+  the broker runs the service on the server once. For the advertisement it
+  passes on what the server advertises, with the line that names the
+  service over HTTP, and then ends the service. For a request it skips the
+  advertisement, sends the body, decompressed when git compressed it for
+  HTTP, and passes on the answer.
+- git in the VM sends `Git-Protocol`, which the broker passes on as
+  `GIT_PROTOCOL`, so that a fetch runs in version 2.
+- Logging in, opening and closing a session, the advertisement and each
+  silence in an answer have a time limit. A request git in the VM gives up
+  on ends its session. What the server writes to its standard error goes
+  into the error and the log.
+- A path on the server that starts with `-` or `~` is refused in the
+  config, since the server would read it as an option or a home folder.

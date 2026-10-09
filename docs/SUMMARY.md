@@ -6,6 +6,6 @@
 [Tasks](tasks.md)
 [Project config](config.md)
 [Git](git.md)
+[Containers and VMs](containers.md)
 [What the VM writes](what-the-vm-writes.md)
 [Security](security.md)
-[How aibox works](design.md)

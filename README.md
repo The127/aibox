@@ -2,16 +2,23 @@
 
 [![ci](https://github.com/The127/aibox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/The127/aibox/actions/workflows/ci.yml)
 
-aibox runs [Claude Code](https://code.claude.com) inside a microVM, with your
-project folder shared into it. Claude Code works on the project as it would
-on your machine, but it sees no other files of yours, and it reaches the
-network only through a proxy that lets through the hosts you allow.
+aibox runs [Claude Code](https://code.claude.com) inside a microVM. Claude
+Code sees only the files you give it, and it reaches the network only
+through a proxy that lets through the hosts you allow.
+
+- `aibox run` shares the project folder into the VM, writable, and starts
+  Claude Code in it, to work with you.
+- `aibox task` gives the VM a clone of a commit instead of the folder, runs
+  Claude Code in it unattended, and hands back its commits for you to
+  review. The VM is thrown away afterwards.
+
+Both can also see folders you mount for them, read-only.
 
 It runs on Linux with QEMU and on macOS with Virtualization.framework. The VM
 boots in about a second.
 
-The project folder is shared writable, so treat what the VM writes into it,
-`.git` included, like a pull request from a stranger. Read
+With `aibox run` the project folder is shared writable, so treat what the
+VM writes into it, `.git` included, like a pull request from a stranger. Read
 [What the VM writes](https://the127.github.io/aibox/what-the-vm-writes.html)
 before you use aibox.
 
@@ -83,8 +90,8 @@ port and secret the config gives it, so read
 ## Documentation
 
 The documentation is at <https://the127.github.io/aibox>. It describes
-tasks, the project config, git, what the VM writes, what aibox protects
-against and how aibox works.
+tasks, the project config, git, containers and VMs in the VM, what the VM
+writes, what aibox protects against, and how each part works.
 
 ## Contributing
 

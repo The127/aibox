@@ -68,7 +68,7 @@ Your known hosts check the server. aibox refuses a server that isn't in
 them, so connect to it with `ssh` once to add it.
 
 The broker logs in once and runs git's requests from the VM over that
-connection, at most four at a time.
+connection.
 
 If neither HTTPS nor SSH works, aibox stops. It reads the logins and keys
 only once, so restart aibox when one expires.
@@ -132,8 +132,9 @@ keys. The server's port gets added to the ports aibox may connect to.
 
 The broker only asks the server for the key types your known hosts have for
 it. It logs in once per repository and opens a session on that connection
-for each request, at most four at a time. If the connection breaks, it logs
-in again.
+for each request. If the connection breaks, it logs in again. If the server
+refuses a session, for example because it has too many open, only that
+request fails. The other sessions on the connection go on.
 
 HTTP is stateless and SSH isn't. So for each request from git in the VM, the
 broker runs the service on the server once:

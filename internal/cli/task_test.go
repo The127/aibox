@@ -25,7 +25,6 @@ import (
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/gitconfig"
-	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/task"
 )
 
@@ -392,11 +391,9 @@ func TestTaskWritesWhatTheGitBrokerRefusedIntoItsOwnLog(t *testing.T) {
 	assert.Empty(t, string(project))
 }
 
-func TestListTargetsSaysWhenTheLogIsFull(t *testing.T) {
-	targets := proxy.Targets{List: []string{"a:1", "b:2", "c:3", "d:4", "e:5", "f:6"}, Full: true}
-
-	assert.Equal(t, "a:1, b:2, c:3, d:4, e:5 and 1 more, and more that were not logged", listTargets(targets))
-	assert.Equal(t, "a:1", listTargets(proxy.Targets{List: []string{"a:1"}}))
+func TestListTargetsCountsTheTargetsItDoesNotName(t *testing.T) {
+	assert.Equal(t, "a:1, b:2, c:3, d:4, e:5 and 1 more", listTargets([]string{"a:1", "b:2", "c:3", "d:4", "e:5", "f:6"}))
+	assert.Equal(t, "a:1", listTargets([]string{"a:1"}))
 }
 
 func TestTaskLeavesAnErrorBeforeItHasAnIDToMain(t *testing.T) {

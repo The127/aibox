@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -376,35 +375,8 @@ func TestLogWritesEachTargetOnce(t *testing.T) {
 	assert.Contains(t, lines[3], `connected "evil.example:443"`)
 
 	connected, refused := log.Targets()
-	assert.Equal(t, []string{"github.com:443", "evil.example:443"}, connected.List)
-	assert.Equal(t, []string{"evil.example:443", "evil.example:80"}, refused.List)
-	assert.False(t, connected.Full)
-	assert.False(t, refused.Full)
-}
-
-func TestLogStopsAtItsLimit(t *testing.T) {
-	// arrange
-	var out bytes.Buffer
-	log := proxy.NewLog(&out)
-
-	// act
-	for i := range 1005 {
-		log.Refused(fmt.Sprintf("host%d.example:443", i))
-	}
-
-	log.Connected("github.com:443")
-
-	// assert
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	require.Len(t, lines, 1002)
-	assert.Contains(t, lines[1000], "refused 1000 targets, later ones are left out")
-	assert.Contains(t, lines[1001], `connected "github.com:443"`, "the refused ones do not crowd out the others")
-
-	connected, refused := log.Targets()
-	assert.Len(t, refused.List, 1000)
-	assert.True(t, refused.Full)
-	assert.Equal(t, []string{"github.com:443"}, connected.List)
-	assert.False(t, connected.Full)
+	assert.Equal(t, []string{"github.com:443", "evil.example:443"}, connected)
+	assert.Equal(t, []string{"evil.example:443", "evil.example:80"}, refused)
 }
 
 func TestServeReportsATargetItConnectedTo(t *testing.T) {

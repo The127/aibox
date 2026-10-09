@@ -329,15 +329,9 @@ func isPublic(ip net.IP) bool {
 	return !slices.ContainsFunc(notPublic, func(p netip.Prefix) bool { return p.Contains(addr) })
 }
 
-// maxLoggedTargets is how many targets of each kind a Log keeps, so that a
-// guest that asks for ever new ones cannot fill the log or the memory. The
-// kinds count apart, so that refused names, which a guest can make up
-// without end, cannot crowd out the targets the proxy connected to.
-const maxLoggedTargets = 1000
-
 // Log writes each target the proxy connected to or refused to a writer
-// once, so that a guest that keeps trying cannot fill the log, and keeps
-// them. It writes what the guest asked for, not what went through.
+// once, and keeps them. It writes what the guest asked for, not what went
+// through.
 type Log struct {
 	mu        sync.Mutex
 	w         io.Writer
@@ -345,17 +339,8 @@ type Log struct {
 	refused   targets
 }
 
-// Targets are the targets of one kind, in the order the proxy first met
-// them. Full says that later ones were left out.
-type Targets struct {
-	List []string
-	Full bool
-}
-
-// targets are the Targets of one kind a Log keeps, and those it saw.
 type targets struct {
-	Targets
-
+	list []string
 	seen map[string]bool
 }
 
@@ -375,13 +360,13 @@ func (l *Log) Refused(target string) {
 	l.add("refused", target, &l.refused)
 }
 
-// Targets returns the targets the proxy connected to and those it refused.
-func (l *Log) Targets() (connected, refused Targets) {
+// Targets returns the targets the proxy connected to and those it refused,
+// each in the order the proxy first met them.
+func (l *Log) Targets() (connected, refused []string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	return Targets{List: slices.Clone(l.connected.List), Full: l.connected.Full},
-		Targets{List: slices.Clone(l.refused.List), Full: l.refused.Full}
+	return slices.Clone(l.connected.list), slices.Clone(l.refused.list)
 }
 
 func (l *Log) add(verb, target string, targets *targets) {
@@ -392,24 +377,14 @@ func (l *Log) add(verb, target string, targets *targets) {
 		return
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	if len(targets.List) >= maxLoggedTargets {
-		if !targets.Full {
-			targets.Full = true
-			_, _ = fmt.Fprintf(l.w, "%s %s %d targets, later ones are left out\n", now, verb, maxLoggedTargets)
-		}
-
-		return
-	}
-
 	if targets.seen == nil {
 		targets.seen = map[string]bool{}
 	}
 
 	targets.seen[target] = true
-	targets.List = append(targets.List, target)
+	targets.list = append(targets.list, target)
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = fmt.Fprintf(l.w, "%s %s %q\n", now, verb, target)
 }
 

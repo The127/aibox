@@ -332,9 +332,9 @@ func TestSessionDeliversOutputThatKeepsComingAfterTheExit(t *testing.T) {
 	f.waitStarted(t)
 	f.exited(t, 0)
 
-	// act
+	// act: each write comes within the delay, all of them together after it
 	for range 10 {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(session.DrainDelay / 5)
 		_, err := io.WriteString(f.prints, "still here\r\n")
 		require.NoError(t, err)
 	}
@@ -374,7 +374,7 @@ func TestSessionWaitsForAClientThatReadsSlowly(t *testing.T) {
 	f.exited(t, 0)
 
 	// act
-	time.Sleep(2 * time.Second)
+	time.Sleep(2 * session.DrainDelay)
 	close(screen.release)
 
 	// assert
@@ -396,7 +396,7 @@ func TestSessionGivesUpOnATerminalThatStaysSilentAfterTheExit(t *testing.T) {
 	result := f.waitAttached(t)
 	require.NoError(t, result.err)
 	assert.Equal(t, 0, result.code)
-	assert.Less(t, time.Since(start), 3*time.Second)
+	assert.Less(t, time.Since(start), 10*session.DrainDelay)
 }
 
 func TestSessionClosesTheProcessWhenItIsOver(t *testing.T) {

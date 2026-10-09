@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -42,13 +43,69 @@ func newTaskFixture(t *testing.T) *taskFixture {
 
 	f := &taskFixture{fixture: newFixture(t), image: writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")}
 
-	f.git(t, "init", "--quiet")
-	require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "README"), []byte("hello\n"), 0o600))
-	f.git(t, "add", "README")
-	f.git(t, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--message", "one")
-	f.base = strings.TrimSpace(f.git(t, "rev-parse", "HEAD"))
+	taskProject.once.Do(func() { taskProject.dir, taskProject.base, taskProject.err = makeTaskProject() })
+	require.NoError(t, taskProject.err)
+	require.NoError(t, os.CopyFS(f.cwd, os.DirFS(filepath.Join(taskProject.dir, "project"))))
+	f.base = taskProject.base
 
 	return f
+}
+
+// taskProject is a repository with a README in one commit, base, which each
+// task fixture copies, since making one with git takes several git
+// processes.
+var taskProject struct {
+	once sync.Once
+	dir  string
+	base string
+	err  error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	if taskProject.dir != "" {
+		_ = os.RemoveAll(taskProject.dir)
+	}
+
+	os.Exit(code)
+}
+
+// makeTaskProject makes the folder of the repository that each task fixture
+// copies, in project below it, and returns it with the commit.
+func makeTaskProject() (dir, base string, err error) {
+	dir, err = os.MkdirTemp("", "cli-project")
+	if err != nil {
+		return "", "", err
+	}
+
+	work := filepath.Join(dir, "project")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		return dir, "", err
+	}
+
+	if err := os.WriteFile(filepath.Join(work, "README"), []byte("hello\n"), 0o600); err != nil {
+		return dir, "", err
+	}
+
+	var out []byte
+
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"add", "README"},
+		{"-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--message", "one"},
+		{"rev-parse", "HEAD"},
+	} {
+		cmd := exec.Command("git", args...) //nolint:gosec // the arguments are the test's own
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+
+		if out, err = cmd.CombinedOutput(); err != nil {
+			return dir, "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	return dir, strings.TrimSpace(string(out)), nil
 }
 
 func (f *taskFixture) git(t *testing.T, args ...string) string {

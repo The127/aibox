@@ -1,8 +1,10 @@
 # aibox
 
-aibox runs Claude Code inside a QEMU microVM, with the project folder shared
-into the VM over virtio-fs. The docs in docs/ say how it works, in the
-"How it works" section of each page.
+aibox runs Claude Code inside a microVM: QEMU on Linux,
+Virtualization.framework on macOS. `aibox run` shares the project folder
+into the VM over virtio-fs. `aibox task` gives the VM a clone of a commit
+instead and hands back its commits as a bundle. The docs in docs/ say how it
+works, in the "How it works" section of each page.
 
 ## Docs
 

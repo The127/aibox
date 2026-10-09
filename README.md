@@ -27,6 +27,16 @@ Note that with `aibox run` the VM can change anything in your project folder,
 Read [What the VM writes](https://the127.github.io/aibox/what-the-vm-writes.html)
 before you start.
 
+## Why a VM
+
+Claude Code's own sandbox only covers shell commands. Its file tools, MCP
+servers and hooks still run on your machine. A Docker container covers the
+whole process, but shares your kernel. A VM has its own kernel, so getting
+out means breaking the hypervisor. aibox keeps that VM small, with no
+network card and a proxy as its only way to the network.
+[Why a VM](https://the127.github.io/aibox/introduction.html#why-a-vm)
+compares aibox with these, Apple's container tool and Docker Sandboxes.
+
 ## Installing
 
 On macOS with Apple silicon, install it with [Homebrew](https://brew.sh):

@@ -25,8 +25,8 @@ brew install --cask the127/tap/aibox
 
 On Linux, each [release](https://github.com/The127/aibox/releases) has a
 `deb` and an `rpm` for amd64, which depend on QEMU, virtiofsd and bubblewrap,
-and a `tar.gz` with the binary. aibox needs Linux 6.7 or newer and access to
-`/dev/kvm`.
+and a `tar.gz` with the binary, for which you install those yourself. aibox
+needs Linux 6.7 or newer and access to `/dev/kvm`.
 
 With [Nix](https://nixos.org), on Linux on amd64 or macOS on Apple silicon:
 

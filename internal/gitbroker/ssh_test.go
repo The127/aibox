@@ -2,6 +2,7 @@ package gitbroker
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -41,8 +42,9 @@ type testSSHServer struct {
 	logins    int
 	protocols []string
 	conns     []net.Conn
-	// posts counts the requests of git in the VM that carry a body
-	posts int
+	// rounds counts the requests of git in the VM that negotiate a fetch:
+	// each POST but the one of ls-refs in protocol version 2
+	rounds int
 }
 
 // drop breaks every connection to the server, as a network that went away.
@@ -238,9 +240,20 @@ func (s *testSSHServer) broker(t *testing.T, remote Remote) (string, *safeWriter
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			s.mu.Lock()
-			s.posts++
-			s.mu.Unlock()
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+
+				return
+			}
+
+			r.Body = io.NopCloser(bytes.NewReader(body))
+
+			if !bytes.Contains(uncompressed(t, r, body), []byte("command=ls-refs")) {
+				s.mu.Lock()
+				s.rounds++
+				s.mu.Unlock()
+			}
 		}
 
 		b.ServeHTTP(w, r)
@@ -248,6 +261,23 @@ func (s *testSSHServer) broker(t *testing.T, remote Remote) (string, *safeWriter
 	t.Cleanup(server.Close)
 
 	return server.URL, log
+}
+
+// uncompressed is the body of the request as git wrote it.
+func uncompressed(t *testing.T, r *http.Request, body []byte) []byte {
+	t.Helper()
+
+	if r.Header.Get("Content-Encoding") != "gzip" {
+		return body
+	}
+
+	reader, err := gzip.NewReader(bytes.NewReader(body))
+	require.NoError(t, err)
+
+	plain, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	return plain
 }
 
 // remote is example.com/owner/repo over SSH with the key of the client.
@@ -396,22 +426,24 @@ func TestBrokerFetchesOverSSHInSeveralRounds(t *testing.T) {
 	server := newTestSSHServer(t, s.root)
 	brokerURL, _ := server.broker(t, server.remote(t))
 
+	// commits the server does not have make git negotiate in rounds. Protocol
+	// version 2 sends more of them at once, so it needs 64.
+	local := clone(t, brokerURL)
+	for i := range 64 {
+		gitOK(t, local, "commit", "--allow-empty", "-m", fmt.Sprintf("local %d", i))
+	}
+
 	for _, version := range []string{"0", "2"} {
 		t.Run("protocol version "+version, func(t *testing.T) {
-			dir := clone(t, brokerURL)
-
-			// many commits the server does not have make git negotiate in
-			// rounds, and compress its requests
-			for i := range 300 {
-				gitOK(t, dir, "commit", "--allow-empty", "-m", fmt.Sprintf("local %d", i))
-			}
+			dir := filepath.Join(t.TempDir(), "clone")
+			require.NoError(t, os.CopyFS(dir, os.DirFS(local)))
 
 			work := clone(t, brokerURL)
 			gitOK(t, work, "commit", "--allow-empty", "-m", "remote "+version)
 			gitOK(t, work, "push", filepath.Join(s.root, "owner/repo.git"), "HEAD:main")
 
 			server.mu.Lock()
-			before := server.posts
+			before := server.rounds
 			server.mu.Unlock()
 
 			// act
@@ -424,9 +456,44 @@ func TestBrokerFetchesOverSSHInSeveralRounds(t *testing.T) {
 			server.mu.Lock()
 			defer server.mu.Unlock()
 
-			assert.Greater(t, server.posts-before, 1, "git negotiated in more than one round")
+			assert.Greater(t, server.rounds-before, 1, "git negotiated in more than one round")
 		})
 	}
+}
+
+func TestBrokerOverSSHTakesACompressedFetchRequest(t *testing.T) {
+	// arrange
+	s := newServer(t)
+	s.repository(t, "owner/repo")
+	server := newTestSSHServer(t, s.root)
+	brokerURL, _ := server.broker(t, server.remote(t))
+
+	// git compresses the requests of a long negotiation
+	var body bytes.Buffer
+
+	compressed := gzip.NewWriter(&body)
+	_, err := io.WriteString(compressed, pktLine("command=ls-refs\n")+"0001"+pktLine("ref-prefix refs/heads/\n")+"0000")
+	require.NoError(t, err)
+	require.NoError(t, compressed.Close())
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, brokerURL+"/example.com/owner/repo/git-upload-pack", &body)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/x-git-upload-pack-request")
+	request.Header.Set("Content-Encoding", "gzip")
+	request.Header.Set("Git-Protocol", "version=2")
+
+	// act
+	response, err := http.DefaultClient.Do(request)
+
+	// assert
+	require.NoError(t, err)
+
+	defer func() { _ = response.Body.Close() }()
+
+	answer, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode, string(answer))
+	assert.Contains(t, string(answer), "refs/heads/main")
 }
 
 func TestBrokerOverSSHPassesOnWhatTheServerSays(t *testing.T) {

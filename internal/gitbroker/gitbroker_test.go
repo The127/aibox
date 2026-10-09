@@ -2,7 +2,9 @@ package gitbroker
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cgi" //nolint:gosec // serves git http-backend to the tests, on a Go without httpoxy
@@ -14,12 +16,43 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 var login = Login{Username: "host-user", Password: "host-token"}
+
+// gitTimeout bounds each git the tests run, so that a broker that stops
+// answering fails the test instead of hanging it.
+const gitTimeout = 30 * time.Second
+
+// gitExecPath is the folder of the programs of git, such as
+// git-http-backend.
+var gitExecPath = sync.OnceValues(func() (string, error) {
+	out, err := exec.Command("git", "--exec-path").Output()
+
+	return strings.TrimSpace(string(out)), err
+})
+
+// template is a bare repository with a commit on main, which repository
+// copies, since making one with git takes several git processes.
+var template struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	if template.dir != "" {
+		_ = os.RemoveAll(template.dir)
+	}
+
+	os.Exit(code)
+}
 
 // server is a git server for the tests: git http-backend over the bare
 // repositories below root, which wants the login of the host.
@@ -34,12 +67,12 @@ type server struct {
 func newServer(t *testing.T) *server {
 	t.Helper()
 
-	execPath, err := exec.Command("git", "--exec-path").Output()
+	execPath, err := gitExecPath()
 	require.NoError(t, err)
 
 	s := &server{root: t.TempDir()}
 	backend := &cgi.Handler{
-		Path: filepath.Join(strings.TrimSpace(string(execPath)), "git-http-backend"),
+		Path: filepath.Join(execPath, "git-http-backend"),
 		Env:  []string{"GIT_PROJECT_ROOT=" + s.root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=host-user"},
 	}
 
@@ -82,14 +115,38 @@ func newServer(t *testing.T) *server {
 func (s *server) repository(t *testing.T, name string) {
 	t.Helper()
 
-	bare := filepath.Join(s.root, name+".git")
-	gitOK(t, "", "init", "--bare", "--initial-branch=main", bare)
-	gitOK(t, bare, "config", "http.receivepack", "true")
+	template.once.Do(func() { template.dir, template.err = makeTemplate() })
+	require.NoError(t, template.err)
 
-	work := t.TempDir()
-	gitOK(t, work, "init", "--initial-branch=main")
-	gitOK(t, work, "commit", "--allow-empty", "-m", "first")
-	gitOK(t, work, "push", bare, "main")
+	require.NoError(t, os.CopyFS(filepath.Join(s.root, name+".git"), os.DirFS(filepath.Join(template.dir, "bare"))))
+}
+
+// makeTemplate makes the folder of the repository that repository copies,
+// in bare below it.
+func makeTemplate() (string, error) {
+	dir, err := os.MkdirTemp("", "gitbroker-template")
+	if err != nil {
+		return "", err
+	}
+
+	bare, work, home := filepath.Join(dir, "bare"), filepath.Join(dir, "work"), filepath.Join(dir, "home")
+
+	for _, step := range []struct {
+		dir  string
+		args []string
+	}{
+		{"", []string{"init", "--bare", "--initial-branch=main", bare}},
+		{bare, []string{"config", "http.receivepack", "true"}},
+		{"", []string{"init", "--initial-branch=main", work}},
+		{work, []string{"commit", "--allow-empty", "-m", "first"}},
+		{work, []string{"push", bare, "main"}},
+	} {
+		if out, err := gitIn(context.Background(), home, step.dir, step.args...); err != nil {
+			return dir, fmt.Errorf("git %s: %w: %s", strings.Join(step.args, " "), err, out)
+		}
+	}
+
+	return dir, nil
 }
 
 // broker returns a broker in front of the server for the remotes.
@@ -138,10 +195,19 @@ func (s *safeWriter) Write(p []byte) (int, error) {
 func git(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
 
-	cmd := exec.Command("git", args...) //nolint:gosec // the arguments are the test's own
+	ctx, cancel := context.WithTimeout(t.Context(), gitTimeout)
+	defer cancel()
+
+	return gitIn(ctx, t.TempDir(), dir, args...)
+}
+
+// gitIn runs git in dir with home as its HOME and without the config of
+// the machine.
+func gitIn(ctx context.Context, home, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // the arguments are the test's own
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		"HOME="+t.TempDir(),
+		"HOME="+home,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",

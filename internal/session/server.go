@@ -25,8 +25,8 @@ var (
 
 // drainDelay is how long the terminal may stay silent after the command
 // has exited before the server stops waiting for a child that still holds
-// it.
-const drainDelay = time.Second
+// it. The tests shorten it.
+var drainDelay = time.Second
 
 // Size is the size of a terminal in characters.
 type Size struct {

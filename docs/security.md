@@ -115,15 +115,14 @@ On macOS the VM runs in a Virtualization.framework process. aibox can't put
 that process in a sandbox of its own, like it does with QEMU and bubblewrap.
 That's why `--no-sandbox` changes nothing on macOS.
 
-The VM should end with aibox, even when aibox is killed or crashes. On
+The VM ends with aibox, even when aibox is killed or crashes. On
 macOS the Virtualization.framework process does, and it also serves the
 shares, so nothing is left behind. On Linux aibox starts QEMU and virtiofsd
 with a parent death signal, so the kernel kills them when aibox dies.
 bubblewrap does the same for QEMU. The kernel sends that signal when the
 thread that started the program ends, so aibox starts all of them from one
 thread that lives as long as aibox. virtiofsd forks the process that serves
-the share, and that process ends by a signal of its own. Whether this works
-with the real virtiofsd isn't tested yet.
+the share, and that process ends by a signal of its own.
 
 aibox won't start in your home folder, above it, or above `~/.aibox`. It
 compares folders rather than paths, so a symlink, a different spelling on a

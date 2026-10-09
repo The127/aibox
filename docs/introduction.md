@@ -1,30 +1,72 @@
 # Introduction
 
-aibox runs [Claude Code](https://code.claude.com) in a microVM on your
-machine. In the VM, Claude Code has the files you give it and no others of
-yours. It reaches the network through a proxy that lets through only the
-hosts you allow.
+aibox runs [Claude Code](https://code.claude.com) in a small virtual machine
+on your computer.
 
-- `aibox run` shares the project folder into the VM, writable, and starts
-  Claude Code in it, to work with you.
-- `aibox task` gives the VM a clone of a commit instead of the folder, runs
-  Claude Code in it unattended, and hands back its commits for you to
-  review. The VM is thrown away afterwards.
+Claude Code can read and change files, run commands and access the internet.
+That is what makes it useful, but it also means a bad prompt or a malicious
+file in a repository can make it do things you did not want. aibox limits the
+damage. Claude Code only sees the files you give it, and it can only connect
+to hosts you allow.
 
-Both can also see folders you mount for them, read-only.
+You can use aibox in two ways:
 
-It runs on Linux with QEMU and on macOS with Virtualization.framework. The VM
-boots in about a second.
+- `aibox run` starts Claude Code in your project folder, like you would on
+  your machine. Changes show up in the folder right away. See
+  [Running Claude Code](usage.md).
+- `aibox task` hands Claude Code a job to do on its own. It works on a clone
+  of your repository and you get its commits back to review. The VM is
+  deleted afterwards. See [Tasks](tasks.md).
 
-```
-cd ~/projects/my-app
-aibox run
-```
+You can also mount other folders into the VM, read-only.
 
-This boots the VM with `my-app` at `/project` and starts Claude Code in it.
-Open the project in your editor next to it and watch the changes come in.
+aibox runs on Linux with QEMU and on macOS with Virtualization.framework. The
+VM boots in about a second.
 
-With `aibox run` the project folder is shared writable, so what the VM
-writes into it is untrusted until you have read it.
-[What the VM writes](what-the-vm-writes.md) says what that means, and
-[Security](security.md) what aibox protects and what it does not.
+## Why a VM
+
+There are other ways to fence in Claude Code. Here is why aibox uses a VM
+instead.
+
+Claude Code has a [sandbox](https://code.claude.com/docs/en/sandboxing) of
+its own. It's quick to turn on and good for cutting down on permission
+prompts. But it only covers shell commands. Claude Code's file tools, MCP
+servers and hooks still run directly on your machine. Anthropic's
+[sandbox runtime](https://github.com/anthropics/sandbox-runtime) wraps the
+whole process, but it still shares your kernel, and you configure every
+path and host yourself.
+
+A Docker container, like Anthropic's
+[dev container](https://code.claude.com/docs/en/devcontainer), puts the
+whole process in a box. But containers share the kernel with your machine,
+so a kernel bug is a way out. The dev container's firewall runs inside the
+same container as Claude Code, and it allows the IP addresses it looked up
+when the container started. On a Mac, Docker runs all containers in one
+shared Linux VM.
+
+A VM has its own kernel. To get out, something has to break the hypervisor,
+not just the kernel. aibox keeps that VM small: no network card, no kernel
+modules, and a proxy on your machine as its only way to the network. It also locks
+down the programs that run the VM on your machine.
+
+Apple's [container](https://github.com/apple/container) tool also runs each
+container in its own VM. But its runtime can't be locked down, and it talks
+to the VM over a socket other programs of yours can reach. So on macOS aibox
+runs the VM with Virtualization.framework itself, like it runs QEMU on
+Linux.
+
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) is the closest to
+aibox. It also runs agents in a microVM, with a proxy that only lets
+allowed hosts through and keeps API keys on your machine. You need to sign
+in to Docker to use it. aibox is open source and needs no account. It also
+has a [git broker](git.md) that only lets pushes through to the branches you
+name.
+
+## What aibox does not do
+
+aibox keeps Claude Code away from the rest of your machine. It does not check
+what Claude Code does with the things you give it. With `aibox run` the VM can
+change anything in your project folder, `.git` included, and a task can use
+every host and secret you allow it. Read
+[What the VM writes](what-the-vm-writes.md) and [Security](security.md) to
+see where the limits are.

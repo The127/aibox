@@ -1,19 +1,24 @@
 # Project config
 
-Each project has its settings in `~/.aibox/projects/<escaped path>/config.yaml`,
-outside the project, so the VM cannot change them. The first `aibox run`
-writes the file with comments and the hosts Claude Code needs.
+Each project has its own config at
+`~/.aibox/projects/<escaped path>/config.yaml`. It lives outside the project
+on purpose, so the VM can't change it. The first `aibox run` writes it, with
+comments and the hosts Claude Code needs.
+
+To change it, run:
 
 ```
 aibox config edit
 ```
 
-opens it in the editor git would use, `$VISUAL`, then `$EDITOR`, then `vi`,
-or in the one given with `--editor`. Afterwards it checks the file and
-reports a mistake. An editor that returns at once, such as `code` without
-`--wait`, is checked before you have edited.
+This opens the config in the same editor git would use: `$VISUAL`, then
+`$EDITOR`, then `vi`. Pass `--editor` to pick another one. When you close
+the editor, aibox checks the file and tells you about mistakes.
 
-A full example:
+Note that an editor that returns right away, like `code` without `--wait`,
+gets checked before you've made your changes.
+
+Here is a full example:
 
 ```yaml
 allow:
@@ -40,34 +45,35 @@ git:
       - aibox/*
 ```
 
-`git` has a page of its own, [Git](git.md).
+`git` has its own page, [Git](git.md).
 
 ## allow
 
-The hosts the VM may reach. The proxy refuses everything else.
+The hosts the VM can connect to. The proxy refuses everything else.
 
-- `example.com` allows port 443, `example.com:8443` another port.
+- `example.com` allows port 443. Write `example.com:8443` for another port.
 - `*.example.com` matches every subdomain of `example.com`, but not
   `example.com` itself.
-- `preset:NAME` stands for the hosts a tool needs, see the table below.
-- A name that resolves into the host's own networks, such as loopback,
-  link-local or private addresses, is refused, unless the list names that
-  address itself.
-- `127.0.0.1:8123` or `[::1]:8123` is a port on the loopback of your
-  machine. See [Ports of your machine](#ports-of-your-machine).
+- `preset:NAME` stands for the hosts a tool needs. See the table below.
+- `127.0.0.1:8123` or `[::1]:8123` is a port on your machine. See
+  [Ports on your machine](#ports-on-your-machine).
 
-A new config allows the hosts Claude Code needs, and nothing else:
+aibox refuses a name that resolves to an address in your machine's own
+networks, like loopback, link-local or private addresses. The only way to
+allow such an address is to write it into the list.
+
+A new config only allows the hosts Claude Code needs:
 
 | Host | Why |
 |---|---|
 | `api.anthropic.com` | the Claude API |
-| `claude.ai` | login with a claude.ai account |
+| `claude.ai` | logging in with a claude.ai account |
 | `claude.com` | the sign-in page redirects through here |
 | `platform.claude.com` | login tokens |
 | `mcp-proxy.anthropic.com` | MCP connectors of a claude.ai account |
-| `code.claude.com` | documentation lookups |
+| `code.claude.com` | looking up documentation |
 
-The presets:
+These are the presets:
 
 | Preset | Hosts |
 |---|---|
@@ -78,10 +84,10 @@ The presets:
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
 
-## Ports of your machine
+## Ports on your machine
 
-A server that listens on the loopback of your machine, such as a local MCP
-server, is reached from the VM at the same address once you allow it:
+Some servers only listen on your machine's loopback, like a local MCP
+server. Once you allow the port, the VM reaches it at the same address:
 
 ```yaml
 allow:
@@ -92,85 +98,89 @@ allow:
 claude mcp add -t http my-server http://127.0.0.1:8123/mcp
 ```
 
-- Write the address the server listens on, `127.0.0.1` or `[::1]`. The VM
-  has IPv4 only, so the port is at `127.0.0.1` and `localhost` in the VM
-  either way, and one port can be allowed on only one of the two.
-- `localhost` is not allowed as an entry. It stands for both addresses, and
-  any user on your machine could listen on the one the server does not.
-  `0.0.0.0` and `::` are not allowed either, since they lead to the
-  loopback too.
-- It works for any protocol over TCP, also for programs that do not use the
-  proxy.
-- A program in the VM cannot listen on such a port itself.
-- Port 3128 cannot be allowed on the loopback, because the VM has its proxy
-  there.
+Write the address the server listens on, `127.0.0.1` or `[::1]`. The VM only
+has IPv4, so in the VM the port is at `127.0.0.1` and `localhost` either
+way. That also means you can allow a port on only one of the two addresses.
 
-Such a server runs as you on your machine, outside the VM, and does what
-the VM asks of it. An MCP server of an IDE, for example, often has no login
-and can run commands and change files outside the project, so allowing its
-port lets the VM out. Allow a port only for a server you would let do what
-the VM asks.
+You can't write `localhost`. It means both addresses, and any user on your
+machine could listen on the one the server doesn't use. `0.0.0.0` and `::`
+aren't allowed either, because they lead to the loopback too.
 
-How it works: aibox tells the init of the VM the ports on its kernel command
-line. The init listens on `127.0.0.1` in the VM for each port and sends each
-connection to the proxy as `localhost` and the port. For `localhost` the
-proxy does not ask DNS. It dials the one loopback address the allow list
-names for that port. So programs that ignore the proxy variables reach the
-port too, and the server sees the `Host` it expects, since many
-local servers refuse other names to guard against DNS rebinding.
+This works for any protocol over TCP, also for programs that don't use the
+proxy. A program in the VM can't listen on such a port itself. Port 3128
+can't be allowed, because the VM's proxy is there.
+
+Note that the server runs as you, on your machine, outside the VM, and does
+what the VM asks it to. An IDE's MCP server, for example, often has no login
+and can run commands and change files outside the project. Allowing its
+port lets the VM out. Only allow a port for a server you'd trust with
+whatever the VM asks of it.
+
+### How it works
+
+aibox passes the ports to the VM's init on the kernel command line. The init
+listens on `127.0.0.1` in the VM for each port. It sends each connection to
+the proxy as `localhost` and the port. For `localhost` the proxy doesn't ask
+DNS. It connects to the one loopback address the allow list names for that
+port. That's why programs that ignore the proxy variables reach the port
+too. It also means the server sees the `Host` it expects. Many local servers
+refuse other names, to guard against DNS rebinding.
 
 ## memory, cpus
 
-The memory of the VM in MiB and its number of CPUs. The flags `--memory` and
-`--cpus` take precedence. Without either, the VM gets 2048 MiB and 2 CPUs.
+The VM's memory in MiB and its number of CPUs. Without them, the VM gets
+2048 MiB and 2 CPUs. The flags `--memory` and `--cpus` override both.
 
 ## disk
 
-The size in GiB of the disk that keeps `/usr/local` and `~/.cache` of the VM
-between runs, 16 unless set. The disk takes up space on the host only as it
-fills. Its size is fixed when the disk is created on the first run, so a
-later change has no effect.
+The size in GiB of the disk that keeps the VM's `/usr/local` and `~/.cache`
+between runs. The default is 16. The disk only takes up space on your
+machine as it fills.
+
+Note that the size is fixed when the first run creates the disk. Changing it
+later has no effect.
 
 ## mounts
 
-Folders of the host the VM sees read-only, written `host:guest`, with `guest`
-the path in the VM. `~/` at the start of the host path stands for your home
-folder.
+Folders on your machine that the VM can read, written as `host:guest`.
+`guest` is the path in the VM. A host path starting with `~/` starts in your
+home folder.
 
-- The guest path must stay clear of the folders the VM needs: `/project`,
+- The guest path has to stay clear of the folders the VM needs: `/project`,
   `/dev`, `/proc`, `/sys`, `/run`, `/tmp`, `/etc`, `/bin`, `/sbin`, `/lib`,
-  `/lib64`, `/usr` and `/root`, and of the other mounts.
-- A mount inside `/home/user` is fine, because the home of the VM is a folder
-  of aibox, not your home on the host. Leave `/home/user/.claude` itself
-  alone, the login of the VM lives there.
-- Names and attributes are cached for the whole run, so a change to the
-  folder on the host may not show in a running VM.
-- On macOS the VM runs arm64 Linux, so programs of the Mac do not run in it.
+  `/lib64`, `/usr` and `/root`. It also can't overlap with other mounts.
+- A mount inside `/home/user` is fine. The VM's home is a folder aibox
+  manages, not your home folder. Leave `/home/user/.claude` itself alone,
+  because the VM's login lives there.
+- The VM caches names and attributes for the whole run. If you change the
+  folder on your machine, a running VM may not see it.
+- On macOS the VM runs arm64 Linux, so Mac programs don't run in it.
 
-Your skills in `~/.claude/skills` are mounted read-only at the same place in
-the home of the VM, so Claude Code finds them. A symlink in there that points
-outside the folder does not resolve in the VM. Your settings, plugins and MCP
-servers are not shared, the VM starts with its own.
+Your skills in `~/.claude/skills` are always mounted read-only, at the same
+place in the VM's home, so Claude Code finds them. A symlink in there that
+points outside the folder doesn't work in the VM. Your settings, plugins and
+MCP servers are not shared. The VM starts with its own.
 
 ## path
 
-Folders in the VM that go in front of its `PATH`, for Claude Code and the
-shell alike, for example `/opt/go/bin` from the mount above.
+Folders in the VM to put in front of its `PATH`, for Claude Code and the
+shell. For example `/opt/go/bin` from the mount above.
 
-An entry that is a variable name, such as `PATH` or `DIRENV_PATH`, stands for
-the folders in that variable of the host, less the relative and empty ones.
-So the tools of a `nix develop` or `direnv` shell on the host are found in the
-VM, if `/nix/store` is mounted at the same path.
+An entry can also be the name of a variable, like `PATH` or `DIRENV_PATH`.
+It then stands for the folders in that variable on your machine, without the
+relative and empty ones. That way the VM finds the tools of a `nix develop`
+or `direnv` shell, as long as `/nix/store` is mounted at the same path.
 
 ## env
 
-Variables for the command in the VM. `NAME=value` sets a value, `NAME` alone
-passes the value the host has when the VM starts, which is how a secret gets
-in without being written into the file. aibox refuses the variables it sets
-itself: `AIBOX`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `TERM`, `LANG`,
-the proxy variables, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and
-`GOMODCACHE`.
+Environment variables for the command in the VM. `NAME=value` sets a value.
+`NAME` alone passes on the value your shell has when the VM starts. That's
+how you get a secret in without writing it into the file.
 
-`ANTHROPIC_API_KEY` is the exception to passing values on. For `aibox run`
-as for tasks, the key stays on your machine and the VM gets a placeholder,
-see [Login](tasks.md#login).
+aibox refuses the variables it sets itself: `AIBOX`, `HOME`, `USER`,
+`LOGNAME`, `SHELL`, `PATH`, `TERM`, `LANG`, the proxy variables,
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and `GOMODCACHE`.
+
+`ANTHROPIC_API_KEY` is the exception. Its value is never passed on. With
+`aibox run` and with tasks, the key stays on your machine and the VM gets a
+placeholder. See [API key](tasks.md#api-key).

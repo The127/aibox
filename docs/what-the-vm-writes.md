@@ -1,24 +1,35 @@
 # What the VM writes
 
-The project folder is shared writable on purpose. So whatever the VM writes
-into the project is untrusted until you have read it, like a pull request
-from a stranger. That includes files that tools on the host run without
-asking. lefthook runs the commands of `lefthook.yml`, direnv runs `.envrc`,
-just reads the `justfile`, npm runs the scripts of `package.json`, and an IDE
-starts the run configurations under `.idea/`, all from the working tree.
+With `aibox run`, the VM can write to your project folder. That's on purpose,
+it's how you see Claude Code's changes right away. But it also means that
+anything in the project folder can come from the VM. Treat it like a pull
+request from a stranger until you've read it.
 
-This includes `.git`. A key in `.git/config`, such as `core.fsmonitor` or
-`core.hooksPath`, or a hook in `.git/hooks` runs the next time you use git on
-the host, and neither `git status` nor `git diff` shows it. aibox does not
-protect them. A read-only mount in the VM does not hold: git and IDEs
-replace `.git/config` whenever they write it, for example on `git push -u`,
-and the mount goes with the old file.
+This matters most for files that tools on your machine run without asking:
 
-So:
+- lefthook runs the commands in `lefthook.yml`
+- direnv runs `.envrc`
+- just reads the `justfile`
+- npm runs the scripts in `package.json`
+- your IDE starts the run configurations in `.idea/`
 
-- Trust a project in your IDE, which GoLand asks about when you first open
-  it, only when the project is your own.
+All of them run straight from the working tree.
+
+## .git
+
+The same goes for `.git`. A setting in `.git/config`, like `core.fsmonitor`
+or `core.hooksPath`, or a hook in `.git/hooks`, runs the next time you use
+git on your machine. Neither `git status` nor `git diff` shows it.
+
+aibox does not protect these files. Mounting them read-only in the VM
+doesn't help. git and IDEs replace `.git/config` every time they write it,
+for example on `git push -u`, and the mount stays with the old file.
+
+## What to do
+
+- Only trust a project in your IDE when it's your own. GoLand, for example,
+  asks about this when you first open a project.
 - Read the diff of what the VM changed before you run a build, a test, a
-  script or a run configuration of the project on the host, and before you
-  commit with hooks the project defines.
-- Check `.git/config` and `.git/hooks` for changes you did not make.
+  script or a run configuration of the project on your machine. Do the same
+  before you commit with hooks the project defines.
+- Check `.git/config` and `.git/hooks` for changes you didn't make.

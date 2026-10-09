@@ -45,13 +45,13 @@ func TestDefaultFileNamesEveryPreset(t *testing.T) {
 	}
 }
 
-func TestREADMENamesEveryPreset(t *testing.T) {
+func TestDocsNameEveryPreset(t *testing.T) {
 	// arrange
-	readme, err := os.ReadFile("../../README.md")
+	docs, err := os.ReadFile("../../docs/config.md")
 	require.NoError(t, err)
 
 	for name := range presets {
 		// assert
-		assert.Contains(t, string(readme), "preset:"+name)
+		assert.Contains(t, string(docs), "preset:"+name)
 	}
 }

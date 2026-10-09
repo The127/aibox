@@ -134,6 +134,10 @@ reuse:
 prose:
     bash hack/check-prose.sh
 
+# build the documentation site into docs/book
+docs:
+    mdbook build docs
+
 # install the git hooks
 hooks:
     lefthook install
@@ -142,4 +146,4 @@ hooks:
 setup: hooks
 
 # everything that must pass before a push
-ci: lint arch reuse prose build cover vuln
+ci: lint arch reuse prose docs build cover vuln

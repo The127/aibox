@@ -14,6 +14,8 @@ Required tooling:
   commit message.
 - [reuse](https://reuse.software/): checks that every file has license and
   copyright information.
+- [mdBook](https://rust-lang.github.io/mdBook/): builds the documentation
+  site in `docs/`, run by `just docs`.
 
 All of them are in `devenv.nix`. With nix, devenv and direnv installed,
 `direnv allow` puts them on `PATH` in this folder. aibox takes them into its

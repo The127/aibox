@@ -8,7 +8,7 @@ it. This page describes Linux. [macOS](#macos) says what is different there.
 - The VM runs on QEMU's microvm machine type.
 - The project folder is shared into the VM with virtio-fs. Your user on the
   host is the user inside the VM. The VM can write everything in the project,
-  `.git` included. [What the VM writes](../README.md#what-the-vm-writes) says
+  `.git` included. [What the VM writes](what-the-vm-writes.md) says
   what that means for you.
 - The root disk is read-only for QEMU and for the VM. The init puts an
   overlay in RAM over it only to make the mount points, then makes the root
@@ -268,7 +268,7 @@ Linux. What is different:
   for VMs of its own, as on Linux. Elsewhere such VMs run in software.
 - miso does not run on macOS yet, so the image for arm64 is built from
   `image/Containerfile`, whose stages follow the Imagefile.
-  [CONTRIBUTING.md](../CONTRIBUTING.md#the-vm-image) says how.
+  [CONTRIBUTING.md](https://github.com/The127/aibox/blob/main/CONTRIBUTING.md#the-vm-image) says how.
 - aibox is built with cgo and signed with the entitlement
   Virtualization.framework asks for. A build without cgo says that it runs a
   VM on macOS only when built with cgo.

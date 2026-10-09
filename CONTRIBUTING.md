@@ -14,6 +14,8 @@ Required tooling:
   commit message.
 - [reuse](https://reuse.software/): checks that every file has license and
   copyright information.
+- [mdBook](https://rust-lang.github.io/mdBook/): builds the documentation
+  site in `docs/`, run by `just docs`.
 
 All of them are in `devenv.nix`. With nix, devenv and direnv installed,
 `direnv allow` puts them on `PATH` in this folder. aibox takes them into its
@@ -34,7 +36,7 @@ just setup
 
 On macOS, building aibox also needs the Xcode command line tools for cgo.
 `just build` signs the binary with the entitlement Virtualization.framework
-asks for.
+asks for. A build without cgo runs no VM on macOS and says so.
 
 ## The VM image
 
@@ -56,6 +58,17 @@ with Apple's [container](https://github.com/apple/container) tool from
 `rosetta = false` under `[build]` in `~/.config/container/config.toml` when
 Rosetta is not installed. `just image-docker-arm64` builds the same image with
 docker, as the release does.
+
+The kernels are configured in `image/`:
+
+- `microvm.config` is a complete configuration for the microvm board of
+  QEMU on amd64, and `kernel.config` holds what aibox changes about it.
+- `vz-arm64.config` is the configuration of the kernel Apple's container
+  tool boots on Virtualization.framework, and `kernel-arm64.config` holds
+  what aibox changes about it.
+
+`image/Containerfile` builds the same image as the Imagefile, and its stages
+follow the stages of the Imagefile.
 
 ## Developer Certificate of Origin
 

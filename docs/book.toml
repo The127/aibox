@@ -1,0 +1,11 @@
+[book]
+title = "aibox"
+description = "Claude Code in a microVM that sees only your project"
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/The127/aibox"

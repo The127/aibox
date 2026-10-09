@@ -35,6 +35,11 @@ jobs:
       # `just reuse` runs reuse, which the devenv has locally. It needs a
       # module to detect the encoding of files, which macOS lacks
       - run: pipx install "reuse[charset-normalizer]==6.2.0"
+      # `just docs` builds the documentation site with mdbook, which the
+      # devenv has locally
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4
       # tests that need vsock namespaces, Landlock network rules, KVM or the
       # entitlement of Virtualization.framework skip themselves where the
       # runner lacks them

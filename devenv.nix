@@ -11,6 +11,7 @@
     golangci-lint
     just
     lefthook
+    mdbook
     reuse
     # go test -race needs a C compiler
     gcc

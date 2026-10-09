@@ -20,8 +20,8 @@ Only the latest release and the `main` branch get security fixes.
 aibox runs Claude Code, which a prompt or the content of a repository can
 steer, inside a VM. Everything inside the VM is untrusted. The project folder
 is shared writable on purpose, so what the VM writes into it is untrusted
-too, until you have read it. The README says what that means in
-[What the VM writes](README.md#what-the-vm-writes). A change the VM makes to
+too, until you have read it. The documentation says what that means in
+[What the VM writes](docs/what-the-vm-writes.md). A change the VM makes to
 the project, `.git` included, is not a vulnerability by itself.
 
 Of particular interest are issues in:

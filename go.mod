@@ -1,6 +1,6 @@
 module github.com/the127/aibox
 
-go 1.27
+go 1.27.2
 
 require (
 	github.com/Code-Hex/go-infinity-channel v1.0.0 // indirect

@@ -30,7 +30,7 @@ jobs:
       # follow the devenv by hand
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.2
+          version: v2.14.0
           install-only: true
       # `just reuse` runs reuse, which the devenv has locally. It needs a
       # module to detect the encoding of files, which macOS lacks

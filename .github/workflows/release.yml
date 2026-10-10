@@ -67,13 +67,19 @@ jobs:
           path: images
           merge-multiple: true
 
-      # aibox downloads only the images whose SHA-256 it was built with. The
-      # step fails if an image is missing.
+      # aibox downloads only the images whose SHA-256 it was built with, and
+      # boots only the kernels whose SHA-256 it was built with. The step
+      # fails if an image is missing.
       - name: take the digests of the images
         run: |
-          amd64=$(shasum -a 256 images/aibox-image_amd64.tar.gz | cut -d' ' -f1)
-          arm64=$(shasum -a 256 images/aibox-image_arm64.tar.gz | cut -d' ' -f1)
-          echo "AIBOX_IMAGE_DIGESTS=amd64:$amd64,arm64:$arm64" >> "$GITHUB_ENV"
+          set -o pipefail
+          for arch in amd64 arm64; do
+            archive=images/aibox-image_$arch.tar.gz
+            images="$images,$arch:$(shasum -a 256 "$archive" | cut -d' ' -f1)"
+            kernels="$kernels,$arch:$(tar -xzOf "$archive" vmlinuz | shasum -a 256 | cut -d' ' -f1)"
+          done
+          echo "AIBOX_IMAGE_DIGESTS=${images#,}" >> "$GITHUB_ENV"
+          echo "AIBOX_KERNEL_DIGESTS=${kernels#,}" >> "$GITHUB_ENV"
 
       - uses: sigstore/cosign-installer@v4.1.2
 

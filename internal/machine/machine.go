@@ -4,6 +4,8 @@
 package machine
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -14,8 +16,13 @@ import (
 	"github.com/the127/aibox/internal/vm"
 )
 
-// ErrStateBusy is a state disk another run of the project has locked.
-var ErrStateBusy = errors.New("another aibox runs this project")
+var (
+	// ErrStateBusy is a state disk another run of the project has locked.
+	ErrStateBusy = errors.New("another aibox runs this project")
+	// ErrKernel is a kernel that is not the one this aibox was released
+	// with.
+	ErrKernel = errors.New("the kernel is not the one of this release")
+)
 
 // Image returns the kernel and the root disk in the folder.
 func Image(dir string) (kernel, rootfs string, err error) {
@@ -62,16 +69,37 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 	}
 
 	return vm.Machine{
-		Kernel:    kernel,
-		Rootfs:    rootfs,
-		State:     spec.State,
-		MemoryMiB: spec.MemoryMiB,
-		CPUs:      spec.CPUs,
-		Shares:    shares,
-		Shell:     spec.Shell,
-		Task:      spec.Task != "",
-		Loopback:  spec.Loopback,
+		Kernel:       kernel,
+		KernelDigest: spec.KernelDigest,
+		Rootfs:       rootfs,
+		State:        spec.State,
+		MemoryMiB:    spec.MemoryMiB,
+		CPUs:         spec.CPUs,
+		Shares:       shares,
+		Shell:        spec.Shell,
+		Task:         spec.Task != "",
+		Loopback:     spec.Loopback,
 	}, nil
+}
+
+// ReadKernel reads the kernel of the machine and checks it against its
+// digest, if it has one. A backend that can boot what it read should, so
+// that the kernel cannot change between the check and the boot.
+func ReadKernel(m vm.Machine) ([]byte, error) {
+	kernel, err := os.ReadFile(m.Kernel)
+	if err != nil {
+		return nil, fmt.Errorf("read the kernel: %w", err)
+	}
+
+	if m.KernelDigest == "" {
+		return kernel, nil
+	}
+
+	if sum := sha256.Sum256(kernel); hex.EncodeToString(sum[:]) != m.KernelDigest {
+		return nil, fmt.Errorf("%w: %s", ErrKernel, m.Kernel)
+	}
+
+	return kernel, nil
 }
 
 // createState makes the state disk at path with the size, as a sparse file

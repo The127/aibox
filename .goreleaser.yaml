@@ -8,10 +8,12 @@ builds:
     binary: aibox
     env:
       - CGO_ENABLED=0
-    # the SHA-256 of the images of the release, which aibox downloads, and
-    # where a package of the OS puts the image instead
+    # the SHA-256 of the images of the release, which aibox downloads, and of
+    # their kernels, which aibox boots, and where a package of the OS puts
+    # the image instead
     ldflags:
       - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
+      - -X github.com/the127/aibox/internal/image.kernelDigests={{ envOrDefault "AIBOX_KERNEL_DIGESTS" "" }}
       - -X github.com/the127/aibox/internal/image.systemDir=/usr/lib/aibox
     goos:
       - linux
@@ -23,10 +25,12 @@ builds:
     binary: aibox
     env:
       - CGO_ENABLED=1
-    # the SHA-256 of the images of the release, which aibox downloads, and
-    # where a package of the OS puts the image instead
+    # the SHA-256 of the images of the release, which aibox downloads, and of
+    # their kernels, which aibox boots, and where a package of the OS puts
+    # the image instead
     ldflags:
       - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
+      - -X github.com/the127/aibox/internal/image.kernelDigests={{ envOrDefault "AIBOX_KERNEL_DIGESTS" "" }}
       - -X github.com/the127/aibox/internal/image.systemDir=/opt/homebrew/lib/aibox
     goos:
       - darwin

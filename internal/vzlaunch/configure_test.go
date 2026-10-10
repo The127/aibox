@@ -212,3 +212,15 @@ func TestTheConsoleLogOfAStartedVMStaysWhenItCannotTakeThePlaceOfTheLog(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "booted", string(content))
 }
+
+func TestConfigureRefusesAKernelThatIsNotTheReleasedOne(t *testing.T) {
+	// arrange
+	m := testMachine(t)
+	m.KernelDigest = "the digest of another kernel"
+
+	// act
+	_, err := configured(t, m)
+
+	// assert
+	require.ErrorIs(t, err, machine.ErrKernel)
+}

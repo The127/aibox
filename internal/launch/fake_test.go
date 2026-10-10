@@ -372,7 +372,10 @@ func fakeBwrap(args []string) {
 		case arg == "--ro-bind-data" && i+1 < len(args):
 			number, _ := strconv.Atoi(args[i+1])
 			record("bwrap-kernel-kind", []string{kindOf(number)})
-			_ = os.NewFile(uintptr(number), "kernel").Close()
+			kernel := os.NewFile(uintptr(number), "kernel")
+			content, _ := io.ReadAll(kernel)
+			record("bwrap-kernel", []string{string(content)})
+			_ = kernel.Close()
 		case arg == "--" && i+1 < len(args):
 			record("bwrap", args[:i])
 

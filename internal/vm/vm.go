@@ -35,7 +35,9 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 // reaches through the proxy. Owner is the host user the VM user stands for
 // in the shares, and nil leaves the ids as they are.
 type Machine struct {
-	Kernel       string
+	Kernel string
+	// KernelDigest is the SHA-256 the kernel must have, or empty
+	KernelDigest string
 	Rootfs       string
 	State        string
 	MemoryMiB    int

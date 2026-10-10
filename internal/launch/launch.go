@@ -260,9 +260,17 @@ func openFiles(m vm.Machine, options Options, vhost *os.File) (_ *qemuFiles, err
 		return nil, err
 	}
 
-	if files.kernelFD, err = files.open("kernel", m.Kernel, os.O_RDONLY); err != nil {
+	kernel, err := machine.ReadKernel(m)
+	if err != nil {
 		return nil, err
 	}
+
+	sealedKernel, err := sealed("kernel", kernel)
+	if err != nil {
+		return nil, err
+	}
+
+	files.kernelFD = files.add(sealedKernel)
 
 	if files.numbers.Rootfs, err = files.open("root disk", m.Rootfs, os.O_RDONLY); err != nil {
 		return nil, err
@@ -307,6 +315,29 @@ func (f *qemuFiles) open(what, path string, flag int) (int, error) {
 	}
 
 	return f.add(file), nil
+}
+
+// sealed is a read-only file in memory that holds the data and that no one
+// can change any more.
+func sealed(name string, data []byte) (*os.File, error) {
+	fd, err := unix.MemfdCreate(name, unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+	if err != nil {
+		return nil, fmt.Errorf("hold the %s in memory: %w", name, err)
+	}
+
+	memory := os.NewFile(uintptr(fd), name)
+	defer func() { _ = memory.Close() }()
+
+	if _, err := memory.Write(data); err != nil {
+		return nil, fmt.Errorf("hold the %s in memory: %w", name, err)
+	}
+
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_ADD_SEALS, unix.F_SEAL_SEAL|unix.F_SEAL_SHRINK|unix.F_SEAL_GROW|unix.F_SEAL_WRITE); err != nil {
+		return nil, fmt.Errorf("seal the %s: %w", name, err)
+	}
+
+	// opened again for reading only, and from the start
+	return os.Open("/proc/self/fd/" + strconv.Itoa(fd))
 }
 
 // add takes the file and returns the number it will have in QEMU, which

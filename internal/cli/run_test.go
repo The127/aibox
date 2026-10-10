@@ -70,9 +70,11 @@ type fixture struct {
 	// version is the version of aibox, fetched the images it downloaded
 	version string
 	digests map[string]string
-	fetched []fetch
-	editor  *fakeEditor
-	deps    dependencies
+	// kernelDigests are the digests of the kernels the build has
+	kernelDigests map[string]string
+	fetched       []fetch
+	editor        *fakeEditor
+	deps          dependencies
 	// stdout and stderr are where a task reports
 	stdout, stderr bytes.Buffer
 }
@@ -102,6 +104,11 @@ func newFixture(t *testing.T) *fixture {
 
 			return digest, ok
 		},
+		kernelDigest: func(arch string) (string, bool) {
+			digest, ok := f.kernelDigests[arch]
+
+			return digest, ok
+		},
 		fetchImage: func(_ context.Context, version, arch, digest, dir string) error {
 			f.fetched = append(f.fetched, fetch{version: version, arch: arch, digest: digest, dir: dir})
 			writeImage(t, dir, "vmlinuz", "os.ext4")
@@ -113,6 +120,7 @@ func newFixture(t *testing.T) *fixture {
 	f.deps.systemImage = filepath.Join(t.TempDir(), "missing")
 	f.version = "(devel)"
 	f.digests = map[string]string{runtime.GOARCH: "the digest"}
+	f.kernelDigests = map[string]string{runtime.GOARCH: "the kernel digest"}
 
 	return f
 }
@@ -626,6 +634,60 @@ func TestRunLooksForNoPackagedImageWhenTheBuildSetNoFolder(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, dir, f.launch.spec.Image)
+}
+
+func TestRunChecksTheKernelOfTheImageItPicked(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.version = "v0.2.0"
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "the kernel digest", f.launch.spec.KernelDigest)
+}
+
+func TestRunChecksTheKernelOfTheImageAPackageInstalled(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.systemImage = writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, f.deps.systemImage, f.launch.spec.Image)
+	assert.Equal(t, "the kernel digest", f.launch.spec.KernelDigest)
+}
+
+func TestRunChecksNoKernelOfAnImageGiven(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, f.launch.spec.KernelDigest)
+}
+
+func TestRunChecksNoKernelWhenTheBuildHasNoDigest(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.kernelDigests = nil
+	writeImage(t, filepath.Join(f.aiboxDir, "image"), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, f.launch.spec.KernelDigest)
 }
 
 func TestRunDownloadsNoImageForABuildFromACheckout(t *testing.T) {

@@ -28,8 +28,13 @@ To report a vulnerability, see
   bubblewrap sandbox, and aibox restricts itself with Landlock and seccomp.
   On macOS aibox restricts itself with Seatbelt. See
   [The host side](#the-host-side).
-- aibox only boots a downloaded image if its SHA-256 was built into its
-  release. An image your package installed isn't checked. See
+- aibox only takes a downloaded image if its SHA-256 was built into its
+  release. Before each start a release checks the kernel against the
+  SHA-256 built into it, whether it downloaded the image or a package
+  installed it. An image you pass with `--image` isn't checked, and neither
+  is the image of a build from a checkout. On Linux QEMU boots the copy aibox
+  checked. On macOS Virtualization.framework reads the kernel again from its
+  file, so a change right after the check isn't caught. See
   [Packaging aibox](installing.md#packaging-aibox).
 
 ## What aibox does not protect

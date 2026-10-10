@@ -1,6 +1,8 @@
 package machine_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -221,4 +223,67 @@ func TestLockStateIsFreeAgainOnceTheFirstRunEnds(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.NoError(t, second.Close())
+}
+
+// kernelWith is a machine whose kernel holds the content.
+func kernelWith(t *testing.T, content string) vm.Machine {
+	t.Helper()
+
+	kernel := filepath.Join(t.TempDir(), "vmlinuz")
+	require.NoError(t, os.WriteFile(kernel, []byte(content), 0o600))
+
+	return vm.Machine{Kernel: kernel}
+}
+
+func digestOf(content string) string {
+	sum := sha256.Sum256([]byte(content))
+
+	return hex.EncodeToString(sum[:])
+}
+
+func TestReadKernelReturnsTheKernelOfItsDigest(t *testing.T) {
+	// arrange
+	m := kernelWith(t, "the kernel")
+	m.KernelDigest = digestOf("the kernel")
+
+	// act
+	kernel, err := machine.ReadKernel(m)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "the kernel", string(kernel))
+}
+
+func TestReadKernelRefusesAKernelOfAnotherDigest(t *testing.T) {
+	// arrange
+	m := kernelWith(t, "another kernel")
+	m.KernelDigest = digestOf("the kernel")
+
+	// act
+	_, err := machine.ReadKernel(m)
+
+	// assert
+	require.ErrorIs(t, err, machine.ErrKernel)
+	assert.ErrorContains(t, err, m.Kernel)
+}
+
+func TestReadKernelWithoutADigestReturnsAnyKernel(t *testing.T) {
+	// arrange
+	m := kernelWith(t, "any kernel")
+
+	// act
+	kernel, err := machine.ReadKernel(m)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "any kernel", string(kernel))
+}
+
+func TestPrepareKeepsTheDigestOfTheKernel(t *testing.T) {
+	// act
+	m, err := machine.Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: statePath(t), KernelDigest: "the digest"})
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "the digest", m.KernelDigest)
 }

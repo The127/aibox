@@ -34,5 +34,7 @@ Of particular interest are issues in:
 - the confinement of the host side: QEMU in its bubblewrap sandbox, and aibox
   under Landlock and seccomp on Linux or Seatbelt on macOS,
 - the image download: aibox taking a downloaded image other than the one its
-  release was built with. An image a package put into the system folder is
-  trusted like the binary of the package.
+  release was built with,
+- the kernel: aibox booting a kernel other than the one its release was
+  built with. On macOS Virtualization.framework loads the kernel from its
+  path after the check, so a change in between is not caught.

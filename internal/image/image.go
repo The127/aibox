@@ -60,10 +60,20 @@ func Released(version string) bool {
 	return semver.IsValid(version) && semver.Canonical(version) == version && !module.IsPseudoVersion(version)
 }
 
+// kernelDigests are the SHA-256 of the kernels in the image archives of
+// this release, in the same form as digests and set the same way.
+var kernelDigests string
+
 // Digest is the SHA-256 of the image archive of the architecture this
 // aibox was released with.
 func Digest(arch string) (string, bool) {
 	return digestOf(digests, arch)
+}
+
+// KernelDigest is the SHA-256 of the kernel of the architecture this aibox
+// was released with.
+func KernelDigest(arch string) (string, bool) {
+	return digestOf(kernelDigests, arch)
 }
 
 func digestOf(list, arch string) (string, bool) {

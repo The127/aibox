@@ -85,12 +85,13 @@ func digest(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// serve serves the archive as the image of v0.1.0 for arm64, after before.
-func serve(t *testing.T, content []byte, before func()) image.Fetcher {
+// serve serves the archive as the image of v0.1.0 for the architecture,
+// after before.
+func serve(t *testing.T, arch string, content []byte, before func()) image.Fetcher {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v0.1.0/aibox-image_arm64.tar.gz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/v0.1.0/aibox-image_"+arch+".tar.gz", func(w http.ResponseWriter, _ *http.Request) {
 		if before != nil {
 			before()
 		}
@@ -135,7 +136,7 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 func TestFetchUnpacksTheImageOfTheRelease(t *testing.T) {
 	// arrange
 	content := archive(t, theImage())
-	fetcher := serve(t, content, nil)
+	fetcher := serve(t, "arm64", content, nil)
 
 	var reported int64
 
@@ -159,9 +160,55 @@ func TestFetchUnpacksTheImageOfTheRelease(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm(), "as just install-image makes it")
 }
 
+func TestFetchUnpacksTheKernelForHyperV(t *testing.T) {
+	// arrange
+	files := theImage()
+	files["vmlinuz-hyperv"] = "a kernel for Hyper-V"
+	content := archive(t, files)
+	fetcher := serve(t, "amd64", content, nil)
+	dir := filepath.Join(t.TempDir(), "image", "v0.1.0")
+
+	// act
+	err := fetcher.Fetch(context.Background(), "v0.1.0", "amd64", digest(content), dir)
+
+	// assert
+	require.NoError(t, err)
+
+	kernel, err := os.ReadFile(filepath.Join(dir, "vmlinuz-hyperv")) //nolint:gosec // a file of the test
+	require.NoError(t, err)
+	assert.Equal(t, "a kernel for Hyper-V", string(kernel))
+}
+
+func TestFetchRefusesAnArchiveWithoutTheKernelsOfItsArchitecture(t *testing.T) {
+	withHyperV := theImage()
+	withHyperV["vmlinuz-hyperv"] = "a kernel for Hyper-V"
+
+	for name, test := range map[string]struct {
+		arch  string
+		files map[string]string
+	}{
+		"amd64 without the kernel for Hyper-V": {arch: "amd64", files: theImage()},
+		"arm64 with a kernel for Hyper-V":      {arch: "arm64", files: withHyperV},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			content := archive(t, test.files)
+			fetcher := serve(t, test.arch, content, nil)
+			dir := filepath.Join(t.TempDir(), "image", "v0.1.0")
+
+			// act
+			err := fetcher.Fetch(context.Background(), "v0.1.0", test.arch, digest(content), dir)
+
+			// assert
+			require.ErrorIs(t, err, image.ErrArchive)
+			assert.NoDirExists(t, dir)
+		})
+	}
+}
+
 func TestFetchRefusesAnArchiveThatIsNotTheOneOfTheRelease(t *testing.T) {
 	// arrange
-	fetcher := serve(t, archive(t, theImage()), nil)
+	fetcher := serve(t, "arm64", archive(t, theImage()), nil)
 	parent := t.TempDir()
 
 	// act
@@ -186,7 +233,7 @@ func TestFetchRefusesAnArchiveWithOtherFiles(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// arrange
 			content := archive(t, files)
-			fetcher := serve(t, content, nil)
+			fetcher := serve(t, "arm64", content, nil)
 			parent := filepath.Join(t.TempDir(), "image")
 			dir := filepath.Join(parent, "v0.1.0")
 
@@ -222,7 +269,7 @@ func TestFetchKeepsTheImageAnotherRunFetchedMeanwhile(t *testing.T) {
 	other := map[string]string{"vmlinuz": "the other kernel", "os.ext4": "the other root disk"}
 	content := archive(t, theImage())
 
-	fetcher := serve(t, content, func() {
+	fetcher := serve(t, "arm64", content, func() {
 		writeFiles(t, dir, other)
 	})
 
@@ -240,7 +287,7 @@ func TestFetchReplacesAnIncompleteImage(t *testing.T) {
 	writeFiles(t, dir, map[string]string{"vmlinuz": "a kernel without its root disk"})
 
 	content := archive(t, theImage())
-	fetcher := serve(t, content, nil)
+	fetcher := serve(t, "arm64", content, nil)
 
 	// act
 	err := fetcher.Fetch(context.Background(), "v0.1.0", "arm64", digest(content), dir)

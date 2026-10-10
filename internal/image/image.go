@@ -35,9 +35,9 @@ var digests string
 var (
 	// ErrChecksum is an archive that is not the one aibox was released with.
 	ErrChecksum = errors.New("the image is not the one of this release")
-	// ErrArchive is an archive that holds anything but the kernel and the
+	// ErrArchive is an archive that holds anything but the kernels and the
 	// root disk.
-	ErrArchive = errors.New("the archive of the image holds other files than vmlinuz and os.ext4")
+	ErrArchive = errors.New("the archive of the image holds other files than the kernels and the root disk of its architecture")
 )
 
 const (
@@ -50,8 +50,16 @@ const (
 	downloadPrefix = ".download-"
 )
 
-// files are what the archive of an image holds.
-var files = []string{"vmlinuz", "os.ext4"}
+// filesOf are the files of the image of the architecture. A release that
+// leaves the kernel for Hyper-V out of amd64 is refused here, not on the
+// first Windows machine that boots it.
+func filesOf(arch string) []string {
+	if arch == "amd64" {
+		return []string{"vmlinuz", "vmlinuz-hyperv", "os.ext4"}
+	}
+
+	return []string{"vmlinuz", "os.ext4"}
+}
 
 // Released tells whether the version is the one of a release. A build from
 // a checkout is not: its version is (devel), a pseudo-version or marked
@@ -122,7 +130,7 @@ func (f Fetcher) Fetch(ctx context.Context, version, arch, digest, dir string) e
 		return err
 	}
 
-	return place(tmp, dir)
+	return place(tmp, dir, filesOf(arch))
 }
 
 func (f Fetcher) download(ctx context.Context, version, arch, digest, dir string) error {
@@ -151,7 +159,7 @@ func (f Fetcher) download(ctx context.Context, version, arch, digest, dir string
 	}
 
 	hash := sha256.New()
-	if err := unpack(io.TeeReader(body, hash), dir); err != nil {
+	if err := unpack(io.TeeReader(body, hash), dir, filesOf(arch)); err != nil {
 		return err
 	}
 
@@ -169,9 +177,9 @@ func (f Fetcher) download(ctx context.Context, version, arch, digest, dir string
 
 // place renames the downloaded image to dir. A complete image another run
 // placed meanwhile stays, an incomplete one gives way.
-func place(tmp, dir string) error {
+func place(tmp, dir string, files []string) error {
 	err := os.Rename(tmp, dir)
-	if err == nil || complete(dir) {
+	if err == nil || complete(dir, files) {
 		return nil
 	}
 
@@ -198,9 +206,9 @@ func (c *counter) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// unpack writes the kernel and the root disk of the archive into dir. It
+// unpack writes the files of the image from the archive into dir. It
 // takes nothing else, so that no name of the archive reaches outside dir.
-func unpack(archive io.Reader, dir string) error {
+func unpack(archive io.Reader, dir string, files []string) error {
 	gz, err := gzip.NewReader(archive)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrArchive, err)
@@ -218,7 +226,7 @@ func unpack(archive io.Reader, dir string) error {
 			return fmt.Errorf("%w: %w", ErrArchive, err)
 		}
 
-		name, ok := imageFile(header.Name)
+		name, ok := imageFile(header.Name, files)
 		if header.Typeflag != tar.TypeReg || !ok || header.Size > maxFileSize {
 			return fmt.Errorf("%w: %s", ErrArchive, header.Name)
 		}
@@ -228,7 +236,7 @@ func unpack(archive io.Reader, dir string) error {
 		}
 	}
 
-	if !complete(dir) {
+	if !complete(dir, files) {
 		return fmt.Errorf("%w: a file is missing", ErrArchive)
 	}
 
@@ -236,7 +244,7 @@ func unpack(archive io.Reader, dir string) error {
 }
 
 // imageFile is the file of an image the name in the archive stands for.
-func imageFile(name string) (string, bool) {
+func imageFile(name string, files []string) (string, bool) {
 	for _, file := range files {
 		if name == file {
 			return file, true
@@ -263,8 +271,8 @@ func write(path string, content io.Reader) error {
 	return file.Close()
 }
 
-// complete tells whether the folder holds the kernel and the root disk.
-func complete(dir string) bool {
+// complete tells whether the folder holds all the files of the image.
+func complete(dir string, files []string) bool {
 	for _, file := range files {
 		if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
 			return false

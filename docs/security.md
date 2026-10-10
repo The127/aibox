@@ -76,8 +76,9 @@ root read-only again. In the VM, only `/tmp`, `/run`, `/dev/shm`, the home,
 the project and the state disk can be written to.
 
 The kernel has no modules, no network drivers, no `bpf()` syscall, no ftrace
-and no kprobes. The amd64 kernel has no PCI and no ACPI either. The arm64
-kernel has them.
+and no kprobes. The kernel QEMU boots on amd64 has no PCI and no ACPI either.
+The arm64 kernel has them. The amd64 image also carries `vmlinuz-hyperv`, a
+kernel for Hyper-V on Windows, which needs both; Linux never boots it.
 
 ### The network
 

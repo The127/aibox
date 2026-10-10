@@ -860,6 +860,66 @@ func TestRunMountsTheTaskShareOverPlan9OnHyperV(t *testing.T) {
 	assert.Equal(t, mounted{"task", "/var/lib/aibox/task", "9p", syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/task"])
 }
 
+func TestRunFormatsAndMountsTheSCSIStateDiskOnHyperV(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.hyperv"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+
+	calls := strings.Join(sys.calls, "\n")
+	assert.Contains(t, calls, strings.Join([]string{
+		"scsi disk 1",
+		"blank /dev/sdq",
+		"format /dev/sdq",
+		"mount /dev/sdq /var/lib/aibox/state",
+	}, "\n"))
+	assert.NotContains(t, calls, "/dev/vdb")
+}
+
+func TestRunLooksForNoSCSIDiskOffHyperV(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(sys.calls, "\n"), "scsi disk")
+	assert.Contains(t, sys.calls, "mount /dev/vdb /var/lib/aibox/state")
+}
+
+func TestRunMountsTheSCSIStateDiskWithoutFormattingItAgainOnHyperV(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.hyperv", formatted: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.calls, "format /dev/sdq")
+	assert.Contains(t, sys.calls, "mount /dev/sdq /var/lib/aibox/state")
+}
+
+func TestRunPowersOffWhenTheStateDiskIsNotFoundOnHyperV(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.hyperv", failSCSIDisk: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.ErrorIs(t, err, guest.ErrNoSCSIDisk)
+	assert.Contains(t, sys.consoleOutput(), "find the state disk")
+	assert.NotContains(t, sys.calls, "start /usr/bin/claude")
+	assert.Equal(t, "halt", lastCall(t, sys))
+}
+
 func TestRunPowersOffWhenAMountOfTheHostFailsOverPlan9(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.hyperv aibox.mount=mount0:/opt/go", failMount: "mount0"}
@@ -1146,12 +1206,13 @@ type fakeSystem struct {
 	// clientEnv is what the session client on the host sends
 	clientEnv []string
 	// started is the last command Start was given
-	started    *exec.Cmd
-	formatted  bool
-	failFormat error
-	failMount  string
-	failPivot  bool
-	failChmod  error
+	started      *exec.Cmd
+	formatted    bool
+	failFormat   error
+	failMount    string
+	failPivot    bool
+	failChmod    error
+	failSCSIDisk bool
 	// failDelegate is the error of every Delegate, startedIn the cgroup
 	// the command was started in
 	failDelegate error
@@ -1236,6 +1297,18 @@ func (s *fakeSystem) Mount(source, target, fstype string, flags uintptr, data st
 	}
 
 	return nil
+}
+
+// SCSIDisk names the disk at a LUN as no fixed name would, so that the
+// tests see the guest use the name it looked up.
+func (s *fakeSystem) SCSIDisk(lun int) (string, error) {
+	s.record(fmt.Sprintf("scsi disk %d", lun))
+
+	if s.failSCSIDisk {
+		return "", guest.ErrNoSCSIDisk
+	}
+
+	return fmt.Sprintf("/dev/sd%c", 'p'+lun), nil
 }
 
 func (s *fakeSystem) Blank(device string) (bool, error) {

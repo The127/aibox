@@ -41,6 +41,11 @@ const (
 	// the folders on it are bound where tools and caches land
 	stateDevice = "/dev/vdb"
 	stateMount  = "/var/lib/aibox/state"
+	// stateLUN is where the state disk is on Hyper-V, which has SCSI disks
+	// instead of virtio: the backend attaches the root first, at LUN 0, and
+	// the state disk second. Linux names SCSI disks in the order it probes
+	// them, so the name is looked up by the LUN.
+	stateLUN = 1
 
 	// the root disk is read-only, so the mount points are made on an
 	// overlay in RAM. It is built under /run, which is empty in the image
@@ -150,6 +155,8 @@ type System interface {
 	// PivotRoot makes newRoot the root and lets the old root go. putOld is
 	// where the old root goes meanwhile, as a path inside the new root.
 	PivotRoot(newRoot, putOld string) error
+	// SCSIDisk is the device of the SCSI disk at the LUN of the first target.
+	SCSIDisk(lun int) (string, error)
 	// Blank tells whether the disk is empty. It returns ErrDamaged when the
 	// disk has data but no ext4 file system.
 	Blank(device string) (bool, error)
@@ -190,6 +197,10 @@ const (
 // ErrDamaged is returned for a state disk that has data but no ext4 file
 // system, which the init will not format over.
 var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
+
+// ErrNoSCSIDisk is returned for a LUN that does not hold exactly one SCSI
+// disk.
+var ErrNoSCSIDisk = errors.New("not one SCSI disk")
 
 // ErrUsedDisk is returned for a task whose state disk is not blank. What an
 // earlier task left in the home or the project could run in the steps of
@@ -631,7 +642,14 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
-	if err := mountState(sys, options.Task); err != nil {
+	device := stateDevice
+	if options.HyperV {
+		if device, err = sys.SCSIDisk(stateLUN); err != nil {
+			return console, options, fmt.Errorf("find the state disk: %w", err)
+		}
+	}
+
+	if err := mountState(sys, device, options.Task); err != nil {
 		return console, options, err
 	}
 
@@ -762,11 +780,11 @@ func lockRoot(sys System) error {
 	return nil
 }
 
-// mountState mounts the state disk of the project, formatting it on the
-// first boot, and binds its folders where tools and caches land. For a task
-// the home and the project are on it too.
-func mountState(sys System, task bool) error {
-	blank, err := sys.Blank(stateDevice)
+// mountState mounts the state disk of the project, the device, formatting
+// it on the first boot, and binds its folders where tools and caches land.
+// For a task the home and the project are on it too.
+func mountState(sys System, device string, task bool) error {
+	blank, err := sys.Blank(device)
 	if err != nil {
 		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
 	}
@@ -776,12 +794,12 @@ func mountState(sys System, task bool) error {
 	}
 
 	if blank {
-		if err := sys.Format(stateDevice); err != nil {
+		if err := sys.Format(device); err != nil {
 			return fmt.Errorf("format the state disk: %w", err)
 		}
 	}
 
-	if err := sys.Mount(stateDevice, stateMount, "ext4", stateFlags, ""); err != nil {
+	if err := sys.Mount(device, stateMount, "ext4", stateFlags, ""); err != nil {
 		return fmt.Errorf("mount the state disk: %w", err)
 	}
 

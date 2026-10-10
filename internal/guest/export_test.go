@@ -36,3 +36,9 @@ func StartTask(sys Processes, command func(string, ...string) *exec.Cmd, input, 
 
 // Plan9Options is plan9Options.
 var Plan9Options = plan9Options
+
+// SCSIDiskIn is SCSIDisk with the folder of the SCSI disks and the wait of
+// the tests.
+func SCSIDiskIn(class string, lun int, wait time.Duration) (string, error) {
+	return scsiDisk(class, lun, wait)
+}

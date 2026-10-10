@@ -64,7 +64,7 @@ func runCommand(deps dependencies) *cli.Command {
 // vmFlags are the flags of every command that boots the VM.
 func vmFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "the image of this release, or ~/.aibox/image for a build from a checkout"},
+		&cli.StringFlag{Name: "image", Usage: "folder with the image of the VM", DefaultText: "the image a package installed, else the image of this release, or ~/.aibox/image for a build from a checkout"},
 		&cli.IntFlag{Name: "memory", Usage: "memory of the VM in MiB", Value: 2048},
 		&cli.IntFlag{Name: "cpus", Usage: "number of CPUs of the VM", Value: 2},
 		&cli.BoolFlag{Name: "no-sandbox", Usage: "run the VM outside its sandbox, to debug it"},
@@ -631,11 +631,20 @@ func resolved(path string) string {
 	return filepath.Clean(path)
 }
 
-// defaultImage is the folder of the image in parent that this aibox uses.
-// A release uses the image it was released with, which it downloads the
-// first time and which replaces the images of the releases before. A build
-// from a checkout uses the one just install-image puts right into parent.
+// defaultImage is the folder of the image that this aibox uses. An image a
+// package installed comes first. Else a release uses the image it was
+// released with, which it downloads the first time and which replaces the
+// images of the releases before. A build from a checkout uses the one just
+// install-image puts right into parent.
 func defaultImage(ctx context.Context, deps dependencies, parent string) (string, error) {
+	if dir := deps.systemImage; isFolder(dir) {
+		if _, _, err := machine.Image(dir); err == nil {
+			return dir, nil
+		}
+
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: %s holds no complete VM image, so aibox does not use it\n", dir)
+	}
+
 	version := deps.version()
 	digest, ok := deps.imageDigest(runtime.GOARCH)
 

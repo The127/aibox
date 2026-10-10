@@ -28,7 +28,9 @@ To report a vulnerability, see
   bubblewrap sandbox, and aibox restricts itself with Landlock and seccomp.
   On macOS aibox restricts itself with Seatbelt. See
   [The host side](#the-host-side).
-- aibox only boots the image whose SHA-256 was built into its release.
+- aibox only boots a downloaded image if its SHA-256 was built into its
+  release. An image your package installed isn't checked. See
+  [Packaging aibox](installing.md#packaging-aibox).
 
 ## What aibox does not protect
 

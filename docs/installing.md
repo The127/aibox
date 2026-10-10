@@ -42,11 +42,31 @@ nix run github:The127/aibox -- run
 
 ## The VM image
 
-The packages don't include the VM image. The first `aibox run` downloads the
+Our packages don't include the VM image. The first `aibox run` downloads the
 image for its release, which is about 150 MB, and keeps it in
 `~/.aibox/image/<version>`. aibox only takes the image whose SHA-256 was
 built into the release. After an upgrade it downloads the new image and
 removes the old one.
+
+## Packaging aibox
+
+If you package aibox, you can ship the VM image with it. Then your users
+don't download it, and your package manager updates it together with aibox.
+
+Put `vmlinuz` and `os.ext4` from the release's `aibox-image_<arch>.tar.gz`
+into a folder that all users can read. Our release binaries look in
+`/usr/lib/aibox` on Linux and in `/opt/homebrew/lib/aibox` on macOS. If you
+build aibox yourself, set the folder at build time:
+
+```
+go build -ldflags "-X github.com/the127/aibox/internal/image.systemDir=/usr/lib/aibox" ./cmd/aibox
+```
+
+When that folder has both files, aibox uses them and downloads nothing. If
+the folder is there but a file is missing, aibox says so and downloads the
+image instead.
+`--image` still takes precedence. Note that aibox doesn't check these files
+against the release. Ship the image of the same release as the binary.
 
 ## Checking a download
 

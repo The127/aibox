@@ -110,6 +110,7 @@ func newFixture(t *testing.T) *fixture {
 		},
 	}
 	f.deps.stdout, f.deps.stderr = &f.stdout, &f.stderr
+	f.deps.systemImage = filepath.Join(t.TempDir(), "missing")
 	f.version = "(devel)"
 	f.digests = map[string]string{runtime.GOARCH: "the digest"}
 
@@ -543,6 +544,87 @@ func TestRunUsesTheImageOfItsReleaseItDownloadedBefore(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Empty(t, f.fetched)
+	assert.Equal(t, dir, f.launch.spec.Image)
+}
+
+func TestRunUsesTheImageAPackageInstalled(t *testing.T) {
+	for _, version := range []string{"v0.2.0", "(devel)"} {
+		t.Run(version, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			f.version = version
+			f.deps.systemImage = writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			old := writeImage(t, filepath.Join(f.aiboxDir, "image", "v0.1.0"), "vmlinuz", "os.ext4")
+
+			// act
+			err := f.run()
+
+			// assert
+			require.NoError(t, err)
+			assert.Empty(t, f.fetched)
+			assert.Equal(t, f.deps.systemImage, f.launch.spec.Image)
+			assert.DirExists(t, old)
+		})
+	}
+}
+
+func TestRunDownloadsTheImageWhenThePackagedOneIsIncomplete(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.version = "v0.2.0"
+	f.deps.systemImage = writeImage(t, t.TempDir(), "vmlinuz")
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
+	assert.Len(t, f.fetched, 1)
+	assert.Equal(t, filepath.Join(f.aiboxDir, "image", "v0.2.0"), f.launch.spec.Image)
+	assert.Contains(t, f.stderr.String(), f.deps.systemImage+" holds no complete VM image")
+}
+
+func TestRunSaysNothingWhenNoPackageInstalledAnImage(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.version = "v0.2.0"
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
+	assert.Len(t, f.fetched, 1)
+	assert.NotContains(t, f.stderr.String(), "VM image")
+}
+
+func TestRunPrefersTheImageGivenToTheOneAPackageInstalled(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.systemImage = writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, image, f.launch.spec.Image)
+}
+
+func TestRunLooksForNoPackagedImageWhenTheBuildSetNoFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.deps.systemImage = ""
+	// an empty folder would be the working directory
+	t.Chdir(writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+	dir := writeImage(t, filepath.Join(f.aiboxDir, "image"), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run()
+
+	// assert
+	require.NoError(t, err)
 	assert.Equal(t, dir, f.launch.spec.Image)
 }
 

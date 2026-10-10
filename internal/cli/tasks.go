@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v3"
-	"golang.org/x/sys/unix"
 
+	"github.com/the127/aibox/internal/filelock"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/task"
 )
@@ -147,7 +147,7 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 		}
 
 		switch {
-		case errors.Is(err, unix.EWOULDBLOCK):
+		case errors.Is(err, filelock.ErrLocked):
 			result.running++
 			_ = taskRoot.Close()
 

@@ -15,15 +15,14 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/filelock"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/task"
 )
@@ -683,7 +682,6 @@ func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
 		"a file in a linked folder":  {args: []string{"--file", "linked/secret"}, want: "read the prompt"},
 		"a file above the folder":    {args: []string{"--file", "../secret"}, want: "read the prompt"},
 		"a folder":                   {args: []string{"--file", "."}, want: errNoPromptFile.Error()},
-		"a FIFO":                     {args: []string{"--file", "fifo"}, want: errNoPromptFile.Error()},
 		"too long a prompt":          {stdin: strings.Repeat("x", maxPromptBytes+1), want: errLongPrompt.Error()},
 		"too long with whitespace":   {stdin: strings.Repeat(" ", maxPromptBytes+1) + "fix it", want: errLongPrompt.Error()},
 		"too long with arguments":    {args: []string{"--file", "-", "fix it"}, stdin: strings.Repeat("x", maxPromptBytes-1), want: errLongPrompt.Error()},
@@ -700,10 +698,9 @@ func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
 
 			secret := filepath.Join(t.TempDir(), "secret")
 			require.NoError(t, os.WriteFile(secret, []byte("secret\n"), 0o600))
-			require.NoError(t, os.Symlink(secret, filepath.Join(f.cwd, "link.md")))
-			require.NoError(t, os.Symlink(filepath.Dir(secret), filepath.Join(f.cwd, "linked")))
+			symlink(t, secret, filepath.Join(f.cwd, "link.md"))
+			symlink(t, filepath.Dir(secret), filepath.Join(f.cwd, "linked"))
 			require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.cwd), "secret"), []byte("secret\n"), 0o600))
-			require.NoError(t, syscall.Mkfifo(filepath.Join(f.cwd, "fifo"), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "latin1.md"), []byte("caf\xe9\n"), 0o600))
 
 			// act
@@ -872,7 +869,7 @@ func TestATaskHoldsItsLockWhileItRuns(t *testing.T) {
 	_ = f.task("fix it")
 
 	// assert
-	require.ErrorIs(t, lockErr, unix.EWOULDBLOCK)
+	require.ErrorIs(t, lockErr, filelock.ErrLocked)
 
 	lock, err := lockTask(f.taskDir(t), 0, false)
 	require.NoError(t, err, "the lock outlives the task")

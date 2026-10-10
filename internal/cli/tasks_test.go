@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -78,21 +77,18 @@ func TestCleanRemovesTheInputsOfTasksThatEnded(t *testing.T) {
 	f.ended(t, "linked")
 	require.NoError(t, os.RemoveAll(filepath.Join(f.tasks, "linked", "share")))
 	f.write(t, filepath.Join("elsewhere", task.InputBundle))
-	require.NoError(t, os.Symlink(filepath.Join(f.tasks, "elsewhere"), filepath.Join(f.tasks, "linked", "share")))
-	f.write(t, filepath.Join("fifo", "share", task.InputBundle))
-	require.NoError(t, syscall.Mkfifo(filepath.Join(f.tasks, "fifo", lockFile), 0o600))
+	symlink(t, filepath.Join(f.tasks, "elsewhere"), filepath.Join(f.tasks, "linked", "share"))
 
 	// act
 	err := f.clean()
 
 	// assert
-	require.ErrorContains(t, err, "check the task fifo")
+	require.ErrorContains(t, err, "remove the input of the task linked")
 	assert.NoFileExists(t, filepath.Join(f.tasks, "ended", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "ended", "share", task.PromptFile))
 	assert.NoFileExists(t, filepath.Join(f.tasks, "older", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "running", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "elsewhere", task.InputBundle))
-	assert.FileExists(t, filepath.Join(f.tasks, "fifo", "share", task.InputBundle))
 	assert.Contains(t, f.stderr.String(), "aibox: removed the inputs of 2 tasks that ended\n")
 	assert.Contains(t, f.stderr.String(), "aibox: 1 task still runs and stays as it is\n")
 }

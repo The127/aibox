@@ -15,14 +15,13 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/urfave/cli/v3"
-	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/filelock"
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/task"
 )
@@ -387,10 +386,10 @@ func readPrompt(ctx context.Context, deps dependencies, cmd *cli.Command, cwd st
 // absolute path must not end in a link, and opening a FIFO must not wait.
 // readPromptFile then refuses anything but a plain file.
 func openPromptFile(cwd, name string) (*os.File, error) {
-	const flags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	const flags = os.O_RDONLY | noFollowFlags
 
 	if filepath.IsAbs(name) {
-		return os.OpenFile(name, flags, 0) //nolint:gosec // the person names the file
+		return openNoFollow(name, os.O_RDONLY, 0)
 	}
 
 	root, err := os.OpenRoot(cwd)
@@ -399,6 +398,10 @@ func openPromptFile(cwd, name string) (*os.File, error) {
 	}
 
 	defer func() { _ = root.Close() }()
+
+	if err := refuseLink(root, name); err != nil {
+		return nil, err
+	}
 
 	return root.OpenFile(name, flags, 0)
 }
@@ -607,12 +610,12 @@ const (
 
 // lockFlags open a lock file without following a link, without waiting
 // for a FIFO and without making a terminal the controlling one.
-const lockFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_NOCTTY
+const lockFlags = os.O_RDONLY | noFollowFlags
 
 // lockTask opens the lock file in the folder of a task and locks it. Unless
-// it waits, it fails with unix.EWOULDBLOCK while the task runs.
+// it waits, it fails with filelock.ErrLocked while the task runs.
 func lockTask(dir string, flag int, wait bool) (*os.File, error) {
-	file, err := os.OpenFile(filepath.Join(dir, lockFile), flag|lockFlags, 0o600) //nolint:gosec // the name is aibox's own
+	file, err := openNoFollow(filepath.Join(dir, lockFile), flag|os.O_RDONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -629,12 +632,7 @@ func lockOpened(file *os.File, wait bool) (*os.File, error) {
 		return nil, errors.Join(errNoLockFile, err)
 	}
 
-	how := unix.LOCK_EX | unix.LOCK_NB
-	if wait {
-		how = unix.LOCK_EX
-	}
-
-	if err := unix.Flock(int(file.Fd()), how); err != nil {
+	if err := filelock.Lock(file, wait); err != nil {
 		_ = file.Close()
 
 		return nil, err

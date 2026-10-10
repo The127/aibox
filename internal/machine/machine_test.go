@@ -3,7 +3,6 @@ package machine_test
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -144,11 +143,8 @@ func TestPrepareCreatesTheStateDiskAsASparseFileOfTheSize(t *testing.T) {
 	info, err := os.Stat(state)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1<<30), info.Size())
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-
-	var stat syscall.Stat_t
-	require.NoError(t, syscall.Stat(state, &stat))
-	assert.Less(t, stat.Blocks*512, int64(1<<20), "the file takes up space before anything was written")
+	assert.Less(t, allocatedBytes(t, state), int64(1<<20), "the file takes up space before anything was written")
+	assertPrivate(t, info)
 }
 
 func TestPrepareSizesAnEmptyStateDisk(t *testing.T) {

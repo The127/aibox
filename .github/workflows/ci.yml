@@ -45,6 +45,22 @@ jobs:
       # runner lacks them
       - run: just ci
 
+  # builds and tests the host side on Windows. The recipes of the justfile
+  # are for a Unix shell, and `just lint` covers Windows from Linux
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      # the cli, config, gitconfig, image and project still take paths as
+      # Unix paths, and their tests with them, until aibox runs a VM on
+      # Windows
+      - run: go test -race $(go list ./... | grep -v -e internal/cli -e internal/config -e internal/gitconfig -e internal/image -e internal/project)
+        shell: bash
+
   # builds the Nix package of the release in nix/release.json, which checks
   # its hashes
   nix:
@@ -68,9 +84,10 @@ jobs:
   # the ruleset of main requires a check named ci, which the jobs of the
   # matrix are not, so this one stands for all of them
   ci:
-    needs: [check, nix]
+    needs: [check, windows, nix]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - run: test "${{ needs.check.result }}" = success
+      - run: test "${{ needs.windows.result }}" = success
       - run: test "${{ needs.nix.result }}" = success

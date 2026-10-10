@@ -53,6 +53,7 @@ dependenciesRules:
       internal:
         - '**.internal.backend$'
         - '**.internal.vm$'
+        - '**.internal.filelock$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
@@ -115,6 +116,15 @@ dependenciesRules:
         - '**.internal.sandbox$'
         - '**.internal.confine$'
     shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the file lock locks a file with the lock of the system and knows
+  # nothing of aibox
+  - package: '**.internal.filelock$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
   # the tunnel accepts and joins connections and knows nothing else
@@ -215,6 +225,7 @@ dependenciesRules:
         - '**.internal.task$'
         - '**.internal.anthropic$'
         - '**.internal.gitbroker$'
+        - '**.internal.filelock$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

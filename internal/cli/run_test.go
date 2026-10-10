@@ -417,7 +417,7 @@ func TestRunRefusesToRunInTheHomeFolderBehindASymlink(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	link := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(f.homeDir, link))
+	symlink(t, f.homeDir, link)
 	f.cwd = link
 
 	// act

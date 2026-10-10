@@ -18,10 +18,10 @@ build: && (sign "bin/aibox")
 sign path:
     codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements {{path}}
 
-# list the packages aibox is built from on macOS, which is all that builds there
+# list the packages aibox is built from on the system, which is all that builds there
 [private]
-macos-packages:
-    @GOOS=darwin GOARCH=arm64 go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox
+packages goos goarch:
+    @GOOS={{goos}} GOARCH={{goarch}} go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox
 
 # the architecture of the VM: QEMU on Linux runs amd64, Virtualization.framework on macOS arm64
 vm-arch := if os() == "macos" { "arm64" } else { "amd64" }
@@ -97,10 +97,11 @@ test:
 cover:
     go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
-# lint all code for Linux, and for macOS the host side, which is all that builds there
+# lint all code for Linux, and for macOS and Windows the host side, which is all that builds there
 lint:
     GOOS=linux GOARCH=amd64 golangci-lint run ./...
-    GOOS=darwin GOARCH=arm64 golangci-lint run $(just macos-packages)
+    GOOS=darwin GOARCH=arm64 golangci-lint run $(just packages darwin arm64)
+    GOOS=windows GOARCH=amd64 golangci-lint run $(just packages windows amd64)
 
 # format
 fmt:

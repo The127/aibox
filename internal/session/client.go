@@ -6,9 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
@@ -53,7 +52,9 @@ func NewClient(stdin *os.File, out io.Writer) (Client, func(), error) {
 		return client, nothingToRestore, nil
 	}
 
-	size, err := sizeOfTerminal(fd)
+	sizeFd := sizeDescriptor(stdin, out)
+
+	size, err := sizeOfTerminal(sizeFd)
 	if err != nil {
 		return Client{}, nil, err
 	}
@@ -68,15 +69,11 @@ func NewClient(stdin *os.File, out io.Writer) (Client, func(), error) {
 	resized := make(chan Size, 1)
 	client.Resized = resized
 
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-
 	stop := make(chan struct{})
 
-	go reportSizes(fd, winch, resized, stop)
+	go reportSizes(sizeFd, notifyResize(sizeFd, stop), resized, stop)
 
 	restore := func() {
-		signal.Stop(winch)
 		close(stop)
 		_ = term.Restore(fd, state)
 	}
@@ -84,12 +81,12 @@ func NewClient(stdin *os.File, out io.Writer) (Client, func(), error) {
 	return client, restore, nil
 }
 
-// reportSizes sends the size of the terminal after each SIGWINCH. A size
-// nobody picked up yet is replaced by the newer one.
-func reportSizes(fd int, winch <-chan os.Signal, resized chan Size, stop <-chan struct{}) {
+// reportSizes sends the size of the terminal after each change notifyResize
+// reports. A size nobody picked up yet is replaced by the newer one.
+func reportSizes(fd int, changed <-chan struct{}, resized chan Size, stop <-chan struct{}) {
 	for {
 		select {
-		case <-winch:
+		case <-changed:
 			size, err := sizeOfTerminal(fd)
 			if err != nil {
 				continue
@@ -105,6 +102,49 @@ func reportSizes(fd int, winch <-chan os.Signal, resized chan Size, stop <-chan 
 			return
 		}
 	}
+}
+
+// pollSize reports on the returned channel each time size returns a size
+// other than before, read every interval until stop is closed. It is for a
+// system that does not say when the terminal changes size.
+func pollSize(size func() (Size, error), interval time.Duration, stop <-chan struct{}) <-chan struct{} {
+	changed := make(chan struct{}, 1)
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		// a size that could not be read is no size to compare with
+		last, err := size()
+		known := err == nil
+
+		for {
+			select {
+			case <-ticker.C:
+				now, err := size()
+				if err != nil || now == last {
+					continue
+				}
+
+				if !known {
+					last, known = now, true
+
+					continue
+				}
+
+				last = now
+
+				select {
+				case changed <- struct{}{}:
+				default:
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return changed
 }
 
 func sizeOfTerminal(fd int) (Size, error) {

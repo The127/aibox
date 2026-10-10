@@ -1,6 +1,8 @@
 // Package filelock locks an open file for one process at a time, with the
-// lock of the system: flock on Unix, LockFileEx on Windows. The lock stays
-// with the file until it is closed, and with every copy of its descriptor.
+// lock of the system: flock on Unix, LockFileEx on Windows. The lock is
+// advisory on both: it keeps no one from reading or writing the file, only
+// from locking it. It stays with the file until it is closed, and with
+// every copy of its descriptor.
 package filelock
 
 import (

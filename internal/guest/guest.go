@@ -243,10 +243,10 @@ var (
 		{source: "tmpfs", target: "/run", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=755"},
 	}
 
-	// a task has neither, its project and home are on the state disk
-	shares = []mount{
-		{source: projectShare, target: project, fstype: "virtiofs"},
-		{source: homeShare, target: home, fstype: "virtiofs"},
+	// a task has no project or home share, both are on the state disk
+	shares = []Mount{
+		{Tag: projectShare, Path: project},
+		{Tag: homeShare, Path: home},
 	}
 
 	// taskDirs come before stateDirs, which bind folders into the home
@@ -591,14 +591,17 @@ func setup(sys System) (*os.File, Options, error) {
 		say(console, "aibox: %v\n", badWord)
 	}
 
-	setupMounts := mounts
-	if !options.Task {
-		setupMounts = slices.Concat(mounts, shares)
-	}
-
-	for _, m := range setupMounts {
+	for _, m := range mounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
+		}
+	}
+
+	if !options.Task {
+		for _, m := range shares {
+			if err := mountShare(sys, m.Tag, m.Path, 0); err != nil {
+				return console, options, err
+			}
 		}
 	}
 
@@ -623,14 +626,14 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	for _, m := range options.Mounts {
-		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
-			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
+		if err := mountShare(sys, m.Tag, m.Path, readOnlyShare); err != nil {
+			return console, options, err
 		}
 	}
 
 	if options.Task {
-		if err := sys.Mount(taskShare, taskDir, "virtiofs", taskFlags, ""); err != nil {
-			return console, options, fmt.Errorf("mount %s on %s: %w", taskShare, taskDir, err)
+		if err := mountShare(sys, taskShare, taskDir, taskFlags); err != nil {
+			return console, options, err
 		}
 	}
 
@@ -714,6 +717,14 @@ func delegateCgroups(sys System) error {
 func shareMounts(sys System) error {
 	if err := sys.Mount("shared", "/", "", syscall.MS_REC|syscall.MS_SHARED, ""); err != nil {
 		return fmt.Errorf("share the mounts: %w", err)
+	}
+
+	return nil
+}
+
+func mountShare(sys System, tag, target string, flags uintptr) error {
+	if err := sys.Mount(tag, target, "virtiofs", flags, ""); err != nil {
+		return fmt.Errorf("mount %s on %s: %w", tag, target, err)
 	}
 
 	return nil

@@ -97,10 +97,16 @@ test:
 cover:
     go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
-# lint all code for Linux, and for macOS the host side, which is all that builds there
+# list the packages aibox is built from on Windows, which is all that builds there
+[private]
+windows-packages:
+    @GOOS=windows GOARCH=amd64 go list -deps -f '{{{{if and .Module .Module.Main}}.{{{{slice .ImportPath (len .Module.Path)}}{{{{end}}' ./cmd/aibox
+
+# lint all code for Linux, and for macOS and Windows the host side, which is all that builds there
 lint:
     GOOS=linux GOARCH=amd64 golangci-lint run ./...
     GOOS=darwin GOARCH=arm64 golangci-lint run $(just macos-packages)
+    GOOS=windows GOARCH=amd64 golangci-lint run $(just windows-packages)
 
 # format
 fmt:

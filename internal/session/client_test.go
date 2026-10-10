@@ -4,7 +4,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,41 @@ func TestNewClientWithoutATerminalUsesADefaultSize(t *testing.T) {
 	assert.Equal(t, "xterm-kitty", client.Term)
 	assert.Equal(t, session.Size{Rows: 24, Cols: 80}, client.Size)
 	assert.Nil(t, client.Resized)
+}
+
+func TestPollSizeReportsEachChangeOfTheSize(t *testing.T) {
+	// arrange
+	var mu sync.Mutex
+
+	size := session.Size{Rows: 24, Cols: 80}
+	sizeOf := func() (session.Size, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return size, nil
+	}
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+
+	// act
+	changed := session.PollSize(sizeOf, time.Millisecond, stop)
+
+	// assert
+	select {
+	case <-changed:
+		t.Fatal("a change was reported before the size changed")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	mu.Lock()
+	size = session.Size{Rows: 30, Cols: 100}
+	mu.Unlock()
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("the change of the size was not reported")
+	}
 }
 
 func TestNewClientWithoutATERMFallsBackToXterm(t *testing.T) {

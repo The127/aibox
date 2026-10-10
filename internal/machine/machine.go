@@ -9,9 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/filelock"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -96,6 +95,10 @@ func createState(path string, size int64) error {
 		return nil
 	}
 
+	if err := markSparse(file); err != nil {
+		return fmt.Errorf("make %s sparse: %w", path, err)
+	}
+
 	if err := file.Truncate(size); err != nil {
 		return fmt.Errorf("size %s: %w", path, err)
 	}
@@ -113,8 +116,8 @@ func LockState(path string) (*os.File, error) {
 		return nil, fmt.Errorf("open the state disk: %w", err)
 	}
 
-	switch err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); {
-	case errors.Is(err, unix.EWOULDBLOCK):
+	switch err := filelock.Lock(file, false); {
+	case errors.Is(err, filelock.ErrLocked):
 		_ = file.Close()
 
 		return nil, fmt.Errorf("%w and has its state disk %s", ErrStateBusy, path)

@@ -9,3 +9,6 @@ const DrainDelay = 300 * time.Millisecond
 func init() {
 	drainDelay = DrainDelay
 }
+
+// PollSize is pollSize, which Windows reads the size of the console with.
+var PollSize = pollSize

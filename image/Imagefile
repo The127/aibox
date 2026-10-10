@@ -1,10 +1,10 @@
-# The VM aibox runs Claude Code in, booted on QEMU's microvm machine without
-# an initrd and without systemd.
+# The VM aibox runs Claude Code in, booted on QEMU's microvm machine, or on
+# Hyper-V, without an initrd and without systemd.
 #
 #   just image
 #
 # builds the init of the VM into image/aibox-init, so that the image needs no
-# Go toolchain, and leaves out/vmlinuz and out/os.ext4.
+# Go toolchain, and leaves out/vmlinuz, out/vmlinuz-hyperv and out/os.ext4.
 
 # Each kernel of the image starts from this stage, so that the source is
 # unpacked once.
@@ -28,6 +28,18 @@ RUN sh /src/check-kernel-config /src/linux/.config /src/kernel.config
 RUN cd /src/linux && make -j"$(nproc)" bzImage
 
 OUTPUT kernel vmlinuz --path=/src/linux/arch/x86/boot/bzImage
+
+# Hyper-V boots the same root disk with a kernel of its own, since it has
+# none of the virtio devices the kernel above drives.
+FROM source AS kernel-hyperv
+
+COPY microvm.config kernel.config kernel-hyperv.config /src/
+RUN cd /src/linux && \
+    scripts/kconfig/merge_config.sh -m /src/microvm.config /src/kernel.config /src/kernel-hyperv.config && make olddefconfig
+RUN sh /src/check-kernel-config /src/linux/.config /src/kernel.config /src/kernel-hyperv.config
+RUN cd /src/linux && make -j"$(nproc)" bzImage
+
+OUTPUT kernel vmlinuz-hyperv --path=/src/linux/arch/x86/boot/bzImage
 
 # The programs of the VM, each collected with the libraries it loads into a
 # tree of its own under /out.

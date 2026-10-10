@@ -69,6 +69,9 @@ The kernels are configured in `image/`:
 - `vz-arm64.config` is the configuration of the kernel Apple's container
   tool boots on Virtualization.framework, and `kernel-arm64.config` holds
   what aibox changes about it.
+- `kernel-hyperv.config` goes on top of both x86 files for a second kernel,
+  `vmlinuz-hyperv`, that Hyper-V boots on Windows. aibox runs on Windows
+  on amd64 only for now, so the Containerfile has no such stage.
 
 `check-kernel-config` fails the build when an option of a fragment did not
 stick, since the kernel's own merge only warns about it.

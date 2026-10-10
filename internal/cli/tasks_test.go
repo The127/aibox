@@ -77,7 +77,7 @@ func TestCleanRemovesTheInputsOfTasksThatEnded(t *testing.T) {
 	f.ended(t, "linked")
 	require.NoError(t, os.RemoveAll(filepath.Join(f.tasks, "linked", "share")))
 	f.write(t, filepath.Join("elsewhere", task.InputBundle))
-	require.NoError(t, os.Symlink(filepath.Join(f.tasks, "elsewhere"), filepath.Join(f.tasks, "linked", "share")))
+	symlink(t, filepath.Join(f.tasks, "elsewhere"), filepath.Join(f.tasks, "linked", "share"))
 
 	// act
 	err := f.clean()

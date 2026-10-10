@@ -698,8 +698,8 @@ func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
 
 			secret := filepath.Join(t.TempDir(), "secret")
 			require.NoError(t, os.WriteFile(secret, []byte("secret\n"), 0o600))
-			require.NoError(t, os.Symlink(secret, filepath.Join(f.cwd, "link.md")))
-			require.NoError(t, os.Symlink(filepath.Dir(secret), filepath.Join(f.cwd, "linked")))
+			symlink(t, secret, filepath.Join(f.cwd, "link.md"))
+			symlink(t, filepath.Dir(secret), filepath.Join(f.cwd, "linked"))
 			require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.cwd), "secret"), []byte("secret\n"), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "latin1.md"), []byte("caf\xe9\n"), 0o600))
 

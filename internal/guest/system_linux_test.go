@@ -4,11 +4,13 @@ package guest_test
 
 import (
 	"encoding/binary"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,6 +60,116 @@ func TestStartAsksTheKernelToStartTheCommandInTheCgroup(t *testing.T) {
 	// a plain folder refuses the process, which shows the kernel was asked
 	require.Error(t, err)
 	assert.True(t, cmd.SysProcAttr.UseCgroupFD)
+}
+
+func TestPlan9OptionsHandTheConnectionToTheKernelForTheShare(t *testing.T) {
+	// act
+	options := guest.Plan9Options(7, "project")
+
+	// assert
+	assert.Equal(t, "trans=fd,rfdno=7,wfdno=7,msize=65536,aname=project", options)
+}
+
+// scsiClass makes a folder like /sys/class/scsi_disk with a disk of the
+// name at each address.
+func scsiClass(t *testing.T, disks map[string]string) string {
+	t.Helper()
+
+	class := t.TempDir()
+	for address, name := range disks {
+		require.NoError(t, os.MkdirAll(filepath.Join(class, address, "device", "block", name), 0o700))
+	}
+
+	return class
+}
+
+func TestSCSIDiskFindsTheDiskByItsLUNWhateverItsName(t *testing.T) {
+	// arrange
+	class := scsiClass(t, map[string]string{"0:0:0:0": "sdb", "0:0:0:1": "sda"})
+
+	// act
+	device, err := guest.SCSIDiskIn(class, 1, 0)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/sda", device)
+}
+
+func TestSCSIDiskFailsWithoutADiskAtTheLUN(t *testing.T) {
+	// arrange
+	class := scsiClass(t, map[string]string{"0:0:0:0": "sda", "0:0:0:11": "sdb", "0:0:10:1": "sdc"})
+
+	// act
+	_, err := guest.SCSIDiskIn(class, 1, 0)
+
+	// assert
+	assert.ErrorIs(t, err, guest.ErrNoSCSIDisk)
+}
+
+func TestSCSIDiskFailsWithADiskAtTheLUNOfTwoControllers(t *testing.T) {
+	// arrange
+	class := scsiClass(t, map[string]string{"0:0:0:1": "sda", "1:0:0:1": "sdb"})
+
+	// act
+	_, err := guest.SCSIDiskIn(class, 1, 0)
+
+	// assert
+	assert.ErrorIs(t, err, guest.ErrNoSCSIDisk)
+}
+
+func TestSCSIDiskWaitsForTheDiskToBeListed(t *testing.T) {
+	// arrange
+	class := scsiClass(t, map[string]string{"0:0:0:0": "sda"})
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = os.MkdirAll(filepath.Join(class, "0:0:0:1", "device", "block", "sdb"), 0o700)
+	}()
+
+	// act
+	device, err := guest.SCSIDiskIn(class, 1, 5*time.Second)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/sdb", device)
+}
+
+func TestSCSIDiskWaitsForTheBlockDeviceOfAListedDisk(t *testing.T) {
+	// arrange
+	class := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(class, "0:0:0:1", "device"), 0o700))
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = os.MkdirAll(filepath.Join(class, "0:0:0:1", "device", "block", "sdb"), 0o700)
+	}()
+
+	// act
+	device, err := guest.SCSIDiskIn(class, 1, 5*time.Second)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/sdb", device)
+}
+
+func TestSCSIDiskFailsWhenTheDiskHasNoBlockDevice(t *testing.T) {
+	// arrange
+	class := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(class, "0:0:0:1", "device", "block"), 0o700))
+
+	// act
+	_, err := guest.SCSIDiskIn(class, 1, 0)
+
+	// assert
+	assert.ErrorIs(t, err, guest.ErrNoSCSIDisk)
+}
+
+func TestSCSIDiskFailsWithoutSCSIDisksAtAll(t *testing.T) {
+	// act
+	_, err := guest.SCSIDiskIn(filepath.Join(t.TempDir(), "scsi_disk"), 1, 0)
+
+	// assert
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 func TestBlankIsTrueForADiskWithoutAFileSystem(t *testing.T) {

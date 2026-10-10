@@ -52,10 +52,11 @@ image: init
 image-docker-arm64: (init "arm64")
     docker build --file image/Containerfile --target out --output type=local,dest=out image
 
+# vmlinuz-hyperv goes in on amd64 only, since only Windows on amd64 boots it.
+# COPYFILE_DISABLE, since tar of macOS would add the extended attributes as ._ files
 # pack the VM image in out/ into the archive a release carries for the architecture
-# with only the two files: tar of macOS would add the extended attributes as ._ files
 image-archive arch:
-    COPYFILE_DISABLE=1 tar -czf out/aibox-image_{{arch}}.tar.gz -C out vmlinuz os.ext4
+    COPYFILE_DISABLE=1 tar -czf out/aibox-image_{{arch}}.tar.gz -C out vmlinuz os.ext4 {{ if arch == "amd64" { "vmlinuz-hyperv" } else { "" } }}
 
 # build aibox and run it on this repo with the image from out/
 aibox *args: build
@@ -135,6 +136,10 @@ reuse:
 prose:
     bash hack/check-prose.sh
 
+# test the check of the kernel configurations
+kernel-config:
+    sh image/check-kernel-config-test
+
 # build the documentation site into docs/book
 docs:
     mdbook build docs
@@ -147,4 +152,4 @@ hooks:
 setup: hooks
 
 # everything that must pass before a push
-ci: lint arch reuse prose docs build cover vuln
+ci: lint arch reuse prose kernel-config docs build cover vuln

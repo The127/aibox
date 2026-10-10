@@ -41,6 +41,11 @@ const (
 	// the folders on it are bound where tools and caches land
 	stateDevice = "/dev/vdb"
 	stateMount  = "/var/lib/aibox/state"
+	// stateLUN is where the state disk is on Hyper-V, which has SCSI disks
+	// instead of virtio: the backend attaches the root first, at LUN 0, and
+	// the state disk second. Linux names SCSI disks in the order it probes
+	// them, so the name is looked up by the LUN.
+	stateLUN = 1
 
 	// the root disk is read-only, so the mount points are made on an
 	// overlay in RAM. It is built under /run, which is empty in the image
@@ -93,11 +98,13 @@ const imagePath = "/usr/local/bin:/usr/bin:/bin"
 // host that are mounted read-only where the host says. Loopback are the
 // ports on the loopback of the host the VM may reach through the proxy.
 // Task runs a task from the task share unattended, in place of Claude Code
-// on a terminal.
+// on a terminal. HyperV says the VM runs on Hyper-V, which shares the
+// folders of the host over Plan 9 instead of virtio-fs.
 type Options struct {
 	Console      string
 	Shell        bool
 	Task         bool
+	HyperV       bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
@@ -138,12 +145,18 @@ type System interface {
 	Network
 	Processes
 	Mount(source, target, fstype string, flags uintptr, data string) error
+	// MountPlan9 mounts the folder Hyper-V shares by the share name on the
+	// target with the mount flags, over Plan 9 on a vsock connection to the
+	// host.
+	MountPlan9(share, target string, flags uintptr) error
 	// Chmod sets the mode of the file. The error wraps fs.ErrNotExist when
 	// there is no such file.
 	Chmod(path string, mode os.FileMode) error
 	// PivotRoot makes newRoot the root and lets the old root go. putOld is
 	// where the old root goes meanwhile, as a path inside the new root.
 	PivotRoot(newRoot, putOld string) error
+	// SCSIDisk is the device of the SCSI disk at the LUN of the first target.
+	SCSIDisk(lun int) (string, error)
 	// Blank tells whether the disk is empty. It returns ErrDamaged when the
 	// disk has data but no ext4 file system.
 	Blank(device string) (bool, error)
@@ -184,6 +197,10 @@ const (
 // ErrDamaged is returned for a state disk that has data but no ext4 file
 // system, which the init will not format over.
 var ErrDamaged = errors.New("has data but no ext4 file system, remove it to start over")
+
+// ErrNoSCSIDisk is returned for a LUN that does not hold exactly one SCSI
+// disk.
+var ErrNoSCSIDisk = errors.New("not one SCSI disk")
 
 // ErrUsedDisk is returned for a task whose state disk is not blank. What an
 // earlier task left in the home or the project could run in the steps of
@@ -243,10 +260,10 @@ var (
 		{source: "tmpfs", target: "/run", fstype: "tmpfs", flags: syscall.MS_NOSUID | syscall.MS_NODEV, data: "mode=755"},
 	}
 
-	// a task has neither, its project and home are on the state disk
-	shares = []mount{
-		{source: projectShare, target: project, fstype: "virtiofs"},
-		{source: homeShare, target: home, fstype: "virtiofs"},
+	// a task has no project or home share, both are on the state disk
+	shares = []Mount{
+		{Tag: projectShare, Path: project},
+		{Tag: homeShare, Path: home},
 	}
 
 	// taskDirs come before stateDirs, which bind folders into the home
@@ -304,6 +321,8 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.Shell = true
 		case "aibox.task":
 			options.Task = true
+		case "aibox.hyperv":
+			options.HyperV = true
 		case "aibox.proxy":
 			options.ProxyPort = port(key, value)
 		case "aibox.terminal":
@@ -591,14 +610,19 @@ func setup(sys System) (*os.File, Options, error) {
 		say(console, "aibox: %v\n", badWord)
 	}
 
-	setupMounts := mounts
-	if !options.Task {
-		setupMounts = slices.Concat(mounts, shares)
-	}
-
-	for _, m := range setupMounts {
+	for _, m := range mounts {
 		if err := sys.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			return console, options, fmt.Errorf("mount %s on %s: %w", m.source, m.target, err)
+		}
+	}
+
+	mountShare := shareMounter(sys, options.HyperV)
+
+	if !options.Task {
+		for _, m := range shares {
+			if err := mountShare(m.Tag, m.Path, 0); err != nil {
+				return console, options, err
+			}
 		}
 	}
 
@@ -618,19 +642,26 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
-	if err := mountState(sys, options.Task); err != nil {
+	device := stateDevice
+	if options.HyperV {
+		if device, err = sys.SCSIDisk(stateLUN); err != nil {
+			return console, options, fmt.Errorf("find the state disk: %w", err)
+		}
+	}
+
+	if err := mountState(sys, device, options.Task); err != nil {
 		return console, options, err
 	}
 
 	for _, m := range options.Mounts {
-		if err := sys.Mount(m.Tag, m.Path, "virtiofs", readOnlyShare, ""); err != nil {
-			return console, options, fmt.Errorf("mount %s on %s: %w", m.Tag, m.Path, err)
+		if err := mountShare(m.Tag, m.Path, readOnlyShare); err != nil {
+			return console, options, err
 		}
 	}
 
 	if options.Task {
-		if err := sys.Mount(taskShare, taskDir, "virtiofs", taskFlags, ""); err != nil {
-			return console, options, fmt.Errorf("mount %s on %s: %w", taskShare, taskDir, err)
+		if err := mountShare(taskShare, taskDir, taskFlags); err != nil {
+			return console, options, err
 		}
 	}
 
@@ -719,6 +750,25 @@ func shareMounts(sys System) error {
 	return nil
 }
 
+// shareMounter is chosen once, so that no mount of a share can miss that
+// Hyper-V has no virtio-fs.
+func shareMounter(sys System, hyperV bool) func(tag, target string, flags uintptr) error {
+	mount := func(tag, target string, flags uintptr) error {
+		return sys.Mount(tag, target, "virtiofs", flags, "")
+	}
+	if hyperV {
+		mount = sys.MountPlan9
+	}
+
+	return func(tag, target string, flags uintptr) error {
+		if err := mount(tag, target, flags); err != nil {
+			return fmt.Errorf("mount %s on %s: %w", tag, target, err)
+		}
+
+		return nil
+	}
+}
+
 // lockRoot makes the root read-only. Every mount point exists by now, and
 // the folders that take writes are mounts of their own, so nothing needs
 // the root writable any more.
@@ -730,11 +780,11 @@ func lockRoot(sys System) error {
 	return nil
 }
 
-// mountState mounts the state disk of the project, formatting it on the
-// first boot, and binds its folders where tools and caches land. For a task
-// the home and the project are on it too.
-func mountState(sys System, task bool) error {
-	blank, err := sys.Blank(stateDevice)
+// mountState mounts the state disk of the project, the device, formatting
+// it on the first boot, and binds its folders where tools and caches land.
+// For a task the home and the project are on it too.
+func mountState(sys System, device string, task bool) error {
+	blank, err := sys.Blank(device)
 	if err != nil {
 		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
 	}
@@ -744,12 +794,12 @@ func mountState(sys System, task bool) error {
 	}
 
 	if blank {
-		if err := sys.Format(stateDevice); err != nil {
+		if err := sys.Format(device); err != nil {
 			return fmt.Errorf("format the state disk: %w", err)
 		}
 	}
 
-	if err := sys.Mount(stateDevice, stateMount, "ext4", stateFlags, ""); err != nil {
+	if err := sys.Mount(device, stateMount, "ext4", stateFlags, ""); err != nil {
 		return fmt.Errorf("mount the state disk: %w", err)
 	}
 

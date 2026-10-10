@@ -222,6 +222,19 @@ func TestCmdlineStartsWithWhatTheVMMNeedsAndEndsWithTheWordsOfTheGuest(t *testin
 	assert.Equal(t, "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet panic=1 aibox.shell", line)
 }
 
+func TestGuestWordsTellTheGuestItRunsOnHyperV(t *testing.T) {
+	// arrange
+	m := machine()
+	m.Task = true
+	m.HyperV = true
+
+	// act
+	words := m.GuestWords()
+
+	// assert
+	assert.Equal(t, []string{"aibox.task", "aibox.hyperv"}, words)
+}
+
 func TestGuestWordsTellTheGuestToRunATask(t *testing.T) {
 	// arrange
 	m := machine()

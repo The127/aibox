@@ -1,16 +1,21 @@
-# The VM aibox runs Claude Code in, booted on QEMU's microvm machine without
-# an initrd and without systemd.
+# The VM aibox runs Claude Code in, booted on QEMU's microvm machine, or on
+# Hyper-V, without an initrd and without systemd.
 #
 #   just image
 #
 # builds the init of the VM into image/aibox-init, so that the image needs no
-# Go toolchain, and leaves out/vmlinuz and out/os.ext4.
+# Go toolchain, and leaves out/vmlinuz, out/vmlinuz-hyperv and out/os.ext4.
 
-FROM debian:sid AS kernel
+# Each kernel of the image starts from this stage, so that the source is
+# unpacked once.
+FROM debian:sid AS source
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential bc bison flex libelf-dev libssl-dev cpio xz-utils linux-source-7.2
 RUN mkdir /src && tar -xf /usr/src/linux-source-7.2.tar.xz -C /src && mv /src/linux-source-7.2 /src/linux
+COPY check-kernel-config /src/
+
+FROM source AS kernel
 
 # microvm.config is a complete kernel configuration for QEMU's microvm
 # board, generated for the 7.2 kernels above and taken over as it is.
@@ -19,16 +24,22 @@ RUN mkdir /src && tar -xf /usr/src/linux-source-7.2.tar.xz -C /src && mv /src/li
 COPY microvm.config kernel.config /src/
 RUN cd /src/linux && \
     scripts/kconfig/merge_config.sh -m /src/microvm.config /src/kernel.config && make olddefconfig
-# merge_config.sh only warns about an option it could not set or unset
-RUN cd /src/linux && grep '^CONFIG_.*=y$' /src/kernel.config | while read -r option; do \
-      grep -qx "$option" .config || { echo "$option did not stick"; exit 1; }; \
-    done && \
-    grep -o '^# CONFIG_[A-Z0-9_]* is not set$' /src/kernel.config | cut -d' ' -f2 | while read -r option; do \
-      if grep -q "^$option=" .config; then echo "$option is still set"; exit 1; fi; \
-    done
+RUN sh /src/check-kernel-config /src/linux/.config /src/kernel.config
 RUN cd /src/linux && make -j"$(nproc)" bzImage
 
 OUTPUT kernel vmlinuz --path=/src/linux/arch/x86/boot/bzImage
+
+# Hyper-V boots the same root disk with a kernel of its own, since it has
+# none of the virtio devices the kernel above drives.
+FROM source AS kernel-hyperv
+
+COPY microvm.config kernel.config kernel-hyperv.config /src/
+RUN cd /src/linux && \
+    scripts/kconfig/merge_config.sh -m /src/microvm.config /src/kernel.config /src/kernel-hyperv.config && make olddefconfig
+RUN sh /src/check-kernel-config /src/linux/.config /src/kernel.config /src/kernel-hyperv.config
+RUN cd /src/linux && make -j"$(nproc)" bzImage
+
+OUTPUT kernel vmlinuz-hyperv --path=/src/linux/arch/x86/boot/bzImage
 
 # The programs of the VM, each collected with the libraries it loads into a
 # tree of its own under /out.

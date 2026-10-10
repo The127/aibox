@@ -10,7 +10,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -69,6 +71,79 @@ func (Linux) PivotRoot(newRoot, putOld string) error {
 	}
 
 	return syscall.Unmount(putOld, syscall.MNT_DETACH)
+}
+
+const scsiDiskClass = "/sys/class/scsi_disk"
+
+const (
+	// scsiDiskWait is how long SCSIDisk waits for a disk to be listed. The
+	// kernel ends probing the disk of the root before it mounts the root,
+	// and the backend puts both disks on one controller, so the wait is
+	// only for a controller that is slower than that.
+	scsiDiskWait = 5 * time.Second
+	scsiDiskPoll = 50 * time.Millisecond
+)
+
+// SCSIDisk is the device of the SCSI disk at the LUN of the first target,
+// found by its address, since the name depends on the order of probing.
+func (Linux) SCSIDisk(lun int) (string, error) {
+	return scsiDisk(scsiDiskClass, lun, scsiDiskWait)
+}
+
+// scsiDisk refuses a second disk at the LUN at once, so that another
+// controller cannot hand over a disk of its own.
+func scsiDisk(class string, lun int, wait time.Duration) (string, error) {
+	deadline := time.Now().Add(wait)
+
+	for {
+		found, err := scsiDisksAt(class, lun)
+		if err != nil {
+			return "", err
+		}
+
+		if len(found) == 1 {
+			return found[0], nil
+		}
+
+		if len(found) > 1 || time.Now().After(deadline) {
+			return "", fmt.Errorf("%w at LUN %d: found %d", ErrNoSCSIDisk, lun, len(found))
+		}
+
+		time.Sleep(scsiDiskPoll)
+	}
+}
+
+// The entries of class are named host:channel:target:lun.
+func scsiDisksAt(class string, lun int) ([]string, error) {
+	entries, err := os.ReadDir(class)
+	if err != nil {
+		return nil, err
+	}
+
+	var found []string
+
+	for _, entry := range entries {
+		address := strings.Split(entry.Name(), ":")
+		if len(address) != 4 || address[2] != "0" || address[3] != strconv.Itoa(lun) {
+			continue
+		}
+
+		// the kernel lists the address a moment before the block device
+		blocks, err := os.ReadDir(filepath.Join(class, entry.Name(), "device", "block"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		for _, block := range blocks {
+			found = append(found, "/dev/"+block.Name())
+		}
+	}
+
+	return found, nil
 }
 
 // Blank tells whether the disk is empty, judged by its superblock.
@@ -166,6 +241,41 @@ func (Linux) Listen(address string) (net.Listener, error) {
 // DialHost connects to the host over vsock.
 func (Linux) DialHost(port uint32) (net.Conn, error) {
 	return vsock.Dial(vsock.Host, port, nil)
+}
+
+const (
+	// Hyper-V serves every Plan 9 share of a VM on this one port, told apart
+	// by their names.
+	plan9Port = 564
+	// plan9MessageSize is the largest Plan 9 message the kernel offers the
+	// server of Hyper-V, which may agree on a smaller one.
+	plan9MessageSize = 65536
+)
+
+// MountPlan9 connects to the Plan 9 server of Hyper-V over vsock and mounts
+// the share of the name on the target through that connection. The kernel
+// keeps the connection, so its descriptor here is closed once mounted. It is
+// a plain socket rather than one of DialHost, since the kernel needs only
+// its number and Go's poller would have nothing to do with it.
+func (l Linux) MountPlan9(share, target string, flags uintptr) error {
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open a vsock socket: %w", err)
+	}
+
+	defer func() { _ = unix.Close(fd) }()
+
+	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: plan9Port}); err != nil {
+		return fmt.Errorf("connect to the Plan 9 server of the host: %w", err)
+	}
+
+	return l.Mount(share, target, "9p", flags, plan9Options(fd, share))
+}
+
+// plan9Options hands the connection to the kernel as both ends of the
+// transport, and names the share, since one server serves them all.
+func plan9Options(fd int, share string) string {
+	return fmt.Sprintf("trans=fd,rfdno=%d,wfdno=%d,msize=%d,aname=%s", fd, fd, plan9MessageSize, share)
 }
 
 // Sethostname sets the hostname of the VM.

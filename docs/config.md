@@ -33,6 +33,7 @@ cpus: 4
 disk: 32
 mounts:
   - ~/sdk/go1.26.8:/opt/go
+skills: all
 path:
   - /opt/go/bin
 env:
@@ -157,11 +158,30 @@ home folder.
   folder on your machine, a running VM may not see it.
 - On macOS the VM runs arm64 Linux, so Mac programs don't run in it.
 
+## skills
+
 If you have skills in `~/.claude/skills`, aibox mounts them read-only at the
-same place in the VM's home, so Claude Code finds them. A mount of your own
-at that place takes over. A symlink in there that points outside the folder
-doesn't work in the VM. Your settings, plugins and MCP servers are not
-shared. The VM starts with its own.
+same place in the VM's home, so Claude Code finds them. That's the default,
+`skills: all`. To keep your skills out of the VM, set:
+
+```yaml
+skills: none
+```
+
+To give the VM only some skills, mount them inside
+`/home/user/.claude/skills`. A mount there takes the place of the whole
+folder:
+
+```yaml
+mounts:
+  - ~/.claude/skills/pdf:/home/user/.claude/skills/pdf
+```
+
+A symlink in the skills folder that points outside it doesn't work in the
+VM. Your settings, plugins and MCP servers are not shared. The VM starts
+with its own.
+
+`aibox run` and tasks get the same skills.
 
 ## path
 

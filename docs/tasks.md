@@ -29,12 +29,13 @@ left out.
 
 The VM starts with an empty home folder and an empty disk, and both are
 deleted at the end. Your skills in `~/.claude/skills` are mounted read-only,
-like with `aibox run`. Other tasks and `aibox run` never see the home or the
-disk, so you can run several tasks at once.
+like with `aibox run`, unless the config says `skills: none`. Other tasks
+and `aibox run` never see the home or the disk, so you can run several tasks
+at once.
 
 The project config applies like it does for `aibox run`: `allow`, `mounts`,
-`path`, `env`, `git`, `memory`, `cpus` and `disk`. The task gets its own
-`proxy.log`. It doesn't write to the project's.
+`skills`, `path`, `env`, `git`, `memory`, `cpus` and `disk`. The task gets
+its own `proxy.log`. It doesn't write to the project's.
 
 ## Before you run a task
 
@@ -270,7 +271,7 @@ project gets no new ref.
 
 Your project folder and the project's home folder are not shared with the
 task. The mounts from the config and your skills are, read-only like with
-`aibox run`.
+`aibox run`. `skills: none` keeps your skills out.
 
 Each task gets a new state disk, which the init formats. The home folder and
 the project are folders on that disk. aibox deletes the disk's file as soon

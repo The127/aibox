@@ -12,6 +12,7 @@ To report a vulnerability, see
 - The VM can't see your other files. With `aibox run` it sees your project
   folder. A task only sees a clone of a commit. Both also see the folders
   you list in `mounts` and your skills in `~/.claude/skills`, read-only.
+  `skills: none` in the project config keeps your skills out.
   aibox won't start in your home folder or above it.
 - The VM can only reach the hosts on the allow list. It has no network card,
   only a proxy on your machine. aibox refuses a name that resolves to your

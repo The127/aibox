@@ -1,6 +1,21 @@
 package session
 
-import "time"
+import (
+	"io"
+	"os"
+	"time"
+)
+
+// sizeDescriptor is the handle the size of the console is read from. Only
+// the output of a console knows its screen buffer, so it is stdout when
+// that is a file, and stdin otherwise, which then says it is no console.
+func sizeDescriptor(stdin *os.File, out io.Writer) int {
+	if file, ok := out.(*os.File); ok {
+		return int(file.Fd())
+	}
+
+	return int(stdin.Fd())
+}
 
 // pollInterval is how often the size of the console is read on Windows.
 const pollInterval = 200 * time.Millisecond

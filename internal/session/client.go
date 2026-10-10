@@ -52,7 +52,9 @@ func NewClient(stdin *os.File, out io.Writer) (Client, func(), error) {
 		return client, nothingToRestore, nil
 	}
 
-	size, err := sizeOfTerminal(fd)
+	sizeFd := sizeDescriptor(stdin, out)
+
+	size, err := sizeOfTerminal(sizeFd)
 	if err != nil {
 		return Client{}, nil, err
 	}
@@ -69,7 +71,7 @@ func NewClient(stdin *os.File, out io.Writer) (Client, func(), error) {
 
 	stop := make(chan struct{})
 
-	go reportSizes(fd, notifyResize(fd, stop), resized, stop)
+	go reportSizes(sizeFd, notifyResize(sizeFd, stop), resized, stop)
 
 	restore := func() {
 		close(stop)

@@ -3,10 +3,17 @@
 package session
 
 import (
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
 )
+
+// sizeDescriptor is the descriptor the size of the terminal is read from,
+// which is any of its descriptors on Unix.
+func sizeDescriptor(stdin *os.File, _ io.Writer) int {
+	return int(stdin.Fd())
+}
 
 // notifyResize reports on the returned channel each time the terminal
 // changes size, which the kernel says with SIGWINCH, until stop is closed.

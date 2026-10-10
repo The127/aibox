@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.0](https://github.com/The127/aibox/compare/v1.4.1...v1.5.0) (2026-10-10)
+
+
+### Features
+
+* build aibox on Windows ([#65](https://github.com/The127/aibox/issues/65)) ([1eed772](https://github.com/The127/aibox/commit/1eed77215067e82a849027a4955108688599a742))
+* let the project config turn off the skills mount ([#74](https://github.com/The127/aibox/issues/74)) ([52f182f](https://github.com/The127/aibox/commit/52f182f2e7a903acaf5a88921b8375f24b4071a0)), closes [#59](https://github.com/The127/aibox/issues/59)
+* refuse to boot a kernel other than the one of the release ([#73](https://github.com/The127/aibox/issues/73)) ([75bc717](https://github.com/The127/aibox/commit/75bc71785514e2714410736d68b7c92534bf0d03)), closes [#70](https://github.com/The127/aibox/issues/70)
+* teach the guest and the image Hyper-V ([#75](https://github.com/The127/aibox/issues/75)) ([af7bfa2](https://github.com/The127/aibox/commit/af7bfa253ee08313687c1b88746243fd3353a622))
+* use a VM image that a package installed ([#69](https://github.com/The127/aibox/issues/69)) ([d6e5a6c](https://github.com/The127/aibox/commit/d6e5a6c9599f303286b1747599479cb40e63ba09)), closes [#68](https://github.com/The127/aibox/issues/68)
+
 ## [1.4.1](https://github.com/The127/aibox/compare/v1.4.0...v1.4.1) (2026-10-09)
 
 

@@ -399,6 +399,10 @@ func openPromptFile(cwd, name string) (*os.File, error) {
 
 	defer func() { _ = root.Close() }()
 
+	if err := refuseLink(root, name); err != nil {
+		return nil, err
+	}
+
 	return root.OpenFile(name, flags, 0)
 }
 

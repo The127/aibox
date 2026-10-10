@@ -114,13 +114,21 @@ func pollSize(size func() (Size, error), interval time.Duration, stop <-chan str
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		last, _ := size()
+		// a size that could not be read is no size to compare with
+		last, err := size()
+		known := err == nil
 
 		for {
 			select {
 			case <-ticker.C:
 				now, err := size()
 				if err != nil || now == last {
+					continue
+				}
+
+				if !known {
+					last, known = now, true
+
 					continue
 				}
 

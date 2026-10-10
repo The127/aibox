@@ -1,6 +1,7 @@
 package session_test
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,6 +67,36 @@ func TestPollSizeReportsEachChangeOfTheSize(t *testing.T) {
 	case <-changed:
 	case <-time.After(time.Second):
 		t.Fatal("the change of the size was not reported")
+	}
+}
+
+func TestPollSizeReportsNoChangeAfterAFailedFirstRead(t *testing.T) {
+	// arrange
+	var mu sync.Mutex
+
+	reads := 0
+	sizeOf := func() (session.Size, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		reads++
+		if reads == 1 {
+			return session.Size{}, errors.New("no console yet")
+		}
+
+		return session.Size{Rows: 24, Cols: 80}, nil
+	}
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+
+	// act
+	changed := session.PollSize(sizeOf, time.Millisecond, stop)
+
+	// assert
+	select {
+	case <-changed:
+		t.Fatal("the first size that could be read was reported as a change")
+	case <-time.After(20 * time.Millisecond):
 	}
 }
 

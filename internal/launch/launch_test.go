@@ -5,6 +5,8 @@ package launch_test
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -23,6 +25,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/launch"
+	aiboxmachine "github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/vm"
@@ -330,6 +333,36 @@ func TestRunFailsBeforeQEMUWithoutTheFirmwareForTheSandbox(t *testing.T) {
 
 	// assert
 	require.ErrorContains(t, err, options.Firmware)
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
+}
+
+func TestRunGivesBubblewrapTheKernelItChecked(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+	require.NoError(t, os.WriteFile(m.Kernel, []byte("the kernel"), 0o600))
+	sum := sha256.Sum256([]byte("the kernel"))
+	m.KernelDigest = hex.EncodeToString(sum[:])
+
+	// act
+	err := launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.Equal(t, []string{"the kernel"}, f.record(t, "bwrap-kernel"))
+}
+
+func TestRunFailsBeforeQEMUWhenTheKernelIsNotTheReleasedOne(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+	m.KernelDigest = "the digest of another kernel"
+
+	// act
+	err := launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorIs(t, err, aiboxmachine.ErrKernel)
 	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 

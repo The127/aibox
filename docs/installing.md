@@ -64,9 +64,18 @@ go build -ldflags "-X github.com/the127/aibox/internal/image.systemDir=/usr/lib/
 
 When that folder has both files, aibox uses them and downloads nothing. If
 the folder is there but a file is missing, aibox says so and downloads the
-image instead.
-`--image` still takes precedence. Note that aibox doesn't check these files
-against the release. Ship the image of the same release as the binary.
+image instead. `--image` still takes precedence.
+
+Ship the image of the same release as the binary. aibox checks the kernel
+against the SHA-256 built into the release and refuses to start with any
+other. If you build aibox yourself, build in the SHA-256 of each kernel too,
+or aibox boots any kernel:
+
+```
+go build -ldflags "-X github.com/the127/aibox/internal/image.kernelDigests=amd64:<sha256>,arm64:<sha256>" ./cmd/aibox
+```
+
+Note that aibox doesn't check the root disk yet.
 
 ## Checking a download
 

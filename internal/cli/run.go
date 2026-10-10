@@ -137,12 +137,15 @@ func folders(deps dependencies) (cwd, aibox string, err error) {
 // needs, for any command: the image, the folders of the project, its
 // config, the mounts, the variables and the log of the proxy.
 type projectRun struct {
-	image   string
-	project project.Project
-	config  config.Config
-	mounts  []backend.Mount
-	env     []string
-	log     *os.File
+	image string
+	// kernelDigest is what the kernel of the image must hash to, or empty
+	// for an image the person gave
+	kernelDigest string
+	project      project.Project
+	config       config.Config
+	mounts       []backend.Mount
+	env          []string
+	log          *os.File
 	// proxyLog writes the hosts the proxy connected to or refused into log
 	proxyLog *proxy.Log
 	// forwarder sends the requests of Claude Code to the Claude API with
@@ -165,11 +168,15 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 	}
 
 	vmImage := cmd.String("image")
+	kernelDigest := ""
+
 	if vmImage == "" {
 		var err error
 		if vmImage, err = defaultImage(ctx, deps, filepath.Join(aibox, "image")); err != nil {
 			return projectRun{}, err
 		}
+
+		kernelDigest, _ = deps.kernelDigest(runtime.GOARCH)
 	}
 
 	if _, _, err := machine.Image(vmImage); err != nil {
@@ -236,7 +243,7 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 	}
 
 	return projectRun{
-		image: vmImage, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log),
+		image: vmImage, kernelDigest: kernelDigest, project: p, config: cfg, mounts: mounts, env: env, log: log, proxyLog: proxy.NewLog(log),
 		forwarder: forwarder, gitRemotes: remotes, roots: roots, sshKeys: sshKeys,
 	}, nil
 }
@@ -255,13 +262,14 @@ func closeKeys(keys sshKeys) {
 // spec is the part of the spec that every command fills the same way.
 func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 	spec := backend.Spec{
-		Image:       r.image,
-		StateBytes:  stateBytes(r.config),
-		MemoryMiB:   flagOrConfig(cmd, "memory", r.config.Memory),
-		CPUs:        flagOrConfig(cmd, "cpus", r.config.CPUs),
-		Mounts:      r.mounts,
-		Unsandboxed: cmd.Bool("no-sandbox"),
-		Env:         r.env,
+		Image:        r.image,
+		KernelDigest: r.kernelDigest,
+		StateBytes:   stateBytes(r.config),
+		MemoryMiB:    flagOrConfig(cmd, "memory", r.config.Memory),
+		CPUs:         flagOrConfig(cmd, "cpus", r.config.CPUs),
+		Mounts:       r.mounts,
+		Unsandboxed:  cmd.Bool("no-sandbox"),
+		Env:          r.env,
 		Proxy: proxy.Options{
 			Allow:       r.config.Allow.Allows,
 			Pinned:      r.config.Allow.Pinned,

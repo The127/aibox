@@ -28,8 +28,8 @@ Releases are made from the commit messages on `main`. Nobody tags by hand.
 
 The binary reports its version from the Go build info stamp. A clean
 checkout of the tag is enough. The ldflags set the SHA-256 of the two
-images, which the workflow takes from the images it built, and the folder
-where a distro package can put the image.
+images and of their kernels, which the workflow takes from the images it
+built, and the folder where a distro package can put the image.
 
 ## What the packages hold
 

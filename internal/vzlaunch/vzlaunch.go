@@ -295,6 +295,12 @@ func stop(v runningVM, states <-chan vz.VirtualMachineState) error {
 // with the words of the guest, the root disk read-only and the state disk,
 // the shares, the console, vsock and entropy, and no network device.
 func configure(m vm.Machine, devNull, console *os.File) (*vz.VirtualMachineConfiguration, error) {
+	// Virtualization.framework loads the kernel from its path, so it can
+	// change between this check and the boot
+	if _, err := machine.ReadKernel(m); err != nil {
+		return nil, err
+	}
+
 	boot, err := vz.NewLinuxBootLoader(m.Kernel, vz.WithCommandLine(m.Cmdline(baseCmdline)))
 	if err != nil {
 		return nil, fmt.Errorf("load the kernel %s: %w", m.Kernel, err)

@@ -25,6 +25,9 @@ type Spec struct {
 	// Image is the folder with the image of the VM. Which files the backend
 	// needs in it is its own business.
 	Image string
+	// KernelDigest is the SHA-256 the kernel of the image must have. Empty
+	// boots any kernel.
+	KernelDigest string
 	// State is where the backend keeps the disk of the project that survives
 	// restarts, and StateBytes the size it makes a new one with. An
 	// existing disk keeps its size.

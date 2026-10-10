@@ -1,0 +1,26 @@
+#!/bin/sh
+# check-kernel-config CONFIG FRAGMENT... checks that the kernel
+# configuration CONFIG has every option the fragments set to y or leave
+# unset, since merge_config.sh only warns about an option it could not. A
+# fragment wins over the ones before it, as it does in the merge. Options
+# set to m or to a value are not checked; aibox sets none.
+set -eu
+
+config=$1
+shift
+
+# without pipefail a fragment sed cannot read would pass as empty
+for fragment; do
+  [ -r "$fragment" ] || { echo "$fragment cannot be read"; exit 1; }
+done
+
+sed -n -e 's/^\(CONFIG_[A-Z0-9_]*\)=y$/\1 y/p' -e 's/^# \(CONFIG_[A-Z0-9_]*\) is not set[[:space:]]*$/\1 n/p' "$@" |
+  awk '{ want[$1] = $2 } END { for (option in want) print option, want[option] }' |
+  while read -r option want; do
+    if [ "$want" = y ]; then
+      grep -qx "$option=y" "$config" || { echo "$option did not stick"; exit 1; }
+    elif grep -q "^$option=" "$config"; then
+      echo "$option is still set"
+      exit 1
+    fi
+  done

@@ -1,0 +1,44 @@
+#!/bin/sh
+# check-kernel-config-test runs check-kernel-config on small configurations
+# whose outcome is known, since the build of the image is too slow to find
+# out that the check passes what it should not.
+set -eu
+
+check=$(dirname "$0")/check-kernel-config
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"' EXIT
+
+printf 'CONFIG_A=y\n# CONFIG_B is not set\nCONFIG_C=y\n' > "$dir/base"
+printf '# CONFIG_C is not set\nCONFIG_B=y\n' > "$dir/later"
+
+failed=0
+
+expect() {
+  want=$1
+  name=$2
+  shift 2
+
+  if out=$(sh "$check" "$@" 2>&1); then got=pass; else got=fail; fi
+
+  if [ "$got" != "$want" ]; then
+    echo "$name: wanted $want, got $got: $out"
+    failed=1
+  fi
+}
+
+printf 'CONFIG_A=y\nCONFIG_B=y\n' > "$dir/merged"
+expect pass "a later fragment wins" "$dir/merged" "$dir/base" "$dir/later"
+
+printf 'CONFIG_B=y\n' > "$dir/lost"
+expect fail "an option that did not stick" "$dir/lost" "$dir/base"
+
+printf 'CONFIG_A=y\nCONFIG_B=y\nCONFIG_C=y\n' > "$dir/kept"
+expect fail "an option that is still set" "$dir/kept" "$dir/base" "$dir/later"
+
+printf '# CONFIG_X is not set  \n' > "$dir/spaces"
+printf 'CONFIG_X=y\n' > "$dir/x"
+expect fail "an unset option with trailing spaces" "$dir/x" "$dir/spaces"
+
+expect fail "a fragment that cannot be read" "$dir/merged" "$dir/missing"
+
+exit "$failed"

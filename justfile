@@ -135,6 +135,10 @@ reuse:
 prose:
     bash hack/check-prose.sh
 
+# test the check of the kernel configurations
+kernel-config:
+    sh image/check-kernel-config-test
+
 # build the documentation site into docs/book
 docs:
     mdbook build docs
@@ -147,4 +151,4 @@ hooks:
 setup: hooks
 
 # everything that must pass before a push
-ci: lint arch reuse prose docs build cover vuln
+ci: lint arch reuse prose kernel-config docs build cover vuln

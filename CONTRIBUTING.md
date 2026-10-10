@@ -70,6 +70,9 @@ The kernels are configured in `image/`:
   tool boots on Virtualization.framework, and `kernel-arm64.config` holds
   what aibox changes about it.
 
+`check-kernel-config` fails the build when an option of a fragment did not
+stick, since the kernel's own merge only warns about it.
+
 `image/Containerfile` builds the same image as the Imagefile, and its stages
 follow the stages of the Imagefile.
 

@@ -83,7 +83,7 @@ func TestCleanRemovesTheInputsOfTasksThatEnded(t *testing.T) {
 	err := f.clean()
 
 	// assert
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "remove the input of the task linked")
 	assert.NoFileExists(t, filepath.Join(f.tasks, "ended", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "ended", "share", task.PromptFile))
 	assert.NoFileExists(t, filepath.Join(f.tasks, "older", "share", task.InputBundle))

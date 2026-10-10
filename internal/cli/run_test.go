@@ -1287,6 +1287,36 @@ func TestRunSharesTheSkillsOfThePersonBeforeTheMounts(t *testing.T) {
 	assert.Equal(t, backend.Mount{Host: skills, Guest: "/home/user/.claude/skills"}, f.launch.spec.Mounts[0])
 }
 
+func TestRunSharesNoSkillsWhenTheConfigSaysNone(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.skillsFolder(t)
+	f.writeConfig(t, "skills: none\nmounts:\n  - "+t.TempDir()+":/opt/go\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/opt/go"}, guests(f.launch.spec.Mounts))
+}
+
+func TestRunSharesTheSkillsWhenTheConfigSaysAll(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.skillsFolder(t)
+	f.writeConfig(t, "skills: all\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/home/user/.claude/skills"}, guests(f.launch.spec.Mounts))
+}
+
 func TestRunSharesNoSkillsWhenThePersonHasNone(t *testing.T) {
 	// arrange
 	f := newFixture(t)

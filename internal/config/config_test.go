@@ -221,6 +221,64 @@ func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
 	assert.Contains(t, string(content), "# mounts:\n#   - ")
 }
 
+func TestLoadReadsTheSkills(t *testing.T) {
+	for _, skills := range []config.Skills{config.SkillsAll, config.SkillsNone} {
+		t.Run(string(skills), func(t *testing.T) {
+			// arrange
+			path := write(t, "skills: "+string(skills)+"\n")
+
+			// act
+			cfg, err := config.Load(path)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, skills, cfg.Skills)
+		})
+	}
+}
+
+func TestLoadLeavesSkillsWithoutAValueAtTheDefault(t *testing.T) {
+	// arrange
+	path := write(t, "skills:\n")
+
+	// act
+	cfg, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Skills, "empty is all")
+}
+
+func TestLoadRejectsSkillsOtherThanAllOrNone(t *testing.T) {
+	for _, text := range []string{"some", "false", "[pdf]"} {
+		t.Run(text, func(t *testing.T) {
+			// arrange
+			path := write(t, "skills: "+text+"\n")
+
+			// act
+			_, err := config.Load(path)
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrBadSkills)
+		})
+	}
+}
+
+func TestLoadWritesASkillsExampleIntoTheDefaultFile(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// act
+	_, err := config.Load(path)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# skills: none\n")
+}
+
 func TestLoadReadsThePath(t *testing.T) {
 	// arrange
 	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n  - PATH\n  - DIRENV_PATH\n")

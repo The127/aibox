@@ -70,6 +70,9 @@ var ErrReservedMount = errors.New("the VM needs this path")
 // contains, that of another entry.
 var ErrMountOverlap = errors.New("mounts overlap")
 
+// ErrBadSkills is a skills setting other than all or none.
+var ErrBadSkills = errors.New("skills must be all or none")
+
 // ErrBadPath is a path entry that is neither an absolute folder without a
 // colon nor the name of a variable.
 var ErrBadPath = errors.New("must be an absolute folder without a colon, or the name of a variable")
@@ -150,6 +153,8 @@ type Config struct {
 	Disk *int `yaml:"disk"`
 	// Mounts are folders of the host the VM sees read-only.
 	Mounts []Mount `yaml:"mounts"`
+	// Skills says whether the VM sees the skills of the person.
+	Skills Skills `yaml:"skills"`
 	// Path are folders in the VM that go in front of its PATH, or names of
 	// variables of the host whose folders do.
 	Path []string `yaml:"path"`
@@ -197,6 +202,27 @@ func parseVariable(text string) (Variable, error) {
 	}
 
 	return Variable{Name: name, Value: val, FromHost: !hasValue}, nil
+}
+
+// Skills says whether the VM sees the skills of the person. Empty is all.
+type Skills string
+
+// SkillsAll shares all skills of the person, SkillsNone none.
+const (
+	SkillsAll  Skills = "all"
+	SkillsNone Skills = "none"
+)
+
+// UnmarshalYAML reads all or none. Anything else, also a list, is
+// ErrBadSkills.
+func (s *Skills) UnmarshalYAML(value *yaml.Node) error {
+	if skills := Skills(value.Value); value.Kind == yaml.ScalarNode && (skills == SkillsAll || skills == SkillsNone) {
+		*s = skills
+
+		return nil
+	}
+
+	return ErrBadSkills
 }
 
 // Mount is a folder of the host that the VM sees read-only at Guest. In the
@@ -339,6 +365,11 @@ allow:
 # Folders of the host the VM sees read-only, written host:guest, for example:
 # mounts:
 #   - ~/sdk/go:/opt/go
+
+# Whether the VM sees your skills in ~/.claude/skills, read-only: all or
+# none. A mount inside /home/user/.claude/skills takes their place, so that
+# the VM sees only the skills you mount there. For example:
+# skills: none
 
 # Folders in the VM that go in front of its PATH. A name such as PATH stands
 # for the folders in that variable of the host, which then need a mount at

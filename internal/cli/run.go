@@ -193,7 +193,7 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, err
 	}
 
-	mounts, err := mountFolders(deps.homeDir, cfg.Mounts)
+	mounts, err := mountFolders(deps.homeDir, cfg.Mounts, cfg.Skills)
 	if err != nil {
 		return projectRun{}, err
 	}
@@ -692,9 +692,10 @@ func stateBytes(cfg config.Config) int64 {
 }
 
 // mountFolders returns the mount of the skills of the person, when the host
-// has any and no mount of the config takes their place, and a mount for
-// each mount of the config, once the host folders are known to exist.
-func mountFolders(homeDir func() (string, error), mounts []config.Mount) ([]backend.Mount, error) {
+// has any, the config does not turn them off and no mount of the config
+// takes their place, and a mount for each mount of the config, once the
+// host folders are known to exist.
+func mountFolders(homeDir func() (string, error), mounts []config.Mount, skillsSetting config.Skills) ([]backend.Mount, error) {
 	home, err := homeDir()
 	if err != nil {
 		return nil, fmt.Errorf("find the home folder: %w", err)
@@ -705,7 +706,7 @@ func mountFolders(homeDir func() (string, error), mounts []config.Mount) ([]back
 	// a person without skills is the normal case, so a missing folder is
 	// nothing to report
 	skills := filepath.Join(home, hostSkillsDir)
-	if isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
+	if skillsSetting != config.SkillsNone && isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
 		folders = append(folders, backend.Mount{Host: skills, Guest: guestSkillsDir})
 	}
 

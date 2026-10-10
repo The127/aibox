@@ -59,7 +59,8 @@ With [Nix](https://nixos.org), on Linux on amd64 or macOS on Apple silicon:
 nix profile install github:The127/aibox
 ```
 
-The first `aibox run` downloads the VM image, which is about 150 MB.
+The first `aibox run` downloads the VM image, which is about 150 MB, unless
+your package ships it.
 [Installing](https://the127.github.io/aibox/installing.html) has the details
 and shows how to check a download.
 

@@ -38,6 +38,8 @@ type dependencies struct {
 	version func() string
 	// imageDigest is the digest of the image this aibox was released with
 	imageDigest func(arch string) (string, bool)
+	// systemImage is the folder where a package puts the image
+	systemImage string
 	// fetchImage downloads the image of the release into dir
 	fetchImage func(ctx context.Context, version, arch, digest, dir string) error
 	// stdout and stderr are where a task reports
@@ -95,6 +97,7 @@ func NewRootCommand() *cli.Command {
 		edit:            runEditor,
 		version:         version.Get,
 		imageDigest:     image.Digest,
+		systemImage:     image.SystemDir(),
 		fetchImage:      fetchImage(os.Stderr),
 		stdout:          os.Stdout,
 		stderr:          os.Stderr,

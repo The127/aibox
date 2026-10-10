@@ -27,8 +27,9 @@ Releases are made from the commit messages on `main`. Nobody tags by hand.
    uploaded as `checksums.txt.sigstore.json`.
 
 The binary reports its version from the Go build info stamp. A clean
-checkout of the tag is enough. The only ldflags set the SHA-256 of the two
-images, which the workflow takes from the images it built.
+checkout of the tag is enough. The ldflags set the SHA-256 of the two
+images, which the workflow takes from the images it built, and the folder
+where a distro package can put the image.
 
 ## What the packages hold
 
@@ -36,10 +37,12 @@ Only the `aibox` binary and the license. The `deb` and the `rpm` depend on
 QEMU, virtiofsd and bubblewrap (`qemu-system-x86` for deb,
 `qemu-system-x86-core` for rpm).
 
-The VM image is not in the packages. On its first run, aibox downloads
+Our packages don't include the VM image. On its first run, aibox downloads
 the image of its own version from the release and takes it only if its
-SHA-256 is the one built into aibox. The amd64 image is built with miso, the arm64 image with
-docker from `image/Containerfile`.
+SHA-256 is the one built into aibox. A distro package can ship the image in
+`/usr/lib/aibox` on Linux or `/opt/homebrew/lib/aibox` on macOS instead.
+`.goreleaser.yaml` sets these folders as `systemDir`. The amd64 image is
+built with miso, the arm64 image with docker from `image/Containerfile`.
 
 ## One-time setup
 

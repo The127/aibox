@@ -77,6 +77,17 @@ func digestOf(list, arch string) (string, bool) {
 	return "", false
 }
 
+// systemDir is the folder where a package of aibox puts the image, for all
+// users. A build sets it with -ldflags -X. Without it aibox looks for no
+// such folder.
+var systemDir string
+
+// SystemDir is the folder where a package of aibox puts the image, or
+// empty.
+func SystemDir() string {
+	return systemDir
+}
+
 // Fetcher downloads images from the releases at BaseURL. Progress, if set,
 // hears how many bytes of how many arrived so far. The total is -1 when
 // the server does not say.

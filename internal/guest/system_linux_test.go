@@ -60,6 +60,14 @@ func TestStartAsksTheKernelToStartTheCommandInTheCgroup(t *testing.T) {
 	assert.True(t, cmd.SysProcAttr.UseCgroupFD)
 }
 
+func TestPlan9OptionsHandTheConnectionToTheKernelForTheShare(t *testing.T) {
+	// act
+	options := guest.Plan9Options(7, "project")
+
+	// assert
+	assert.Equal(t, "trans=fd,rfdno=7,wfdno=7,msize=65536,aname=project", options)
+}
+
 func TestBlankIsTrueForADiskWithoutAFileSystem(t *testing.T) {
 	// arrange
 	disk := filepath.Join(t.TempDir(), "disk")

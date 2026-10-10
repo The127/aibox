@@ -33,3 +33,6 @@ func RunTask(sys Processes, command func(string, ...string) *exec.Cmd, input, ou
 func StartTask(sys Processes, command func(string, ...string) *exec.Cmd, input, out string) session.Process {
 	return startTask(&taskRun{sys: sys, command: command, input: input, out: out, progress: io.Discard, gitTimeout: gitTimeout})
 }
+
+// Plan9Options is plan9Options.
+var Plan9Options = plan9Options

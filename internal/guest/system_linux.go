@@ -168,6 +168,41 @@ func (Linux) DialHost(port uint32) (net.Conn, error) {
 	return vsock.Dial(vsock.Host, port, nil)
 }
 
+const (
+	// Hyper-V serves every Plan 9 share of a VM on this one port, told apart
+	// by their names.
+	plan9Port = 564
+	// plan9MessageSize is the largest Plan 9 message the kernel offers the
+	// server of Hyper-V, which may agree on a smaller one.
+	plan9MessageSize = 65536
+)
+
+// MountPlan9 connects to the Plan 9 server of Hyper-V over vsock and mounts
+// the share of the name on the target through that connection. The kernel
+// keeps the connection, so its descriptor here is closed once mounted. It is
+// a plain socket rather than one of DialHost, since the kernel needs only
+// its number and Go's poller would have nothing to do with it.
+func (l Linux) MountPlan9(share, target string, flags uintptr) error {
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open a vsock socket: %w", err)
+	}
+
+	defer func() { _ = unix.Close(fd) }()
+
+	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: plan9Port}); err != nil {
+		return fmt.Errorf("connect to the Plan 9 server of the host: %w", err)
+	}
+
+	return l.Mount(share, target, "9p", flags, plan9Options(fd, share))
+}
+
+// plan9Options hands the connection to the kernel as both ends of the
+// transport, and names the share, since one server serves them all.
+func plan9Options(fd int, share string) string {
+	return fmt.Sprintf("trans=fd,rfdno=%d,wfdno=%d,msize=%d,aname=%s", fd, fd, plan9MessageSize, share)
+}
+
 // Sethostname sets the hostname of the VM.
 func (Linux) Sethostname(name string) error {
 	return syscall.Sethostname([]byte(name))

@@ -93,11 +93,13 @@ const imagePath = "/usr/local/bin:/usr/bin:/bin"
 // host that are mounted read-only where the host says. Loopback are the
 // ports on the loopback of the host the VM may reach through the proxy.
 // Task runs a task from the task share unattended, in place of Claude Code
-// on a terminal.
+// on a terminal. HyperV says the VM runs on Hyper-V, which shares the
+// folders of the host over Plan 9 instead of virtio-fs.
 type Options struct {
 	Console      string
 	Shell        bool
 	Task         bool
+	HyperV       bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Mounts       []Mount
@@ -138,6 +140,10 @@ type System interface {
 	Network
 	Processes
 	Mount(source, target, fstype string, flags uintptr, data string) error
+	// MountPlan9 mounts the folder Hyper-V shares by the share name on the
+	// target with the mount flags, over Plan 9 on a vsock connection to the
+	// host.
+	MountPlan9(share, target string, flags uintptr) error
 	// Chmod sets the mode of the file. The error wraps fs.ErrNotExist when
 	// there is no such file.
 	Chmod(path string, mode os.FileMode) error
@@ -304,6 +310,8 @@ func ParseCmdline(cmdline string) (Options, error) {
 			options.Shell = true
 		case "aibox.task":
 			options.Task = true
+		case "aibox.hyperv":
+			options.HyperV = true
 		case "aibox.proxy":
 			options.ProxyPort = port(key, value)
 		case "aibox.terminal":
@@ -597,9 +605,11 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	mountShare := shareMounter(sys, options.HyperV)
+
 	if !options.Task {
 		for _, m := range shares {
-			if err := mountShare(sys, m.Tag, m.Path, 0); err != nil {
+			if err := mountShare(m.Tag, m.Path, 0); err != nil {
 				return console, options, err
 			}
 		}
@@ -626,13 +636,13 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	for _, m := range options.Mounts {
-		if err := mountShare(sys, m.Tag, m.Path, readOnlyShare); err != nil {
+		if err := mountShare(m.Tag, m.Path, readOnlyShare); err != nil {
 			return console, options, err
 		}
 	}
 
 	if options.Task {
-		if err := mountShare(sys, taskShare, taskDir, taskFlags); err != nil {
+		if err := mountShare(taskShare, taskDir, taskFlags); err != nil {
 			return console, options, err
 		}
 	}
@@ -722,12 +732,23 @@ func shareMounts(sys System) error {
 	return nil
 }
 
-func mountShare(sys System, tag, target string, flags uintptr) error {
-	if err := sys.Mount(tag, target, "virtiofs", flags, ""); err != nil {
-		return fmt.Errorf("mount %s on %s: %w", tag, target, err)
+// shareMounter is chosen once, so that no mount of a share can miss that
+// Hyper-V has no virtio-fs.
+func shareMounter(sys System, hyperV bool) func(tag, target string, flags uintptr) error {
+	mount := func(tag, target string, flags uintptr) error {
+		return sys.Mount(tag, target, "virtiofs", flags, "")
+	}
+	if hyperV {
+		mount = sys.MountPlan9
 	}
 
-	return nil
+	return func(tag, target string, flags uintptr) error {
+		if err := mount(tag, target, flags); err != nil {
+			return fmt.Errorf("mount %s on %s: %w", tag, target, err)
+		}
+
+		return nil
+	}
 }
 
 // lockRoot makes the root read-only. Every mount point exists by now, and

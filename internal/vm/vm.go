@@ -28,7 +28,9 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk and keeps its state
 // on a second disk. Shell boots it into a shell instead of Claude Code, Task
-// runs the task of the task share unattended.
+// runs the task of the task share unattended. HyperV tells the guest it
+// runs on Hyper-V, which shares the folders of the host over Plan 9 and has
+// SCSI disks, instead of virtio-fs and virtio disks.
 // ProxyPort and TerminalPort are the vsock ports of the proxy and the
 // terminal session on the host, and 0 leaves the port off the kernel
 // command line. Loopback are the ports on the loopback of the host the VM
@@ -43,6 +45,7 @@ type Machine struct {
 	Shares       []Share
 	Shell        bool
 	Task         bool
+	HyperV       bool
 	ProxyPort    uint32
 	TerminalPort uint32
 	Loopback     []uint16
@@ -177,6 +180,10 @@ func (m Machine) GuestWords() []string {
 
 	if m.Task {
 		words = append(words, "aibox.task")
+	}
+
+	if m.HyperV {
+		words = append(words, "aibox.hyperv")
 	}
 
 	if m.ProxyPort != 0 {

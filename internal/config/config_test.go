@@ -466,9 +466,12 @@ func TestLoadWritesTheDefaultFileWhenThereIsNone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.Default(), cfg)
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	// Windows has no such modes, the ACL of the home folder keeps it
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 }
 
 func TestLoadReadsTheDefaultFileBackAsTheDefault(t *testing.T) {

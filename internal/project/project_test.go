@@ -3,6 +3,7 @@ package project_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,13 +31,24 @@ func TestEscape(t *testing.T) {
 	}
 }
 
+// aProject is the path of a project on this host, and the name of its
+// folder.
+func aProject() (path, escaped string) {
+	if runtime.GOOS == "windows" {
+		return `C:\home\someone\repos\aibox`, "C--home-someone-repos-aibox"
+	}
+
+	return "/home/someone/repos/aibox", "-home-someone-repos-aibox"
+}
+
 func TestOpen(t *testing.T) {
 	// arrange
 	base := t.TempDir()
-	dir := filepath.Join(base, "-home-someone-repos-aibox")
+	path, escaped := aProject()
+	dir := filepath.Join(base, escaped)
 
 	// act
-	p, err := project.Open(base, "/home/someone/repos/aibox")
+	p, err := project.Open(base, path)
 
 	// assert
 	require.NoError(t, err)
@@ -47,20 +59,25 @@ func TestOpen(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "console.log"), p.ConsoleLog)
 	assert.Equal(t, filepath.Join(dir, "state.ext4"), p.State)
 
-	info, err := os.Stat(p.Home)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	// Windows has no such modes, the ACL of the home folder keeps it
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(p.Home)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	}
 }
 
 func TestOpenCleansThePath(t *testing.T) {
 	// arrange
 	base := t.TempDir()
-	dir := filepath.Join(base, "-home-someone-repos-aibox")
+	path, escaped := aProject()
+	dir := filepath.Join(base, escaped)
+	sep := string(filepath.Separator)
 
-	for _, path := range []string{"/home/someone/repos/aibox/", "/home/someone/repos/other/../aibox"} {
-		t.Run(path, func(t *testing.T) {
+	for _, unclean := range []string{path + sep, filepath.Dir(path) + sep + "other" + sep + ".." + sep + "aibox"} {
+		t.Run(unclean, func(t *testing.T) {
 			// act
-			p, err := project.Open(base, path)
+			p, err := project.Open(base, unclean)
 
 			// assert
 			require.NoError(t, err)
@@ -72,14 +89,15 @@ func TestOpenCleansThePath(t *testing.T) {
 func TestOpenKeepsTheHomeFolder(t *testing.T) {
 	// arrange
 	base := t.TempDir()
-	p, err := project.Open(base, "/home/someone/repos/aibox")
+	path, _ := aProject()
+	p, err := project.Open(base, path)
 	require.NoError(t, err)
 
 	login := filepath.Join(p.Home, ".claude.json")
 	require.NoError(t, os.WriteFile(login, []byte("{}"), 0o600))
 
 	// act
-	_, err = project.Open(base, "/home/someone/repos/aibox")
+	_, err = project.Open(base, path)
 
 	// assert
 	require.NoError(t, err)
@@ -101,10 +119,11 @@ func TestOpenWhenBaseIsAFile(t *testing.T) {
 	// arrange
 	base := filepath.Join(t.TempDir(), "projects")
 	require.NoError(t, os.WriteFile(base, nil, 0o600))
+	path, escaped := aProject()
 
 	// act
-	_, err := project.Open(base, "/home/someone/repos/aibox")
+	_, err := project.Open(base, path)
 
 	// assert
-	assert.ErrorContains(t, err, filepath.Join(base, "-home-someone-repos-aibox", "home"))
+	assert.ErrorContains(t, err, filepath.Join(base, escaped, "home"))
 }

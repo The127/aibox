@@ -20,6 +20,7 @@ var (
 
 	procCreateOperation            = computecore.NewProc("HcsCreateOperation")
 	procCloseOperation             = computecore.NewProc("HcsCloseOperation")
+	procCancelOperation            = computecore.NewProc("HcsCancelOperation")
 	procWaitForOperationResult     = computecore.NewProc("HcsWaitForOperationResult")
 	procCreateComputeSystem        = computecore.NewProc("HcsCreateComputeSystem")
 	procOpenComputeSystem          = computecore.NewProc("HcsOpenComputeSystem")
@@ -44,7 +45,7 @@ func load() error {
 	}
 
 	procs := []*windows.LazyProc{
-		procCreateOperation, procCloseOperation, procWaitForOperationResult,
+		procCreateOperation, procCloseOperation, procCancelOperation, procWaitForOperationResult,
 		procCreateComputeSystem, procOpenComputeSystem, procCloseComputeSystem,
 		procStartComputeSystem, procTerminateComputeSystem, procGetComputeSystemProperties,
 		procEnumerateComputeSystems, procGrantVMAccess, procRevokeVMAccess,
@@ -138,20 +139,53 @@ func timeoutOf(ctx context.Context) uint32 {
 }
 
 // run makes an operation, starts a call of the service in it and waits for
-// the call to finish. start makes the call and returns its HRESULT.
+// the call to finish, or for the context to end. start makes the call and
+// returns its HRESULT. A call whose context ended may still finish.
 func run(ctx context.Context, what string, start func(op operation) uintptr) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("%s: %w", what, err)
+	}
+
 	op, err := newOperation()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", what, err)
 	}
 
-	defer op.close()
-
 	if err := check(what, start(op), ""); err != nil {
+		op.close()
+
 		return "", err
 	}
 
-	return op.wait(ctx, what)
+	type outcome struct {
+		doc string
+		err error
+	}
+
+	done := make(chan outcome, 1)
+
+	go func() {
+		doc, err := op.wait(ctx, what)
+		done <- outcome{doc, err}
+	}()
+
+	select {
+	case o := <-done:
+		op.close()
+
+		return o.doc, o.err
+	case <-ctx.Done():
+		// The service takes the cancel, but a wait in progress can't be
+		// interrupted, so the operation is closed once its wait is over.
+		_, _, _ = procCancelOperation.Call(uintptr(op))
+
+		go func() {
+			<-done
+			op.close()
+		}()
+
+		return "", fmt.Errorf("%s: %w", what, context.Cause(ctx))
+	}
 }
 
 // System is an open compute system of the service, a VM, from Create or

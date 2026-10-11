@@ -25,12 +25,14 @@ other address and get the VM's connections.
 - Your files outside the project folder and the mounts.
 - Your API key, your git login and SSH keys, and your IDE's token. Note that
   a subscription token and the secrets in `env` do go into the VM.
+- Your clipboard, apart from one image right after you press Ctrl+V. Set
+  `clipboard: false` in the config to keep that out too.
 - Your machine's own networks and the servers that listen on its loopback.
 - The rest of the internet. Data leaves only through what you allowed, like
   a host, a port or a branch.
 - The branches, tags and repositories the `git` list doesn't name.
-- Your machine while the VM runs. The VM can't run code on it directly. What
-  it writes into the project can. See [below](#what-aibox-doesnt-stop).
+- Your machine while the VM runs. The VM can't run code on it directly. Code
+  it writes into the project can run later. See [below](#what-aibox-doesnt-stop).
 - Your aibox config. It decides everything else on this list.
 
 ## Why the config isn't in the project
@@ -68,6 +70,7 @@ Everything the VM can reach on your machine goes through one of these.
 | The git broker | git's requests | The broker adds your login on your machine, only for the repositories and branches the config names. See [Git](git.md). |
 | The key forwarder | Requests to the Claude API | The VM gets a placeholder key. aibox adds the real one. See [API key](tasks.md#api-key). |
 | The IDE bridge | Selections, diffs and errors | With `ide: true`, the bridge passes on only those messages, and only for files in the project. See [In your IDE](usage.md#in-your-ide). |
+| The clipboard | One image after Ctrl+V | aibox lets the VM read the clipboard only right after you press Ctrl+V, once, and only an image. Tasks never get it. See [Pasting images](usage.md#pasting-images). |
 | The terminal | What Claude Code shows you | `aibox run` passes the VM's terminal straight through. |
 | A task's results | The bundle, the logs and `result.json` | For `aibox task`, aibox checks each file and the bundle, and strips control characters before text reaches your terminal. See [How a task runs](tasks.md#how-a-task-runs). |
 | Your project folder | What the VM writes | aibox doesn't check it. Treat it like a pull request from a stranger. See [What the VM writes](what-the-vm-writes.md). |
@@ -79,7 +82,7 @@ Everything the VM can reach on your machine goes through one of these.
 | read a file outside the project | The VM only sees its shares. |
 | give itself more hosts, secrets or branches | The config isn't in the project, and aibox reads it once when it starts. |
 | write to a read-only mount | Your machine enforces read-only, not the VM. |
-| break out through a bug in its kernel | The VM's kernel isn't yours. It has no modules, no network drivers and no `bpf()`. Getting past it is only the first step. The VM then has to break the hypervisor too. |
+| break out through a bug in its kernel | The VM has its own kernel, so a bug in it gives the attacker nothing on your machine. The kernel has no modules, no network drivers and no `bpf()`. The attacker then has to break the hypervisor too. |
 | break out through a bug in the hypervisor | On Linux QEMU runs in bubblewrap with no network, no environment and no writable file system, and filters its own syscalls. On macOS the VM runs in a Virtualization.framework process, which aibox can't put in a sandbox of its own. |
 | take over aibox through a bug in the proxy or the broker | aibox locks itself down once the VM runs. On Linux 6.7 or newer that's Landlock and seccomp, on macOS Seatbelt. |
 | send your data to a host of its own | The proxy only connects to the allow list. |
@@ -87,10 +90,11 @@ Everything the VM can reach on your machine goes through one of these.
 | read your API key | It only has a placeholder. |
 | read your git login | It never enters the VM. |
 | push to `main`, delete a branch or push a tag | The broker refuses what the `git` list doesn't allow. |
+| read the passwords you copy | It can only ask for the clipboard right after you press Ctrl+V, and only gets an image. |
 | run code through your IDE | The IDE bridge only passes on selections, diffs and errors. |
 | sneak extra branches into a task's bundle | aibox reads the bundle's header and only prints the fetch command for `aibox/task`. |
 | fake a line from aibox in a task's output | aibox strips control characters and marks every line from the VM. |
-| get a changed kernel or image booted | A release checks the SHA-256 of a downloaded image, and of the kernel before each start. On macOS Virtualization.framework reads the kernel again after the check, so a change right after it isn't caught. |
+| get a changed kernel or image booted | A release checks the SHA-256 of a downloaded image and of the kernel before each start. On macOS Virtualization.framework reads the kernel again after the check, so a change right after it isn't caught. |
 | keep running after aibox ends | The VM ends with aibox, even when aibox is killed. |
 
 ## What aibox doesn't stop
@@ -122,8 +126,33 @@ has the details.
   your terminal as it is, escape sequences included.
 - Force pushes to an allowed branch, and the CI a pushed branch starts.
 - Diffs you accept or edit in your IDE.
+- Your clipboard right after a Ctrl+V in any program in the VM. aibox
+  watches for the key, not for Claude Code, so a Ctrl+V in bash or vim lets
+  the VM read the image too.
 - Gatekeeper on macOS, for programs that come out of the VM.
 - Spending. Only a task's `--timeout` is enforced by aibox.
+
+## Tasks
+
+`aibox task` runs in the same VM, behind the same proxy, broker and key
+forwarder. What changes is what the VM gets to touch and who is watching.
+
+| | `aibox run` | `aibox task` |
+|---|---|---|
+| What the VM sees | your project folder, writable | a clone of one commit |
+| Who approves each step | you | nobody, because Claude Code has all permissions |
+| What stays for the next run | the home and the state disk | nothing, because both are new each time |
+| The clipboard | after Ctrl+V, unless `clipboard: false` | never |
+| What reaches your terminal | the VM's output as it is | text with control characters stripped, each line marked |
+| What reaches your project | every write, right away | only the bundle, after aibox checks it, and only once you fetch it |
+
+So a task can't touch your working tree or `.git`, and it leaves nothing
+behind in the VM. But nobody stops it from using everything the config
+gives it: every host, port, secret and branch. And what it hands back is
+code you haven't read. Your review is the boundary of a task. Fetch the
+branch with the command aibox prints and read the whole diff before you
+check it out or merge it. See
+[Reviewing the commits](tasks.md#reviewing-the-commits).
 
 ## What aibox assumes
 

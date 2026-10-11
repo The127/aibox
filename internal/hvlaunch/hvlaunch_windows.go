@@ -54,10 +54,11 @@ type Backend struct {
 	PowerOffWait    time.Duration
 
 	// dial connects to the service, listen listens on a port of the VM and
-	// listenConsole on the pipe of its console, which the tests fake
-	dial          func(ctx context.Context) (net.Conn, error)
-	listen        func(vm guid.GUID, port uint32) (net.Listener, error)
-	listenConsole func(path string) (net.Listener, error)
+	// console takes the pipe of its console under the handle the service
+	// put into this process, which the tests fake
+	dial    func(ctx context.Context) (net.Conn, error)
+	listen  func(vm guid.GUID, port uint32) (net.Listener, error)
+	console func(handle uint64) consoleSource
 }
 
 var _ backend.Backend = Backend{}
@@ -70,7 +71,7 @@ func NewBackend() Backend {
 		PowerOffWait:    host.DefaultPowerOffWait,
 		dial:            hvservice.Dial,
 		listen:          listenVM,
-		listenConsole:   listenConsole,
+		console:         consoleOf,
 	}
 }
 
@@ -151,6 +152,10 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return fmt.Errorf("read the id of the VM: %w", err)
 	}
 
+	// the pipe is this process's from the reply on, whatever comes of the run
+	console := b.console(created.Console)
+	defer func() { _ = console.Close() }()
+
 	log, err := openLog(spec.ConsoleLog)
 	if err != nil {
 		return err
@@ -158,15 +163,13 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer func() { _ = log.Close() }()
 
-	// before the start, as Hyper-V connects the console as the VM starts
-	consoleListener, err := b.listenConsole(created.ConsolePipe)
-	if err != nil {
+	// before the start, as Hyper-V connects the console as the VM starts,
+	// and a pipe no one listens on turns it away
+	if err := console.Listen(); err != nil {
 		return err
 	}
 
-	defer func() { _ = consoleListener.Close() }()
-
-	gone := serveConsole(consoleListener, host.ConsoleLog(log))
+	gone := serveConsole(console, host.ConsoleLog(log))
 
 	sharesListener, err := b.listen(id, sharesPort)
 	if err != nil {
@@ -222,8 +225,8 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	// the VM is gone, so Hyper-V has let go of the console, whose last
 	// lines may still be on their way into the log: they are what explains
 	// a VM that did not come up. A console Hyper-V never connected ends
-	// with its listener.
-	_ = consoleListener.Close()
+	// with its pipe.
+	_ = console.Close()
 	<-gone
 
 	if removeLater {

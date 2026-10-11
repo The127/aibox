@@ -68,9 +68,23 @@ func (p pipePeer) stateDisk(id string, handle uint64) (stateDisk, error) {
 	return p.disks.take(p.pipe, id, handle)
 }
 
+func (p pipePeer) console(name string) (console, error) {
+	h, err := hvservice.MakeConsole(name, hvservice.ConsoleSDDL)
+	if err != nil {
+		return console{}, err
+	}
+
+	return console{
+		give:  func() (uint64, error) { return give(p.pipe, h) },
+		close: func() error { return windows.CloseHandle(h) },
+	}, nil
+}
+
 // noPeer is the peer of a connection that tells nothing of its client.
 type noPeer struct{ err error }
 
 func (p noPeer) client() (hvservice.Client, error) { return hvservice.Client{}, p.err }
 
 func (p noPeer) stateDisk(string, uint64) (stateDisk, error) { return stateDisk{}, p.err }
+
+func (p noPeer) console(string) (console, error) { return console{}, p.err }

@@ -2,6 +2,7 @@ package hvlaunch
 
 import (
 	"bytes"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -13,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fed is a listener whose connections the test hands it.
+// fed is a console pipe whose connection the test hands it.
 type fed struct {
 	conns chan net.Conn
 	once  sync.Once
@@ -21,7 +22,27 @@ type fed struct {
 
 func newFed() *fed { return &fed{conns: make(chan net.Conn)} }
 
-func (l *fed) Accept() (net.Conn, error) {
+func (c *fed) Listen() error { return nil }
+
+func (c *fed) Connect() (io.ReadCloser, error) {
+	conn, ok := <-c.conns
+	if !ok {
+		return nil, net.ErrClosed
+	}
+
+	return conn, nil
+}
+
+func (c *fed) Close() error {
+	c.once.Do(func() { close(c.conns) })
+
+	return nil
+}
+
+// fedListener is a listener whose connections the test hands it.
+type fedListener struct{ *fed }
+
+func (l fedListener) Accept() (net.Conn, error) {
 	conn, ok := <-l.conns
 	if !ok {
 		return nil, net.ErrClosed
@@ -30,13 +51,7 @@ func (l *fed) Accept() (net.Conn, error) {
 	return conn, nil
 }
 
-func (l *fed) Close() error {
-	l.once.Do(func() { close(l.conns) })
-
-	return nil
-}
-
-func (l *fed) Addr() net.Addr { return nil }
+func (fedListener) Addr() net.Addr { return nil }
 
 func within(t *testing.T, done <-chan struct{}, what string) {
 	t.Helper()
@@ -78,7 +93,7 @@ func TestServeConsoleLogsTheConsoleUntilTheVMIsGone(t *testing.T) {
 	assert.Equal(t, "[    0.000000] Linux version 6.1\n", log.String())
 }
 
-func TestServeConsoleReportsAListenerThatClosedBeforeTheVMConnected(t *testing.T) {
+func TestServeConsoleReportsAPipeThatClosedBeforeTheVMConnected(t *testing.T) {
 	t.Parallel()
 
 	// arrange
@@ -108,7 +123,7 @@ func TestServeSharesServesEachConnectionOfTheGuest(t *testing.T) {
 	t.Parallel()
 
 	// arrange
-	l := newFed()
+	l := fedListener{newFed()}
 	served := make(chan struct{})
 
 	go func() {

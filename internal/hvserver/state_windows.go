@@ -98,14 +98,9 @@ func (d stateDisks) take(pipe windows.Handle, id string, handle uint64) (stateDi
 // opens with what the checks take: Windows gives a copy no more than the
 // original.
 func duplicate(pipe windows.Handle, handle uint64) (windows.Handle, error) {
-	var pid uint32
-	if err := windows.GetNamedPipeClientProcessId(pipe, &pid); err != nil {
-		return 0, fmt.Errorf("find the process of the client: %w", err)
-	}
-
-	process, err := windows.OpenProcess(windows.PROCESS_DUP_HANDLE, false, pid)
+	process, err := clientProcess(pipe)
 	if err != nil {
-		return 0, fmt.Errorf("open the process of the client: %w", err)
+		return 0, err
 	}
 
 	defer func() { _ = windows.CloseHandle(process) }()
@@ -116,6 +111,40 @@ func duplicate(pipe windows.Handle, handle uint64) (windows.Handle, error) {
 	}
 
 	return h, nil
+}
+
+// give copies the handle into the process of the client of the pipe, and
+// tells its number there, which is the client's to close.
+func give(pipe, h windows.Handle) (uint64, error) {
+	process, err := clientProcess(pipe)
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() { _ = windows.CloseHandle(process) }()
+
+	var theirs windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), h, process, &theirs, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return 0, fmt.Errorf("hand the console pipe to the client: %w", err)
+	}
+
+	return uint64(theirs), nil
+}
+
+// clientProcess opens the process of the client of the pipe, for handles
+// to be copied between it and the service.
+func clientProcess(pipe windows.Handle) (windows.Handle, error) {
+	var pid uint32
+	if err := windows.GetNamedPipeClientProcessId(pipe, &pid); err != nil {
+		return 0, fmt.Errorf("find the process of the client: %w", err)
+	}
+
+	process, err := windows.OpenProcess(windows.PROCESS_DUP_HANDLE, false, pid)
+	if err != nil {
+		return 0, fmt.Errorf("open the process of the client: %w", err)
+	}
+
+	return process, nil
 }
 
 // diskFile checks that the handle is a plain file on a disk, which Hyper-V

@@ -23,6 +23,10 @@ import (
 	"github.com/the127/aibox/internal/vhd"
 )
 
+// aConsoleHandle is the number the fake service says the console pipe
+// is under in this process.
+const aConsoleHandle = 7
+
 // fakeService answers as the service does, over a pipe in memory, and
 // records what it was asked.
 type fakeService struct {
@@ -37,7 +41,6 @@ type fakeService struct {
 	// the VM was stopped, as a task's should be
 	stateGoneAtStop bool
 	state           string
-	console         string
 	onStop          func()
 }
 
@@ -73,7 +76,7 @@ func (s *fakeService) serve(conn net.Conn) {
 				reply.Error = s.refuse
 			} else {
 				id, _ := guid.NewV4()
-				reply = hvservice.Reply{RuntimeID: id.String(), ConsolePipe: s.console}
+				reply = hvservice.Reply{RuntimeID: id.String(), Console: aConsoleHandle}
 			}
 		case hvservice.OpStop:
 			_, err := os.Stat(s.state)
@@ -126,7 +129,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 
 	f := &fixture{
-		service: &fakeService{state: filepath.Join(dir, "state.ext4"), console: "console-of-the-test"},
+		service: &fakeService{state: filepath.Join(dir, "state.ext4")},
 		console: newFed(),
 		spec: backend.Spec{
 			Image:      image,
@@ -156,7 +159,13 @@ func newFixture(t *testing.T) *fixture {
 
 			return &closing{Listener: l, closed: make(chan struct{})}, nil
 		},
-		listenConsole: func(string) (net.Listener, error) { return f.console, nil },
+		console: func(handle uint64) consoleSource {
+			if handle != aConsoleHandle {
+				t.Errorf("the console was taken under handle %d, not the service's %d", handle, aConsoleHandle)
+			}
+
+			return f.console
+		},
 	}
 
 	return f

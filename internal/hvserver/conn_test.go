@@ -80,6 +80,7 @@ func (v *fakeVM) Close() error {
 type fixture struct {
 	srv     *server
 	calls   *calls
+	pipes   *calls
 	docs    []hcs.Document
 	diskErr error
 	granted []string
@@ -91,7 +92,7 @@ type fixture struct {
 func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, error)) *fixture {
 	t.Helper()
 
-	f := &fixture{calls: &calls{}, done: make(chan struct{})}
+	f := &fixture{calls: &calls{}, pipes: &calls{}, done: make(chan struct{})}
 	f.srv = &server{
 		install: hvservice.Install{Kernel: `C:\aibox\vmlinuz`, Rootfs: `C:\aibox\os.vhd`},
 		host:    func() (hvservice.Host, error) { return hvservice.Host{MemoryMiB: 16384, CPUs: 8}, nil },
@@ -134,6 +135,27 @@ func (p fakePeer) stateDisk(id string, handle uint64) (stateDisk, error) {
 
 		return nil
 	}}, nil
+}
+
+// aConsoleHandle is the handle the fake peer puts the console pipe under
+// in the client's process.
+const aConsoleHandle = 7
+
+func (p fakePeer) console(name string) (console, error) {
+	p.f.pipes.add("make " + name)
+
+	return console{
+		give: func() (uint64, error) {
+			p.f.pipes.add("give")
+
+			return aConsoleHandle, nil
+		},
+		close: func() error {
+			p.f.pipes.add("close")
+
+			return nil
+		},
+	}, nil
 }
 
 // peer is the fake peer of the fixture's connection.
@@ -207,7 +229,7 @@ func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	// assert
 	assert.Empty(t, created.Error)
 	assert.Equal(t, aRuntimeID.String(), created.RuntimeID)
-	assert.True(t, strings.HasPrefix(created.ConsolePipe, `\\.\pipe\aibox-console-`))
+	assert.Equal(t, uint64(aConsoleHandle), created.Console, "the console pipe, in the client's hands")
 	assert.Equal(t, hvservice.Reply{}, started)
 	require.Len(t, f.granted, 1)
 	assert.True(t, strings.HasPrefix(f.granted[0], "grant handle 420 to "), f.granted[0])
@@ -216,8 +238,28 @@ func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 
 	require.Len(t, f.docs, 1)
 	assert.Equal(t, "console=ttyS0", f.docs[0].VirtualMachine.Chipset.LinuxKernelDirect.KernelCmdLine)
-	assert.Equal(t, created.ConsolePipe, f.docs[0].VirtualMachine.Devices.ComPorts["0"].NamedPipe)
 	assert.Equal(t, aStateDisk, f.docs[0].VirtualMachine.Devices.Scsi["0"].Attachments["1"].Path, "the state disk the peer read from the handle")
+
+	pipe := f.docs[0].VirtualMachine.Devices.ComPorts["0"].NamedPipe
+	assert.True(t, strings.HasPrefix(pipe, `\\.\pipe\aibox-console-`), pipe)
+	assert.Equal(t, []string{"make " + pipe, "give", "close"}, f.pipes.all(), "the pipe of the document was made before the VM and handed over after")
+}
+
+func TestAVMThatFailsToBeMadeHandsOverNoConsolePipe(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, func(context.Context, *fixture) (vm, error) { return nil, errors.New("HCS said no") })
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, createLine)
+
+	// assert
+	assert.NotEmpty(t, reply.Error)
+	assert.Zero(t, reply.Console)
+	require.Len(t, f.pipes.all(), 2)
+	assert.Equal(t, "close", f.pipes.all()[1], "the pipe went with the VM")
 }
 
 func TestAConnectionRefusesARequestOutOfTurn(t *testing.T) {

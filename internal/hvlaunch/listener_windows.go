@@ -3,7 +3,6 @@ package hvlaunch
 import (
 	"fmt"
 	"net"
-	"os/user"
 	"sync"
 
 	winio "github.com/Microsoft/go-winio"
@@ -23,25 +22,10 @@ func listenVM(vm guid.GUID, port uint32) (net.Listener, error) {
 	return &closing{Listener: l, closed: make(chan struct{})}, nil
 }
 
-// listenConsole listens on the pipe the service connects the VM's console
-// to, which only this user and Hyper-V may open.
-func listenConsole(path string) (net.Listener, error) {
-	me, err := user.Current()
-	if err != nil {
-		return nil, fmt.Errorf("find who runs aibox: %w", err)
-	}
-
-	sddl, err := hvservice.ConsoleSDDL(me.Uid)
-	if err != nil {
-		return nil, err
-	}
-
-	l, err := winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: sddl})
-	if err != nil {
-		return nil, fmt.Errorf("listen for the console: %w", err)
-	}
-
-	return l, nil
+// consoleOf is the console pipe under the handle the service put into
+// this process.
+func consoleOf(handle uint64) consoleSource {
+	return hvservice.ConsoleOf(handle)
 }
 
 // closing is a listener whose Accept fails with net.ErrClosed once it is

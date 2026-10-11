@@ -95,11 +95,14 @@ type Reply struct {
 	// Error says why the service refused the request, or is empty. The
 	// service sets it with Refusal.
 	Error string `json:"error,omitempty"`
-	// RuntimeID and ConsolePipe answer OpCreate: the VM's address for
-	// Hyper-V sockets, and the pipe the service connects its console to,
-	// which aibox listens on before it starts the VM.
-	RuntimeID   string `json:"runtimeId,omitempty"`
-	ConsolePipe string `json:"consolePipe,omitempty"`
+	// RuntimeID and Console answer OpCreate: the VM's address for Hyper-V
+	// sockets, and the handle, in aibox's process, of the pipe the service
+	// made for the VM's console. Hyper-V connects the VM to the pipe as it
+	// starts, and aibox waits for that on the handle, which is its to
+	// close. No name of the pipe goes over the protocol: a name could be
+	// anyone's, a handle is the service's own.
+	RuntimeID string `json:"runtimeId,omitempty"`
+	Console   uint64 `json:"console,omitempty"`
 }
 
 // Refusal is the reply that says why the service refused a request, its

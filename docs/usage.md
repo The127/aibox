@@ -173,9 +173,10 @@ open, and nothing else of yours.
 
 Your project, home and mounts are served to the VM by aibox itself, over
 9p on Hyper-V sockets, as you: the VM can do with them what you can, and
-no more. The terminal, the proxy and the console go over the same sockets
-and a pipe that only you and Hyper-V can open. When aibox ends, or is
-killed, the service ends the VM.
+no more. The terminal and the proxy go over the same sockets. The console
+comes over a pipe the service makes for the VM and hands to aibox open:
+Hyper-V connects the VM to it, and no one can open it by name. When
+aibox ends, or is killed, the service ends the VM.
 
 ## How it works
 

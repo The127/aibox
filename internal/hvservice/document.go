@@ -39,9 +39,10 @@ var sidPattern = regexp.MustCompile(`^S-1-[0-9]+(-[0-9]+)+$`)
 // path is the only one of the client's in it, and the service reads it
 // from the handle the client sent, never from the request. Every word of
 // the command line is the client's to choose, as the guest is the
-// client's own, and the root disk is read-only. The service names the
-// console pipe itself, never after the request: HCS connects to it as
-// the VM. Document refuses a VM that doesn't pass Check.
+// client's own, and the root disk is read-only. The console pipe is one
+// the service named and made itself, never after the request: HCS
+// connects to it as the VM. Document refuses a VM that doesn't pass
+// Check.
 func (c Create) Document(host Host, install Install, consolePipe, state string, clientSIDs []string) (hcs.Document, error) {
 	if err := c.Check(host); err != nil {
 		return hcs.Document{}, err

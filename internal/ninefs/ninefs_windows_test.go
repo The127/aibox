@@ -228,3 +228,13 @@ func TestAnUnknownShareIsNotThere(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, linux.ENOENT)
 }
+
+func TestNewRefusesTwoSharesOfOneName(t *testing.T) {
+	t.Parallel()
+
+	// act
+	_, err := ninefs.New([]ninefs.Share{{Name: "project", Dir: t.TempDir()}, {Name: "project", Dir: t.TempDir()}}, owner)
+
+	// assert
+	assert.ErrorIs(t, err, ninefs.ErrShareTwice)
+}

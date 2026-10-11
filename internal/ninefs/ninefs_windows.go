@@ -43,6 +43,9 @@ type share struct {
 	readOnly bool
 }
 
+// ErrShareTwice is a share name given to New twice.
+var ErrShareTwice = errors.New("two shares of one name")
+
 // New opens the folders of the shares as the calling user.
 func New(shares []Share, owner Owner) (*FS, error) {
 	fs := &FS{shares: make(map[string]share, len(shares)), owner: owner}
@@ -52,6 +55,12 @@ func New(shares []Share, owner Owner) (*FS, error) {
 			_ = fs.Close()
 
 			return nil, fmt.Errorf("the share %q: %w", s.Name, err)
+		}
+
+		if _, ok := fs.shares[s.Name]; ok {
+			_ = fs.Close()
+
+			return nil, fmt.Errorf("the share %s: %w", s.Name, ErrShareTwice)
 		}
 
 		h, err := openDir(s.Dir)
@@ -67,8 +76,9 @@ func New(shares []Share, owner Owner) (*FS, error) {
 	return fs, nil
 }
 
-// Close closes the folders of the shares. Files the guest still has open
-// stay open.
+// Close closes the folders of the shares, once the server serving FS has
+// stopped: a walk that started before could use a handle Close freed.
+// Files the guest still has open stay open.
 func (fs *FS) Close() error {
 	var errs []error
 	for _, s := range fs.shares {
@@ -242,8 +252,9 @@ func (r *root) StatFS() (p9.FSStat, error) {
 	return p9.FSStat{Type: v9fsMagic, BlockSize: 4096, NameLength: 255}, nil
 }
 
-// file is a file or folder of a share, held by a handle that may read its
-// attributes, until Open adds the access the guest asked for.
+// file is a file or folder of a share. Its handle may only read attributes
+// and is what walks start from; Open opens a second one with the access
+// the guest asked for.
 type file struct {
 	p9.DefaultWalkGetAttr
 	templatefs.NoopRenamed
@@ -273,14 +284,17 @@ func (f *file) info() (p9.QID, windows.ByHandleFileInformation, error) {
 	return qidOf(info.FileAttributes, uint64(info.FileIndexHigh)<<32|uint64(info.FileIndexLow)), info, nil
 }
 
-// qidOf is the QID of a file with the attributes and the file id, which is
-// unique on its volume, and walks never cross to another volume.
+// qidOf is the QID of a file with the attributes and the file id. The id
+// is unique on a volume, and a guest mounts one share per attach, whose
+// walks never cross to another volume.
 func qidOf(attributes uint32, id uint64) p9.QID {
 	return p9.QID{Type: modeOf(attributes).QIDType(), Path: id}
 }
 
-// modeOf is the type and the mode the guest sees. A reparse point is a
-// link of some kind, and the walk never follows it.
+// modeOf is the type and the mode the guest sees. Every reparse point
+// shows as a link, which the walk never follows, even those that are no
+// links, such as the files of OneDrive; telling them apart comes with
+// symlinks.
 func modeOf(attributes uint32) p9.FileMode {
 	switch {
 	case attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:

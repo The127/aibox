@@ -37,6 +37,8 @@ type Session struct {
 	Errors   io.Writer
 	Env      []string
 	EndDelay time.Duration
+	// OnPaste is called each time the person presses Ctrl+V, or is nil.
+	OnPaste func()
 }
 
 // Outcome is how the terminal session went: whether the VM connected, the
@@ -120,6 +122,7 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	}
 
 	client.Env = s.Env
+	client.OnPaste = s.OnPaste
 
 	code, err := client.Attach(conn)
 

@@ -25,6 +25,9 @@ To report a vulnerability, see
 - Your git login stays on your machine too. A broker adds it to git's
   requests from the VM, but only for the repositories and branches the
   config names. See [Git](git.md).
+- The VM can't read your clipboard whenever it likes. It gets one image,
+  and only right after you press Ctrl+V. See
+  [Pasting images](usage.md#pasting-images).
 - The programs that run the VM are locked down. On Linux QEMU runs in a
   bubblewrap sandbox, and aibox restricts itself with Landlock and seccomp.
   On macOS aibox restricts itself with Seatbelt. See
@@ -65,6 +68,12 @@ To report a vulnerability, see
   then accept or edit the diff in the IDE, the IDE writes through the
   symlink. Approve changes in the terminal instead. See
   [In your IDE](usage.md#in-your-ide).
+- Your clipboard right after Ctrl+V. aibox can't tell which program in the
+  VM you pressed the key in. After a Ctrl+V in bash or vim, the VM can read
+  the image on your clipboard too. aibox also counts on your terminal not
+  to echo text a program chose back as input, as current terminals don't.
+  A terminal that does lets any program type into it, with or without
+  aibox.
 - Gatekeeper on macOS. The VM can set and remove extended attributes on
   files in the project, including `com.apple.quarantine`, and files it
   creates have none. So Gatekeeper never checks a program that comes out of
@@ -125,6 +134,11 @@ resolver's, though it can still see the metadata of all files. It only
 connects over TCP to the ports on the allow list, and to the system's name
 service. It can't start programs or read or signal other processes. Files it
 opened before, like the logs, and the VM keep working.
+
+With the [clipboard](config.md#clipboard) on, aibox starts a helper before
+it locks itself down. The helper isn't locked down, because it has to start
+`osascript`, `wl-paste` or `xclip`. It only reads the clipboard when aibox
+asks, and ends when aibox does.
 
 On macOS the VM runs in a Virtualization.framework process. aibox can't put
 that process in a sandbox of its own, like it does with QEMU and bubblewrap.

@@ -17,6 +17,10 @@ const (
 // because each has a vsock namespace of its own.
 const GuestCID uint32 = 3
 
+// ClipboardPort is the port on the loopback of the VM where xclip and
+// wl-paste in the VM reach the clipboard of the host.
+const ClipboardPort uint16 = 3132
+
 // RootCmdline boots the root disk read-only on the virtio console, whichever
 // VMM boots the VM. The root stays read-only, as the VMM opened it: the init
 // mounts an overlay for what it has to write.

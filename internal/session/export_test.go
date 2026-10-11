@@ -12,3 +12,6 @@ func init() {
 
 // PollSize is pollSize, which Windows reads the size of the console with.
 var PollSize = pollSize
+
+// WatchPaste passes on what r reads and calls onPaste for each Ctrl+V.
+var WatchPaste = watchPaste

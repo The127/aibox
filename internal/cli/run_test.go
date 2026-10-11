@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -77,6 +78,7 @@ type fixture struct {
 	deps          dependencies
 	// stdout and stderr are where a task reports
 	stdout, stderr bytes.Buffer
+	clipboard      *fakeClipboard
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -117,6 +119,12 @@ func newFixture(t *testing.T) *fixture {
 		},
 	}
 	f.deps.stdout, f.deps.stderr = &f.stdout, &f.stderr
+	f.clipboard = &fakeClipboard{}
+	f.deps.startClipboard = func(io.Writer) (clipboardHelper, error) {
+		f.clipboard.started = true
+
+		return f.clipboard, nil
+	}
 	f.deps.systemImage = filepath.Join(t.TempDir(), "missing")
 	f.version = "(devel)"
 	f.digests = map[string]string{runtime.GOARCH: "the digest"}
@@ -855,7 +863,7 @@ func TestRunKeepsTheAPIKeyOnTheHost(t *testing.T) {
 
 			spec := f.launch.spec
 			assert.Equal(t, []string{"GOFLAGS=-mod=mod", "ANTHROPIC_API_KEY=" + anthropic.Placeholder, "ANTHROPIC_BASE_URL=http://127.0.0.1:3129"}, spec.Env)
-			assert.Equal(t, []uint16{3129}, spec.Loopback)
+			assert.Equal(t, []uint16{3129, 3132}, spec.Loopback)
 			assert.Equal(t, []uint16{8443, 443}, spec.Ports)
 			require.NotNil(t, spec.Proxy.Local)
 			assert.NotNil(t, spec.Proxy.Local("localhost", "3129"))
@@ -894,8 +902,8 @@ func TestRunPassesATokenOfASubscriptionAsItIs(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Equal(t, []string{"CLAUDE_CODE_OAUTH_TOKEN=the-token"}, f.launch.spec.Env)
-	assert.Nil(t, f.launch.spec.Proxy.Local)
-	assert.Empty(t, f.launch.spec.Loopback)
+	assert.Nil(t, f.launch.spec.Proxy.Local("localhost", "3129"))
+	assert.NotContains(t, f.launch.spec.Loopback, uint16(3129))
 }
 
 func TestRunRefusesABaseURLNextToTheAPIKey(t *testing.T) {
@@ -955,7 +963,7 @@ func TestRunSendsTheRemotesOfTheConfigToTheGitBroker(t *testing.T) {
 		"GIT_CONFIG_COUNT=3",
 	}, spec.Env)
 	assert.NotContains(t, strings.Join(spec.Env, "\n"), "host-token")
-	assert.Equal(t, []uint16{3130}, spec.Loopback)
+	assert.Equal(t, []uint16{3130, 3132}, spec.Loopback)
 	assert.Equal(t, []uint16{8443, 443}, spec.Ports)
 	require.NotNil(t, spec.Proxy.Local)
 	assert.NotNil(t, spec.Proxy.Local("localhost", "3130"))
@@ -1128,7 +1136,7 @@ func TestRunServesTheForwarderAndTheGitBrokerTogether(t *testing.T) {
 	require.NoError(t, err)
 
 	spec := f.launch.spec
-	assert.Equal(t, []uint16{3129, 3130}, spec.Loopback)
+	assert.Equal(t, []uint16{3129, 3130, 3132}, spec.Loopback)
 	assert.Equal(t, []uint16{443}, spec.Ports)
 	assert.NotNil(t, spec.Proxy.Local("localhost", "3129"))
 	assert.NotNil(t, spec.Proxy.Local("localhost", "3130"))

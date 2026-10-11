@@ -215,6 +215,8 @@ func TestTaskSharesTheTaskAndNotTheProject(t *testing.T) {
 	assert.Empty(t, spec.Project)
 	assert.Empty(t, spec.Home)
 	assert.Nil(t, spec.Stdin)
+	assert.Nil(t, spec.OnPaste)
+	assert.False(t, f.clipboard.started)
 	assert.Equal(t, filepath.Join(dir, "state.ext4"), spec.State)
 	assert.True(t, spec.RemoveState)
 	assert.Equal(t, filepath.Join(dir, "console.log"), spec.ConsoleLog)

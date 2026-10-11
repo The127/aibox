@@ -158,6 +158,10 @@ type Config struct {
 	// IDE says whether Claude Code in the VM may use the IDE that has the
 	// project open.
 	IDE bool `yaml:"ide"`
+	// Clipboard says whether Claude Code in the VM may read an image from
+	// the clipboard of the host when the person presses Ctrl+V. Nil means
+	// it may.
+	Clipboard *bool `yaml:"clipboard"`
 	// Path are folders in the VM that go in front of its PATH, or names of
 	// variables of the host whose folders do.
 	Path []string `yaml:"path"`
@@ -378,6 +382,11 @@ allow:
 # like VS Code: the code you select, diffs in the editor and the errors it
 # reports, for files in the project. It is off unless you turn it on:
 # ide: true
+
+# Whether Claude Code in the VM may read an image from your clipboard when
+# you press Ctrl+V. The VM can read it only right after you press the key.
+# It is on unless you turn it off:
+# clipboard: false
 
 # Folders in the VM that go in front of its PATH. A name such as PATH stands
 # for the folders in that variable of the host, which then need a mount at

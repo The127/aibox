@@ -165,6 +165,14 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the clipboard reads the clipboard of the host and knows nothing else
+  - package: '**.internal.clipboard$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the tunnel accepts and joins connections and knows nothing else
   - package: '**.internal.tunnel$'
     shouldNotDependsOn:
@@ -265,6 +273,8 @@ dependenciesRules:
         - '**.internal.gitbroker$'
         - '**.internal.filelock$'
         - '**.internal.ide$'
+        - '**.internal.clipboard$'
+        - '**.internal.vm$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

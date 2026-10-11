@@ -20,6 +20,9 @@ const (
 	GitPath    = gitPath
 )
 
+// ClipboardToolAt is ClipboardTool with the clipboard of the host at base.
+var ClipboardToolAt = clipboardTool
+
 // RunTask runs a task with the programs command sets up, the task share in
 // input and the results kept in out, and writes the results to results.
 // The git steps before and after Claude Code have gitTimeout each.

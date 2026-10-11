@@ -1,6 +1,7 @@
 package ninefs
 
 import (
+	"errors"
 	"os"
 	"time"
 	"unsafe"
@@ -37,13 +38,13 @@ func (f *file) accessFor(mode p9.OpenFlags, dir bool) (uint32, error) {
 	case p9.ReadOnly:
 		return windows.FILE_GENERIC_READ, nil
 	case p9.WriteOnly:
-		if f.readOnly {
+		if f.share.readOnly {
 			return 0, linux.EROFS
 		}
 
 		return windows.FILE_GENERIC_WRITE | windows.FILE_READ_ATTRIBUTES, nil
 	case p9.ReadWrite:
-		if f.readOnly {
+		if f.share.readOnly {
 			return 0, linux.EROFS
 		}
 
@@ -64,7 +65,9 @@ func (f *file) WriteAt(p []byte, offset int64) (int, error) {
 }
 
 func (f *file) FSync() error {
-	if f.open == nil {
+	// Windows flushes only what a handle may write, and Linux syncs a file
+	// or folder opened to read as well, where there is nothing to flush
+	if f.open == nil || !f.writable {
 		return nil
 	}
 
@@ -73,7 +76,7 @@ func (f *file) FSync() error {
 
 // child checks that the name may be made in the folder.
 func (f *file) child(name string) error {
-	if f.readOnly {
+	if f.share.readOnly {
 		return linux.EROFS
 	}
 
@@ -91,6 +94,11 @@ func (f *file) Create(name string, mode p9.OpenFlags, _ p9.FileMode, _ p9.UID, _
 	}
 
 	h, err := ntCreate(f.h, name, access, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE)
+	if errors.Is(err, linux.EISDIR) {
+		// the name is taken, by a folder
+		return nil, p9.QID{}, 0, linux.EEXIST
+	}
+
 	if err != nil {
 		return nil, p9.QID{}, 0, err
 	}
@@ -102,7 +110,7 @@ func (f *file) Create(name string, mode p9.OpenFlags, _ p9.FileMode, _ p9.UID, _
 		return nil, p9.QID{}, 0, err
 	}
 
-	created := &file{fs: f.fs, h: attrs, readOnly: f.readOnly, open: os.NewFile(uintptr(h), "")}
+	created := &file{fs: f.fs, h: attrs, share: f.share, open: os.NewFile(uintptr(h), ""), writable: mode.Mode() != p9.ReadOnly}
 
 	qid, _, err := created.info()
 	if err != nil {
@@ -124,7 +132,7 @@ func (f *file) Mkdir(name string, _ p9.FileMode, _ p9.UID, _ p9.GID) (p9.QID, er
 		return p9.QID{}, err
 	}
 
-	made := &file{fs: f.fs, h: h}
+	made := &file{fs: f.fs, h: h, share: f.share}
 	defer func() { _ = made.Close() }()
 
 	qid, _, err := made.info()
@@ -142,7 +150,7 @@ func (f *file) UnlinkAt(name string, flags uint32) error {
 		return err
 	}
 
-	gone := &file{fs: f.fs, h: h}
+	gone := &file{fs: f.fs, h: h, share: f.share}
 	defer func() { _ = gone.Close() }()
 
 	_, info, err := gone.info()
@@ -180,11 +188,11 @@ func (f *file) RenameAt(oldName string, newDir p9.File, newName string) error {
 
 	defer func() { _ = windows.CloseHandle(h) }()
 
-	return renameTo(h, newDir, newName)
+	return renameTo(h, f.share, newDir, newName)
 }
 
 func (f *file) Rename(newDir p9.File, newName string) error {
-	if f.readOnly {
+	if f.share.readOnly {
 		return linux.EROFS
 	}
 
@@ -195,14 +203,17 @@ func (f *file) Rename(newDir p9.File, newName string) error {
 
 	defer func() { _ = windows.CloseHandle(h) }()
 
-	return renameTo(h, newDir, newName)
+	return renameTo(h, f.share, newDir, newName)
 }
 
-// renameTo gives the open file the name in the folder, replacing what has
-// the name, with POSIX semantics as for an unlink.
-func renameTo(h windows.Handle, newDir p9.File, newName string) error {
+// renameTo gives the open file of the share the name in the folder,
+// replacing what has the name, with POSIX semantics as for an unlink. A
+// share is a mount of its own in the guest, so as on Linux nothing moves
+// between shares; a writable share could otherwise take a file of a
+// read-only one.
+func renameTo(h windows.Handle, from *share, newDir p9.File, newName string) error {
 	dir, ok := newDir.(*file)
-	if !ok {
+	if !ok || dir.share != from {
 		return linux.EXDEV
 	}
 
@@ -221,8 +232,10 @@ func (f *file) Link(target p9.File, newName string) error {
 		return err
 	}
 
+	// as for a rename: a link from a read-only share would make its file
+	// writable through the new name
 	t, ok := target.(*file)
-	if !ok {
+	if !ok || t.share != f.share {
 		return linux.EXDEV
 	}
 
@@ -261,7 +274,7 @@ func setName(h windows.Handle, class, flags uint32, dir windows.Handle, name str
 }
 
 func (f *file) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	if f.readOnly {
+	if f.share.readOnly {
 		return linux.EROFS
 	}
 
@@ -295,7 +308,7 @@ func (f *file) truncate(size uint64) error {
 
 	defer func() { _ = windows.CloseHandle(h) }()
 
-	end := int64(size) //nolint:gosec // the guest's size, which NTFS refuses beyond what it holds
+	end := int64(size) //nolint:gosec // a size beyond int64 turns negative, which NTFS refuses
 
 	return errno(windows.SetFileInformationByHandle(h, windows.FileEndOfFileInfo,
 		(*byte)(unsafe.Pointer(&end)), uint32(unsafe.Sizeof(end)))) //nolint:gosec // the call reads the size, as the ABI asks

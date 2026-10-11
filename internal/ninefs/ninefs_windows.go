@@ -33,7 +33,7 @@ type Owner struct {
 // FS serves shares. It holds each share's folder open from New until
 // Close, so the folder can't be swapped for another while it serves.
 type FS struct {
-	shares map[string]share
+	shares map[string]*share
 	owner  Owner
 }
 
@@ -48,7 +48,7 @@ var ErrShareTwice = errors.New("two shares of one name")
 
 // New opens the folders of the shares as the calling user.
 func New(shares []Share, owner Owner) (*FS, error) {
-	fs := &FS{shares: make(map[string]share, len(shares)), owner: owner}
+	fs := &FS{shares: make(map[string]*share, len(shares)), owner: owner}
 
 	for _, s := range shares {
 		if err := checkName(s.Name); err != nil {
@@ -70,7 +70,7 @@ func New(shares []Share, owner Owner) (*FS, error) {
 			return nil, fmt.Errorf("the share %s: %w", s.Name, err)
 		}
 
-		fs.shares[s.Name] = share{h: h, readOnly: s.ReadOnly}
+		fs.shares[s.Name] = &share{h: h, readOnly: s.ReadOnly}
 	}
 
 	return fs, nil
@@ -203,7 +203,7 @@ func (r *root) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, nil, err
 	}
 
-	start := &file{fs: r.fs, h: h, readOnly: s.readOnly}
+	start := &file{fs: r.fs, h: h, share: s}
 
 	qid, _, err := start.info()
 	if err != nil {
@@ -264,9 +264,11 @@ type file struct {
 
 	fs *FS
 	h  windows.Handle
-	// readOnly is the share's, which refuses every change
-	readOnly bool
-	open     *os.File
+	// share is the share of the file, which a link or rename can't leave
+	share *share
+	open  *os.File
+	// writable is whether open may write
+	writable bool
 	// entries is the listing of the folder, taken when the guest starts
 	// reading it, so that offsets stay where they were
 	entries p9.Dirents
@@ -312,7 +314,7 @@ func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, nil, err
 	}
 
-	cur := &file{fs: f.fs, h: h, readOnly: f.readOnly}
+	cur := &file{fs: f.fs, h: h, share: f.share}
 	qids := make([]p9.QID, 0, len(names))
 
 	for _, name := range names {
@@ -341,7 +343,7 @@ func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
 			return nil, nil, err
 		}
 
-		cur = &file{fs: f.fs, h: next, readOnly: f.readOnly}
+		cur = &file{fs: f.fs, h: next, share: f.share}
 
 		qid, _, err := cur.info()
 		if err != nil {
@@ -418,6 +420,7 @@ func (f *file) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 	}
 
 	f.open = os.NewFile(uintptr(h), "")
+	f.writable = mode.Mode() != p9.ReadOnly
 
 	return qid, 0, nil
 }

@@ -241,3 +241,88 @@ func TestAReadOnlyShareRefusesEveryChange(t *testing.T) {
 		assert.ErrorIs(t, err, linux.EROFS)
 	}
 }
+
+// twoShares serves a writable and a read-only share and returns their
+// roots, as one guest would mount them both.
+func twoShares(t *testing.T) (writable, readOnly p9.File) {
+	t.Helper()
+
+	c := serve(t, ninefs.Share{Name: "project", Dir: tree(t)}, ninefs.Share{Name: "tools", Dir: tree(t), ReadOnly: true})
+
+	w, err := c.Attach("project")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+
+	r, err := c.Attach("tools")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	return w, r
+}
+
+func TestALinkCannotMakeAFileOfAReadOnlyShareWritable(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	writable, readOnly := twoShares(t)
+	f := walk(t, readOnly, "src", "main.go")
+
+	// act
+	err := writable.Link(f, "sneak")
+
+	// assert
+	assert.ErrorIs(t, err, linux.EXDEV)
+}
+
+func TestARenameCannotMoveAFileToAnotherShare(t *testing.T) {
+	t.Parallel()
+
+	// arrange: two writable shares of one guest
+	c := serve(t, ninefs.Share{Name: "project", Dir: tree(t)}, ninefs.Share{Name: "home", Dir: tree(t)})
+
+	project, err := c.Attach("project")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = project.Close() })
+
+	home, err := c.Attach("home")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = home.Close() })
+
+	// act
+	err = walk(t, project, "src").RenameAt("main.go", home, "main.go")
+
+	// assert
+	assert.ErrorIs(t, err, linux.EXDEV)
+}
+
+func TestFSyncWorksOnAFileOpenedToReadAndOnAFolder(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := mount(t, tree(t))
+	f := walk(t, root, "src", "main.go")
+	dir := walk(t, root, "src")
+
+	_, _, err := f.Open(p9.ReadOnly)
+	require.NoError(t, err)
+	_, _, err = dir.Open(p9.ReadOnly)
+	require.NoError(t, err)
+
+	// act
+	fileErr := f.FSync()
+	dirErr := dir.FSync()
+
+	// assert
+	assert.NoError(t, fileErr)
+	assert.NoError(t, dirErr)
+}
+
+func TestCreatingANameAFolderHasFails(t *testing.T) {
+	t.Parallel()
+
+	// act
+	_, _, _, err := mount(t, tree(t)).Create("src", p9.ReadWrite, 0o644, 1000, 1000)
+
+	// assert
+	assert.ErrorIs(t, err, linux.EEXIST)
+}

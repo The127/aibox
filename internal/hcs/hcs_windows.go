@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 	"unsafe"
@@ -414,7 +415,9 @@ func Enumerate(ctx context.Context, owner string) ([]Summary, error) {
 		return nil, fmt.Errorf("read the list of compute systems of %s: %w: %s", owner, err, doc)
 	}
 
-	return systems, nil
+	// The filter of the service is tested on one build of Windows only. A
+	// build that ignored it would hand a sweep the VMs of other programs.
+	return slices.DeleteFunc(systems, func(s Summary) bool { return s.Owner != owner }), nil
 }
 
 // GrantVMAccess lets the VM with the id read the file or the folder at

@@ -118,7 +118,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	}
 
 	if ok {
-		env, bridge, err := linkIDE(found, r.project.Home, r.log)
+		env, bridge, err := linkIDE(found, cwd, r.project.Home, r.log)
 		if err != nil {
 			return err
 		}

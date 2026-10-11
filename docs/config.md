@@ -109,13 +109,15 @@ aren't allowed either, because they lead to the loopback too.
 
 This works for any protocol over TCP, also for programs that don't use the
 proxy. A program in the VM can't listen on such a port itself. Port 3128
-can't be allowed, because the VM's proxy is there.
+can't be allowed, because the VM's proxy is there, and neither can 3131,
+where Claude Code reaches your IDE.
 
 Keep in mind that the server runs as you, on your machine, outside the VM,
 and does what the VM asks it to. An IDE's MCP server, for example, often has
 no login and can run commands and change files outside the project.
 Allowing its port lets the VM out. Only allow a port for a server you'd trust
-with whatever the VM asks of it.
+with whatever the VM asks of it. For your IDE you don't need to allow
+anything, aibox links it for you. See [In your IDE](usage.md#in-your-ide).
 
 ### How it works
 

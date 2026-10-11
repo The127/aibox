@@ -46,6 +46,60 @@ set with [`disk`](config.md#disk). The VM formats it on the first boot. It
 won't format a disk that has data on it but no ext4 file system, so a broken
 disk never gets wiped.
 
+## In your IDE
+
+Claude Code can work with VS Code: it sees the code you select, shows its
+changes as a diff in the editor and reads the errors of the Problems panel.
+On your machine the Claude Code extension of the IDE does this through a
+server that only listens on your machine. The VM can't reach it, and it
+shouldn't, because that server also runs code and opens files anywhere.
+
+aibox links the two for you. Open the project in VS Code, then start
+`aibox run` in its terminal:
+
+```
+aibox run
+```
+
+Claude Code in the VM connects to the IDE by itself. `/ide` shows it as
+connected. aibox only passes on what the IDE integration needs, and only for
+files in the project:
+
+- the code you select in a project file
+- diffs of project files in the editor
+- the errors the IDE reports for project files
+
+Everything else stays out. Claude Code can't run code through the IDE, and
+it doesn't see what you select in files outside the project.
+
+Note that aibox looks for the IDE when the VM starts. If you open the IDE
+later or restart it, start `aibox run` again. Also, the IDE talks to one
+Claude Code at a time. Claude Code on your machine and the one in the VM
+take the link from each other.
+
+Approve Claude Code's changes in the terminal, and don't type into its diff
+in the IDE. When you accept or edit a diff in the IDE, the IDE writes the
+file itself, and the VM could have turned it into a link to a file outside
+the project. See [What aibox does not protect](security.md#what-aibox-does-not-protect).
+
+aibox has been tested with VS Code. JetBrains IDEs use the same way to
+connect, but aibox may hold back some of what their plugin asks for.
+
+### How it works
+
+The IDE extension writes a file to `~/.claude/ide` with its port and a
+token. aibox looks there for an IDE that has the project open. It writes a
+file like that into the VM's `~/.claude/ide`, with a token of its own and
+port 3131, and sets `CLAUDE_CODE_SSE_PORT` so that Claude Code connects by
+itself. The init forwards port 3131 to the proxy, and the proxy hands the
+connection to aibox's IDE bridge. The bridge connects to the IDE with the
+IDE's token, which never gets into the VM.
+
+The bridge reads every message and passes on only the ones it knows, with
+`/project` in paths turned into the project's path on your machine and back.
+It refuses paths outside the project, also through symlinks, and gives each
+request an ID of its own. `proxy.log` shows what it held back.
+
 ## On macOS
 
 The VM runs arm64 Linux, so Mac programs don't run in it. If you mount a

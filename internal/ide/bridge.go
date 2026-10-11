@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -36,17 +36,26 @@ const dialTimeout = 10 * time.Second
 type Bridge struct {
 	IDE   IDE
 	Token string
+	// Project is the folder of the project on the host, which is /project
+	// in the VM
+	Project string
 	// Log gets what the bridge held back and why the link ended, or is nil
 	Log io.Writer
+
+	// mu guards end, which ends the link that runs. A VM has one link at a
+	// time, so that it cannot make aibox hold the memory of many, and a
+	// new one replaces the old.
+	mu  sync.Mutex
+	end context.CancelFunc
 }
 
-func (b Bridge) logf(format string, args ...any) {
+func (b *Bridge) logf(format string, args ...any) {
 	if b.Log != nil {
 		_, _ = fmt.Fprintf(b.Log, time.Now().UTC().Format(time.RFC3339)+" ide: "+format+"\n", args...)
 	}
 }
 
-func (b Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get(AuthHeader)), []byte(b.Token)) != 1 {
 		http.Error(w, "wrong token for the IDE", http.StatusUnauthorized)
 
@@ -55,6 +64,14 @@ func (b Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+
+	b.mu.Lock()
+	if b.end != nil {
+		b.end()
+	}
+
+	b.end = cancel
+	b.mu.Unlock()
 
 	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
 	defer cancelDial()
@@ -82,13 +99,14 @@ func (b Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	vm.SetReadLimit(maxMessageBytes)
 	ide.SetReadLimit(maxMessageBytes)
 
+	filter := newFilter(paths{host: b.Project})
 	done := make(chan string, 2)
 
 	b.logf("linked to %s", b.IDE)
 
 	go func() {
 		err := pump(ctx, vm, func(message []byte) error {
-			forward, reply, err := toIDE(message)
+			forward, reply, err := filter.toIDE(message)
 			if err != nil {
 				return err
 			}
@@ -110,7 +128,7 @@ func (b Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		err := pump(ctx, ide, func(message []byte) error {
-			if forward := toVM(message); forward != nil {
+			if forward := filter.toVM(message); forward != nil {
 				return vm.Write(ctx, websocket.MessageText, forward)
 			}
 
@@ -211,76 +229,4 @@ func (m message) str(key string) string {
 func (m message) method() (string, bool) {
 	_, has := m["method"]
 	return m.str("method"), has
-}
-
-// handshake are the methods of the VM that set up the connection and do
-// nothing in the IDE.
-var handshake = map[string]bool{
-	"initialize":                true,
-	"notifications/initialized": true,
-	"ide_connected":             true,
-}
-
-var (
-	errNotPassed = errors.New("aibox does not pass this on to the IDE")
-	errNoJSONRPC = errors.New("a message that is no JSON-RPC object")
-)
-
-// toIDE decides about a message of the VM: what goes on to the IDE, or
-// what goes back to the VM in its place. A request the bridge holds back
-// gets an error, so that Claude Code does not wait for an answer. A
-// message that is no JSON object ends the link, since Claude Code sends
-// none.
-func toIDE(data []byte) (forward, reply []byte, err error) {
-	m, ok := parse(data)
-	if !ok {
-		return nil, nil, errNoJSONRPC
-	}
-
-	method, isRequest := m.method()
-	if !isRequest {
-		return nil, nil, nil
-	}
-
-	if handshake[method] {
-		forward, err = json.Marshal(m)
-
-		return forward, nil, err
-	}
-
-	id, hasID := m["id"]
-	if !hasID {
-		return nil, nil, nil
-	}
-
-	reply, err = json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error":   map[string]any{"code": -32601, "message": errNotPassed.Error()},
-	})
-
-	return nil, reply, err
-}
-
-// toVM decides about a message of the IDE: only answers go on to the VM.
-func toVM(data []byte) []byte {
-	m, ok := parse(data)
-	if !ok {
-		return nil
-	}
-
-	if _, isRequest := m.method(); isRequest {
-		return nil
-	}
-
-	if _, hasID := m["id"]; !hasID {
-		return nil
-	}
-
-	forward, err := json.Marshal(m)
-	if err != nil {
-		return nil
-	}
-
-	return forward
 }

@@ -59,6 +59,12 @@ To report a vulnerability, see
   [What the broker can't stop](git.md#what-the-broker-cant-stop).
 - Spending. The only limit on time or spending that aibox enforces itself
   is a task's `--timeout`. Give an API key a spend limit in the Console.
+- Diffs you accept or edit in your IDE. aibox checks that a diff is for a
+  file in the project, but the IDE opens the file later. In between, the VM
+  can replace the file with a symlink to a file outside the project. If you
+  then accept or edit the diff in the IDE, the IDE writes through the
+  symlink. Approve changes in the terminal instead. See
+  [In your IDE](usage.md#in-your-ide).
 - Gatekeeper on macOS. The VM can set and remove extended attributes on
   files in the project, including `com.apple.quarantine`, and files it
   creates have none. So Gatekeeper never checks a program that comes out of

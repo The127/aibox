@@ -80,7 +80,7 @@ func findIDE(deps dependencies, cwd string) (ide.IDE, bool, error) {
 // makes Claude Code connect by itself. The lock file names no process,
 // since Claude Code would look for it in the VM. Without one it checks
 // that the port answers. It returns the handler that serves the link.
-func linkIDE(found ide.IDE, home string, log io.Writer) ([]string, http.Handler, error) {
+func linkIDE(found ide.IDE, project, home string, log io.Writer) ([]string, http.Handler, error) {
 	token := rand.Text()
 
 	lock, err := json.Marshal(map[string]any{
@@ -99,7 +99,7 @@ func linkIDE(found ide.IDE, home string, log io.Writer) ([]string, http.Handler,
 
 	env := []string{"CLAUDE_CODE_SSE_PORT=" + strconv.Itoa(idePort)}
 
-	return env, ide.Bridge{IDE: found, Token: token, Log: log}, nil
+	return env, &ide.Bridge{IDE: found, Token: token, Project: project, Log: log}, nil
 }
 
 // writeInHome writes a new file into the home of the VM. The VM can change

@@ -33,8 +33,8 @@ func newFakeIDE(t *testing.T) *fakeIDE {
 	t.Helper()
 
 	f := &fakeIDE{
-		header:   make(chan http.Header, 1),
-		protocol: make(chan string, 1),
+		header:   make(chan http.Header, 10),
+		protocol: make(chan string, 10),
 		got:      make(chan string, 10),
 		send:     make(chan string, 10),
 	}
@@ -82,7 +82,7 @@ func newFakeIDE(t *testing.T) *fakeIDE {
 }
 
 // connectVM connects to the bridge like Claude Code in the VM does.
-func connectVM(t *testing.T, bridge ide.Bridge, token string) (*websocket.Conn, *http.Response, error) {
+func connectVM(t *testing.T, bridge *ide.Bridge, token string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
 
 	server := httptest.NewServer(bridge)
@@ -107,7 +107,7 @@ func linked(t *testing.T) (*fakeIDE, *websocket.Conn) {
 
 	f := newFakeIDE(t)
 
-	vm, _, err := connectVM(t, ide.Bridge{IDE: ide.IDE{Port: f.port, Token: "token-of-the-ide"}, Token: "token-of-the-vm"}, "token-of-the-vm")
+	vm, _, err := connectVM(t, &ide.Bridge{IDE: ide.IDE{Port: f.port, Token: "token-of-the-ide"}, Token: "token-of-the-vm", Project: t.TempDir()}, "token-of-the-vm")
 	require.NoError(t, err)
 
 	return f, vm
@@ -152,7 +152,7 @@ func TestBridgeRefusesAVMWithoutItsToken(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// arrange
 			f := newFakeIDE(t)
-			bridge := ide.Bridge{IDE: ide.IDE{Port: f.port, Token: "token-of-the-ide"}, Token: "token-of-the-vm"}
+			bridge := &ide.Bridge{IDE: ide.IDE{Port: f.port, Token: "token-of-the-ide"}, Token: "token-of-the-vm"}
 
 			// act
 			_, response, err := connectVM(t, bridge, token)
@@ -185,7 +185,7 @@ func TestBridgeAnswers502WhenTheIDEDoesNotAnswer(t *testing.T) {
 	require.NoError(t, listener.Close())
 
 	// act
-	_, response, err := connectVM(t, ide.Bridge{IDE: ide.IDE{Port: port}, Token: "token-of-the-vm"}, "token-of-the-vm")
+	_, response, err := connectVM(t, &ide.Bridge{IDE: ide.IDE{Port: port}, Token: "token-of-the-vm"}, "token-of-the-vm")
 
 	// assert
 	require.Error(t, err)
@@ -196,17 +196,14 @@ func TestBridgeAnswers502WhenTheIDEDoesNotAnswer(t *testing.T) {
 func TestBridgePassesTheHandshakeBothWays(t *testing.T) {
 	// arrange
 	f, vm := linked(t)
-	initialize := `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}`
-	result := `{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-11-25"}}`
-
 	// act
-	send(t, vm, initialize)
+	send(t, vm, `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}`)
 	got := arrived(t, f)
-	f.send <- result
+	f.send <- `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}`
 
-	// assert
-	assert.JSONEq(t, initialize, got)
-	assert.JSONEq(t, result, receive(t, vm))
+	// assert: the IDE sees an ID of the bridge, the VM its own
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, got)
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-11-25"}}`, receive(t, vm))
 
 	for _, notification := range []string{
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
@@ -289,7 +286,7 @@ func TestBridgePassesOnItsOwnEncodingOfAMessage(t *testing.T) {
 	send(t, vm, `{"jsonrpc":"2.0","method":"tools/call","method":"notifications/initialized","Method":"x"}`)
 
 	// assert
-	assert.JSONEq(t, `{"jsonrpc":"2.0","method":"notifications/initialized","Method":"x"}`, arrived(t, f))
+	assert.JSONEq(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, arrived(t, f))
 }
 
 func TestBridgeEndsTheLinkOnAMessageThatIsNoJSONObject(t *testing.T) {
@@ -312,16 +309,37 @@ func TestBridgeEndsTheLinkOnAMessageThatIsNoJSONObject(t *testing.T) {
 	}
 }
 
-func TestBridgePassesOnlyAnswersOfTheIDE(t *testing.T) {
+func TestBridgePassesTheToolsItAllowsAndOnlyAnswersToRequestsOfTheVM(t *testing.T) {
 	// arrange
 	f, vm := linked(t)
+	send(t, vm, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	arrived(t, f)
 
 	// act
-	f.send <- `{"jsonrpc":"2.0","method":"selection_changed","params":{"filePath":"/Users/someone/.ssh/id_ed25519"}}`
+	f.send <- `{"jsonrpc":"2.0","method":"some/notification","params":{}}`
 	f.send <- `{"jsonrpc":"2.0","id":9,"method":"elicitation/create","params":{}}`
-	f.send <- `{"jsonrpc":"2.0","id":10,"result":{},"METHOD":"x","method":"selection_changed"}`
-	f.send <- `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`
+	f.send <- `{"jsonrpc":"2.0","id":2,"result":{}}`
+	f.send <- `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"executeCode"},{"name":"openDiff"},{"name":"getDiagnostics"}]}}`
 
 	// assert
-	assert.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`, receive(t, vm))
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"openDiff"},{"name":"getDiagnostics"}]}}`, receive(t, vm))
+}
+
+func TestBridgeKeepsOneLinkAndANewOneReplacesTheOld(t *testing.T) {
+	// arrange
+	f := newFakeIDE(t)
+	bridge := &ide.Bridge{IDE: ide.IDE{Port: f.port, Token: "token-of-the-ide"}, Token: "token-of-the-vm", Project: t.TempDir()}
+	old, _, err := connectVM(t, bridge, "token-of-the-vm")
+	require.NoError(t, err)
+
+	// act
+	_, _, err = connectVM(t, bridge, "token-of-the-vm")
+	require.NoError(t, err)
+
+	// assert
+	ctx, cancel := context.WithTimeout(context.Background(), patience)
+	defer cancel()
+
+	_, _, err = old.Read(ctx)
+	assert.Error(t, err)
 }

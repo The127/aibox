@@ -304,6 +304,51 @@ func TestServeAnswersALocalTargetItselfOverHTTP(t *testing.T) {
 	assert.Equal(t, "localhost:3129", <-connected)
 }
 
+func TestServeKeepsTheTunnelOfALocalHandlerThatTakesTheConnectionOver(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				conn, buffered, err := http.NewResponseController(w).Hijack()
+				if err != nil {
+					return
+				}
+
+				defer func() { _ = conn.Close() }()
+
+				_, _ = io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\n\r\n")
+
+				line, err := buffered.ReadString('\n')
+				if err == nil {
+					_, _ = io.WriteString(conn, "echo "+line)
+				}
+			})
+		},
+	})
+	status, tunnel := connect(t, address, "localhost:3131")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", status)
+
+	_, err := io.WriteString(tunnel, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	require.NoError(t, err)
+
+	reader := bufio.NewReader(tunnel)
+	for line := ""; line != "\r\n"; {
+		line, err = reader.ReadString('\n')
+		require.NoError(t, err)
+	}
+
+	// act: the handler took the connection over and the server is done
+	time.Sleep(100 * time.Millisecond)
+	_, err = io.WriteString(tunnel, "hello\n")
+	require.NoError(t, err)
+
+	echo, err := reader.ReadString('\n')
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "echo hello\n", echo)
+}
+
 func TestServeStopsWithALocalTunnelOpen(t *testing.T) {
 	// arrange
 	address, stop := start(t, proxy.Options{Local: func(string, string) http.Handler { return http.NotFoundHandler() }})

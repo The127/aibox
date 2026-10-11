@@ -176,8 +176,8 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 
 		return o.doc, o.err
 	case <-ctx.Done():
-		// The service takes the cancel, but a wait in progress can't be
-		// interrupted, so the operation is closed once its wait is over.
+		// The wait can't be interrupted, and the operation may only be
+		// closed once it has returned.
 		_, _, _ = procCancelOperation.Call(uintptr(op))
 
 		go func() {
@@ -197,13 +197,17 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 type System struct {
 	id string
 
-	// mu keeps Close from closing the handle while a call uses it.
+	// mu keeps Close from closing the handle while a call is waited for.
+	// A call whose context ended is no longer waited for, though its
+	// operation may still be pending.
 	mu     sync.RWMutex
 	handle uintptr
 }
 
 // Create creates the compute system of the document under the id, which is
-// a GUID the caller chooses, and opens it. The VM is not started yet.
+// a GUID the caller chooses, and opens it. The VM is not started yet. If
+// Create fails, the service may have made the system all the same; only
+// ShouldTerminateOnLastHandleClosed ends it then.
 func Create(ctx context.Context, id string, doc Document) (*System, error) {
 	if err := load(); err != nil {
 		return nil, err
@@ -345,7 +349,9 @@ func (s *System) Properties(ctx context.Context) (Properties, error) {
 // Close closes the handle. The VM goes on, unless the handle was the last
 // one to a VM whose Document says ShouldTerminateOnLastHandleClosed. The
 // service reports no error for it, so Close never returns one, but it is
-// an io.Closer.
+// an io.Closer. Close waits for the calls in progress, so the contexts of
+// those should end first; until then, a waiting Close holds up new calls
+// too, Terminate among them.
 func (s *System) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

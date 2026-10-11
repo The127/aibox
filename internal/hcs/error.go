@@ -9,12 +9,12 @@ import (
 // process that is neither an Administrator nor a Hyper-V Administrator.
 const hresultAccessDenied = 0x8037011B
 
-// ErrAccessDenied is a call the service refused because the process is
-// neither an Administrator nor a Hyper-V Administrator. An *Error with
-// that HRESULT is one, by errors.Is.
+// ErrAccessDenied is the error of a call the service refused because the
+// process is neither an Administrator nor a Hyper-V Administrator. An
+// *Error with that HRESULT is one, by errors.Is.
 var ErrAccessDenied = errors.New("the Host Compute Service serves only Administrators and Hyper-V Administrators")
 
-// ErrClosed is a call on a System after its Close.
+// ErrClosed is the error of a call on a System after its Close.
 var ErrClosed = errors.New("the compute system is closed")
 
 // Error is a call of the service that failed.

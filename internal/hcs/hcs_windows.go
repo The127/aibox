@@ -276,11 +276,6 @@ func Open(ctx context.Context, id string) (*System, error) {
 	return s, nil
 }
 
-// ID is the id the compute system was created under.
-func (s *System) ID() string {
-	return s.id
-}
-
 // call runs a call of the service that takes the system, an operation and
 // no options, and returns its result document.
 func (s *System) call(ctx context.Context, what string, proc *windows.LazyProc) (string, error) {
@@ -317,16 +312,11 @@ func (s *System) Terminate(ctx context.Context) error {
 
 // Properties are the properties of a compute system the service reports.
 type Properties struct {
-	// ID is the id the system was created under.
-	ID string `json:"Id"`
-	// Owner names the program the system belongs to.
-	Owner string `json:"Owner"`
+	Summary
+
 	// State is the state of the system, such as Created, Running or
 	// Stopped.
 	State string `json:"State"`
-	// RuntimeID is the id of the VM at the hypervisor, which is the one
-	// its Hyper-V socket is addressed by.
-	RuntimeID guid.GUID `json:"RuntimeId"`
 }
 
 // Properties asks the service about the compute system.
@@ -364,15 +354,16 @@ func (s *System) Close() error {
 	return nil
 }
 
-// Summary is what the service lists about a compute system.
+// Summary is what the service lists about a compute system. The list
+// leaves out the state, which Properties has.
 type Summary struct {
 	// ID is the id the system was created under.
 	ID string `json:"Id"`
 	// Owner names the program the system belongs to.
 	Owner string `json:"Owner"`
-	// State is the state of the system, such as Created, Running or
-	// Stopped.
-	State string `json:"State"`
+	// RuntimeID is the id of the VM at the hypervisor, which is the one
+	// its Hyper-V socket is addressed by.
+	RuntimeID guid.GUID `json:"RuntimeId"`
 }
 
 // Enumerate lists the compute systems of the owner, the Owner of their

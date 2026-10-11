@@ -2,6 +2,7 @@ package hcs_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"testing"
@@ -71,6 +72,39 @@ func TestCheckReadsOnlyTheLow32BitsOfTheReturnValue(t *testing.T) {
 	t.Parallel()
 
 	assert.NoError(t, hcs.Check("start", 0xFFFFFFFF_00000000, ""))
+}
+
+func TestSummaryReadsTheListTheServiceAnswers(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	doc := `[{"Id":"275ad416-38f5-4fce-8daa-64d3588d9078","SystemType":"VirtualMachine",` +
+		`"Owner":"aibox-scratch","RuntimeId":"275ad416-38f5-4fce-8daa-64d3588d9078"}]`
+
+	// act
+	var systems []hcs.Summary
+	err := json.Unmarshal([]byte(doc), &systems)
+
+	// assert
+	require.NoError(t, err)
+	require.Len(t, systems, 1)
+	assert.Equal(t, "275ad416-38f5-4fce-8daa-64d3588d9078", systems[0].ID)
+	assert.Equal(t, "aibox-scratch", systems[0].Owner)
+	assert.Equal(t, "275ad416-38f5-4fce-8daa-64d3588d9078", systems[0].RuntimeID.String())
+}
+
+func TestPropertiesReadTheStateBesideTheSummary(t *testing.T) {
+	t.Parallel()
+
+	// act
+	var p hcs.Properties
+	err := json.Unmarshal([]byte(`{"Id":"a","Owner":"aibox","RuntimeId":"275ad416-38f5-4fce-8daa-64d3588d9078","State":"Running"}`), &p)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "a", p.ID)
+	assert.Equal(t, "Running", p.State)
+	assert.Equal(t, "275ad416-38f5-4fce-8daa-64d3588d9078", p.RuntimeID.String())
 }
 
 func TestOpenFailsWithTheCauseOfAnEndedContext(t *testing.T) {

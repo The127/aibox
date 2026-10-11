@@ -1,0 +1,154 @@
+package cli
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/the127/aibox/internal/ide"
+)
+
+// idePort is the port on the loopback of the VM where Claude Code reaches
+// the IDE of the host through aibox.
+const idePort = 3131
+
+// errIDEPort is a port of the allow list that the IDE link takes on the
+// loopback of the VM. It is refused whether an IDE is open or not, so that
+// a config does not stop working once one is.
+var errIDEPort = fmt.Errorf("allow names port %d of the loopback, which the VM needs for the IDE", idePort)
+
+// errOwnSSEPort is a variable of env that aibox sets itself for the IDE.
+var errOwnSSEPort = errors.New("env sets CLAUDE_CODE_SSE_PORT, which aibox sets itself for the IDE")
+
+// checkIDE refuses a config that takes what the IDE link needs.
+func checkIDE(loopback []uint16, env []string) error {
+	if slices.Contains(loopback, idePort) {
+		return errIDEPort
+	}
+
+	if slices.ContainsFunc(env, func(variable string) bool { return strings.HasPrefix(variable, "CLAUDE_CODE_SSE_PORT=") }) {
+		return errOwnSSEPort
+	}
+
+	return nil
+}
+
+// ideAuthHeader is where Claude Code shows the token of the lock file.
+const ideAuthHeader = "X-Claude-Code-Ide-Authorization"
+
+// findIDE returns the IDE that has the project open, from the lock files
+// in the folders where Claude Code looks for them, or false when there is
+// none. Claude Code looks in the folder of CLAUDE_CONFIG_DIR and in that
+// of the home.
+func findIDE(deps dependencies, cwd string) (ide.IDE, bool, error) {
+	var dirs []string
+
+	if dir, ok := deps.lookupEnv("CLAUDE_CONFIG_DIR"); ok && dir != "" {
+		dirs = append(dirs, filepath.Join(dir, "ide"))
+	}
+
+	home, err := deps.homeDir()
+	if err != nil {
+		return ide.IDE{}, false, fmt.Errorf("find the home directory: %w", err)
+	}
+
+	dirs = append(dirs, filepath.Join(home, ".claude", "ide"))
+
+	for _, dir := range dirs {
+		found, err := ide.Find(dir, cwd)
+		if err != nil {
+			return ide.IDE{}, false, err
+		}
+
+		if len(found) > 0 {
+			return found[0], true, nil
+		}
+	}
+
+	return ide.IDE{}, false, nil
+}
+
+// linkIDE lets Claude Code in the VM find the IDE: a lock file in the
+// home of the VM names the port of the link and a token of its own, so
+// that the token of the IDE stays on the host, and CLAUDE_CODE_SSE_PORT
+// makes Claude Code connect by itself. The lock file names no process,
+// since Claude Code would look for it in the VM. Without one it checks
+// that the port answers. It returns the handler that serves the link.
+func linkIDE(found ide.IDE, home string) ([]string, http.Handler, error) {
+	token := rand.Text()
+
+	lock, err := json.Marshal(map[string]any{
+		"workspaceFolders": []string{"/project"},
+		"ideName":          found.Name,
+		"transport":        "ws",
+		"authToken":        token,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := writeInHome(home, filepath.Join(".claude", "ide", strconv.Itoa(idePort)+".lock"), lock); err != nil {
+		return nil, nil, fmt.Errorf("write the lock file of the IDE: %w", err)
+	}
+
+	env := []string{"CLAUDE_CODE_SSE_PORT=" + strconv.Itoa(idePort)}
+
+	return env, ideBridge(token), nil
+}
+
+// writeInHome writes a new file into the home of the VM. The VM can change
+// that home, and a symlink it put there must not lead the write to a file
+// of the host. So the write stays inside the home, and whatever has the
+// name of the file goes first.
+func writeInHome(home, name string, data []byte) error {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		return err
+	}
+
+	if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+
+		return err
+	}
+
+	return f.Close()
+}
+
+// ideBridge serves the link to the IDE for the VM that shows the token.
+// It refuses everything else for now.
+func ideBridge(token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get(ideAuthHeader)), []byte(token)) != 1 {
+			http.Error(w, "wrong token for the IDE", http.StatusUnauthorized)
+
+			return
+		}
+
+		http.Error(w, "the link to the IDE is not built yet", http.StatusNotImplemented)
+	})
+}

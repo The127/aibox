@@ -41,13 +41,17 @@ compares aibox with these, Apple's container tool and Docker Sandboxes.
 
 ## Installing
 
-On macOS with Apple silicon, install it with [Homebrew](https://brew.sh):
+On macOS with Apple silicon or Linux on amd64, install it with
+[Homebrew](https://brew.sh):
 
 ```
 brew install --cask the127/tap/aibox
 ```
 
-On Linux, download a package from the
+On Linux, Homebrew installs just the binary. Install QEMU, virtiofsd and
+bubblewrap from your distribution.
+
+You can also download a package from the
 [releases](https://github.com/The127/aibox/releases). There is a `deb` and an
 `rpm` for amd64, which pull in QEMU, virtiofsd and bubblewrap. There is also
 a `tar.gz` with just the binary, and then you install those three yourself.

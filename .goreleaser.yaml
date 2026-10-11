@@ -87,16 +87,24 @@ nfpms:
           - bubblewrap
 
 # the cask takes the quarantine off aibox: macOS refuses to start a
-# downloaded program that is signed ad hoc and not notarized
+# downloaded program that is signed ad hoc and not notarized. On Linux it
+# has no dependencies: the sandbox binds the libraries of QEMU from
+# /usr/lib64 or /nix/store, not from Homebrew, and Ubuntu lets only
+# /usr/bin/bwrap make user namespaces.
 homebrew_casks:
   - name: aibox
     ids:
       - darwin
+      - linux
     binaries:
       - aibox
     description: Run Claude Code inside a microVM, with your project folder mounted into it.
     homepage: https://github.com/The127/aibox
     license: Apache-2.0
+    caveats: |
+      On Linux, install QEMU, virtiofsd and bubblewrap from your distribution:
+        Debian, Ubuntu: sudo apt install qemu-system-x86 virtiofsd bubblewrap
+        Fedora: sudo dnf install qemu-system-x86-core virtiofsd bubblewrap
     repository:
       owner: The127
       name: homebrew-tap

@@ -414,7 +414,7 @@ func (f *file) ReadAt(p []byte, offset int64) (int, error) {
 	return n, nil
 }
 
-func (f *file) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
+func (f *file) Readdir(offset uint64, _ uint32) (p9.Dirents, error) {
 	if f.open == nil {
 		return nil, linux.EBADF
 	}
@@ -432,24 +432,9 @@ func (f *file) Readdir(offset uint64, count uint32) (p9.Dirents, error) {
 		return nil, nil
 	}
 
-	// a dirent takes its name and 24 bytes on the wire
-	var (
-		out  p9.Dirents
-		used uint32
-	)
-
-	for _, d := range f.entries[offset:] {
-		size := uint32(24 + len(d.Name)) //nolint:gosec // a name is at most 255 UTF-16 units
-		if used+size > count {
-			break
-		}
-
-		used += size
-
-		out = append(out, d)
-	}
-
-	return out, nil
+	// the library sends as many as fit in count, and the guest goes on
+	// from the offset of the last one it got
+	return f.entries[offset:], nil
 }
 
 // dirInfo is FILE_ID_BOTH_DIR_INFO up to the name, which follows it.
@@ -480,6 +465,8 @@ const (
 func list(h windows.Handle) (p9.Dirents, error) {
 	var entries p9.Dirents
 
+	// any size works: each call fills the buffer and the next goes on
+	// where it stopped
 	buf := make([]byte, 64<<10)
 	class := uint32(fileIDBothDirectoryRestartInfo)
 

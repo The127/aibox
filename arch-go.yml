@@ -97,6 +97,17 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # hvservice runs as SYSTEM, so it takes in no more of aibox than it
+  # needs to describe a VM
+  - package: '**.internal.hvservice$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.hcs$'
+    shouldNotDependsOn:
+      internal:
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
   - package: '**.internal.project$'
     shouldNotDependsOn:

@@ -130,8 +130,18 @@ func readPktLine(r *bufio.Reader) (line, raw []byte, err error) {
 	return raw[4:], raw, nil
 }
 
-// pktLine returns text as a pkt-line.
+// pktLine returns text as a pkt-line. Text too long for one is cut, but
+// keeps its newline at the end. Only a hostile VM pushes a ref that long.
 func pktLine(text string) string {
+	if len(text)+4 > maxPktLine {
+		newline := strings.HasSuffix(text, "\n")
+		text = text[:maxPktLine-4]
+
+		if newline {
+			text = text[:len(text)-1] + "\n"
+		}
+	}
+
 	return fmt.Sprintf("%04x%s", len(text)+4, text)
 }
 

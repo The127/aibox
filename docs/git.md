@@ -133,6 +133,8 @@ keys. The server's port gets added to the ports aibox may connect to.
 The broker only asks the server for the key types your known hosts have for
 it. It logs in once per repository and opens a session on that connection
 for each request. If the connection breaks, it logs in again. If the server
+doesn't open a session in time, the broker logs in again too. It closes the
+old connection once the requests still on it are done. If the server
 refuses a session, for example because it has too many open, only that
 request fails. The other sessions on the connection go on.
 

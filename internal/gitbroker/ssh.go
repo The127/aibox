@@ -37,21 +37,60 @@ const (
 	// dialTimeout is how long the broker waits for a server to connect
 	// and log in.
 	dialTimeout = 30 * time.Second
-	// sessionTimeout is how long the server may take to open a session
-	// and to close one.
-	sessionTimeout = 10 * time.Second
 	// idleTimeout is how long the server may stay silent in its answer. A
 	// server sends progress while it packs.
 	idleTimeout = 5 * time.Minute
 )
 
+// sessionTimeout is how long the server may take to open a session and to
+// close one. The tests shorten it.
+var sessionTimeout = 10 * time.Second
+
 // sshServer is the connection of the broker to the server of a remote,
 // which it logs in to once and opens a session on for each request.
 type sshServer struct {
-	// lock guards client. It is a channel, so that a request can stop
+	// lock guards conn. It is a channel, so that a request can stop
 	// waiting for it.
-	lock   chan struct{}
+	lock chan struct{}
+	conn *sshConn
+}
+
+// sshConn is a connection to a server and how many sessions use it. A
+// retired connection takes no new sessions, and closes once the last of
+// its sessions ends, since the server may still be sending to them.
+type sshConn struct {
 	client *ssh.Client
+
+	mu       sync.Mutex
+	sessions int
+	retired  bool
+}
+
+func (c *sshConn) acquire() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.sessions++
+}
+
+func (c *sshConn) release() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.sessions--
+	if c.retired && c.sessions == 0 {
+		_ = c.client.Close()
+	}
+}
+
+func (c *sshConn) retire() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.retired = true
+	if c.sessions == 0 {
+		_ = c.client.Close()
+	}
 }
 
 func newSSHServer() *sshServer {
@@ -183,7 +222,7 @@ func (b *broker) session(ctx context.Context, remote Remote) (*ssh.Session, func
 		return nil, nil, ctx.Err()
 	}
 
-	session, err := b.openSession(ctx, server, remote)
+	session, conn, err := b.openSession(ctx, server, remote)
 
 	<-server.lock
 
@@ -196,44 +235,79 @@ func (b *broker) session(ctx context.Context, remote Remote) (*ssh.Session, func
 	return session, func() {
 		stop()
 		_ = session.Close()
+		conn.release()
 	}, nil
 }
 
 // openSession opens a session on the connection of the server, and logs in
 // again once when there is none or it broke. A connection that does not
-// answer within sessionTimeout counts as broken. A server that refuses the
-// session, for example since it has too many, keeps the connection, so that
-// the sessions on it go on. The caller holds the lock.
-func (b *broker) openSession(ctx context.Context, server *sshServer, remote Remote) (*ssh.Session, error) {
+// open a session within sessionTimeout counts as broken. A broken
+// connection is retired, so that the sessions still on it can end. A
+// server that refuses the session, for example since it has too many,
+// keeps the connection. The caller holds the lock.
+func (b *broker) openSession(ctx context.Context, server *sshServer, remote Remote) (*ssh.Session, *sshConn, error) {
 	for range 2 {
-		if server.client == nil {
+		if server.conn == nil {
 			client, err := b.login(ctx, remote)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
-			server.client = client
+			server.conn = &sshConn{client: client}
 		}
 
-		client := server.client
-		stalled := time.AfterFunc(sessionTimeout, func() { _ = client.Close() })
-		session, err := client.NewSession()
-		stalled.Stop()
+		conn := server.conn
+		conn.acquire()
 
+		session, err := newSession(conn.client)
 		if err == nil {
-			return session, nil
+			return session, conn, nil
 		}
+
+		conn.release()
 
 		var refused *ssh.OpenChannelError
 		if errors.As(err, &refused) {
-			return nil, fmt.Errorf("the server refused a session: %s", refused.Message)
+			return nil, nil, fmt.Errorf("the server refused a session: %s", refused.Message)
 		}
 
-		_ = client.Close()
-		server.client = nil
+		conn.retire()
+		server.conn = nil
 	}
 
-	return nil, errors.New("the connection to the server broke")
+	return nil, nil, errors.New("the connection to the server broke")
+}
+
+var errSessionStalled = errors.New("the server did not open a session")
+
+// newSession opens a session on client within sessionTimeout. Only closing
+// the client stops a session that does not open, so a session that opens
+// later is closed instead.
+func newSession(client *ssh.Client) (*ssh.Session, error) {
+	type opened struct {
+		session *ssh.Session
+		err     error
+	}
+
+	result := make(chan opened, 1)
+
+	go func() {
+		session, err := client.NewSession()
+		result <- opened{session, err}
+	}()
+
+	select {
+	case o := <-result:
+		return o.session, o.err
+	case <-time.After(sessionTimeout):
+		go func() {
+			if o := <-result; o.err == nil {
+				_ = o.session.Close()
+			}
+		}()
+
+		return nil, errSessionStalled
+	}
 }
 
 // login connects to the server of the remote and logs in, within

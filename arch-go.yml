@@ -304,6 +304,8 @@ dependenciesRules:
         - '**.internal.ide$'
         - '**.internal.clipboard$'
         - '**.internal.vm$'
+        - '**.internal.hvinstall$'
+        - '**.internal.hvserver$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

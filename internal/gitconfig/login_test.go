@@ -58,9 +58,9 @@ func TestLoginForIgnoresTheRepositoryOfTheCurrentFolder(t *testing.T) {
 	helper(t, "true")
 
 	project := t.TempDir()
-	_, err := git("init", project)
+	err := git("init", project)
 	require.NoError(t, err)
-	_, err = git("-C", project, "config", "credential.helper", "!f() { echo username=vm; echo password=from-the-project; }; f")
+	err = git("-C", project, "config", "credential.helper", "!f() { echo username=vm; echo password=from-the-project; }; f")
 	require.NoError(t, err)
 	t.Chdir(project)
 	t.Setenv("GIT_DIR", filepath.Join(project, ".git"))

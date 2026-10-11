@@ -1375,9 +1375,6 @@ func TestRunLetsAMountOfTheConfigTakeThePlaceOfTheSkills(t *testing.T) {
 func TestRunWhenAMountedFolderIsMissing(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	f.deps.gitIdentity = func(string) gitconfig.Identity {
-		return gitconfig.Identity{Name: "Someone", Email: "someone@example.com"}
-	}
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
 	missing := filepath.Join(t.TempDir(), "gone")
 	f.writeConfig(t, "mounts:\n  - "+missing+":/opt/go\n")
@@ -1388,7 +1385,6 @@ func TestRunWhenAMountedFolderIsMissing(t *testing.T) {
 	// assert
 	require.ErrorContains(t, err, missing)
 	assert.False(t, f.launch.called)
-	assert.NoFileExists(t, filepath.Join(f.project(t).Home, ".config", "git", "config"))
 }
 
 func TestRunWhenAMountedPathIsAFile(t *testing.T) {
@@ -1493,7 +1489,7 @@ func TestRunWhenTheConfigIsBroken(t *testing.T) {
 	assert.False(t, f.launch.called)
 }
 
-func TestRunWritesTheGitIdentityIntoTheHome(t *testing.T) {
+func TestRunGivesGitTheIdentityThroughVariables(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
@@ -1508,14 +1504,49 @@ func TestRunWritesTheGitIdentityIntoTheHome(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-
-	file := filepath.Join(f.project(t).Home, ".config", "git", "config")
-	name, err := exec.Command("git", "config", "-f", file, "--get", "user.name").Output() //nolint:gosec // the file is the test's own
-	require.NoError(t, err)
-	assert.Equal(t, "Some One\n", string(name))
+	assert.Equal(t, []string{
+		"GIT_AUTHOR_NAME=Some One", "GIT_COMMITTER_NAME=Some One",
+		"GIT_AUTHOR_EMAIL=someone@example.com", "GIT_COMMITTER_EMAIL=someone@example.com",
+	}, f.launch.spec.Env)
+	assert.NoDirExists(t, filepath.Join(f.project(t).Home, ".config"))
 }
 
-func TestRunWritesNoGitIdentityWhenTheHostHasNone(t *testing.T) {
+func TestRunLeavesTheIdentityVariablesOfTheConfigAlone(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.deps.gitIdentity = func(string) gitconfig.Identity {
+		return gitconfig.Identity{Name: "Some One", Email: "someone@example.com"}
+	}
+	f.writeConfig(t, "env:\n  - GIT_AUTHOR_EMAIL=work@example.com\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"GIT_AUTHOR_EMAIL=work@example.com",
+		"GIT_AUTHOR_NAME=Some One", "GIT_COMMITTER_NAME=Some One",
+		"GIT_COMMITTER_EMAIL=someone@example.com",
+	}, f.launch.spec.Env)
+}
+
+func TestRunGivesGitOnlyTheNameWhenTheHostHasNoEmail(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.deps.gitIdentity = func(string) gitconfig.Identity { return gitconfig.Identity{Name: "Some One"} }
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"GIT_AUTHOR_NAME=Some One", "GIT_COMMITTER_NAME=Some One"}, f.launch.spec.Env)
+}
+
+func TestRunGivesGitNoIdentityWhenTheHostHasNone(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
@@ -1525,7 +1556,8 @@ func TestRunWritesNoGitIdentityWhenTheHostHasNone(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.NoFileExists(t, filepath.Join(f.project(t).Home, ".config", "git", "config"))
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "GIT_")
+	assert.NoDirExists(t, filepath.Join(f.project(t).Home, ".config"))
 }
 
 func TestRunReturnsTheLaunchError(t *testing.T) {

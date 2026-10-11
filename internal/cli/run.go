@@ -103,12 +103,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer r.close()
 
-	// the VM has a home of its own, so git there knows nothing of the person
-	if identity := deps.gitIdentity(cwd); identity != (gitconfig.Identity{}) {
-		if err := gitconfig.Write(r.project.Home, identity); err != nil {
-			return err
-		}
-	}
+	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
 
 	if r.config.IDE {
 		if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
@@ -154,6 +149,30 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	r.proxyLog.Summarize()
 
 	return err
+}
+
+// identityVariables returns the variables that give git in the VM the
+// identity of the person, since the VM has a home of its own. They are
+// variables and not a file in that home, because the VM can put links into
+// the home that a write by the host would follow. A variable of the env setting wins, since the person set it
+// on purpose.
+func identityVariables(identity gitconfig.Identity, env []string) []string {
+	var variables []string
+
+	for _, v := range []struct{ name, value string }{
+		{"GIT_AUTHOR_NAME", identity.Name},
+		{"GIT_COMMITTER_NAME", identity.Name},
+		{"GIT_AUTHOR_EMAIL", identity.Email},
+		{"GIT_COMMITTER_EMAIL", identity.Email},
+	} {
+		set := slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, v.name+"=") })
+
+		if v.value != "" && !set {
+			variables = append(variables, v.name+"="+v.value)
+		}
+	}
+
+	return variables
 }
 
 // folders returns the current folder and the aibox folder.

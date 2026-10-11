@@ -3,7 +3,7 @@
 aibox runs [Claude Code](https://code.claude.com) in a small virtual machine
 on your computer.
 
-![aibox run starts Claude Code in a VM](demo.gif)
+![aibox run lets Claude Code change the project folder from a VM, then aibox task does a job on its own and hands back a commit](demo.gif)
 
 Claude Code can read and change files, run commands and access the internet.
 That is what makes it useful, but it also means a bad prompt or a malicious

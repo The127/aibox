@@ -136,7 +136,11 @@ func timeoutOf(ctx context.Context) uint32 {
 		timeout = max(time.Until(deadline), 0)
 	}
 
-	ms := (timeout + time.Millisecond - 1) / time.Millisecond
+	// not timeout + 1ms - 1, which overflows for a deadline centuries away
+	ms := timeout / time.Millisecond
+	if timeout%time.Millisecond != 0 {
+		ms++
+	}
 
 	return uint32(min(int64(ms), math.MaxUint32-1)) //nolint:gosec // the value is at least 0 and one short of the largest, by the clamps
 }
@@ -176,7 +180,8 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 	case <-done:
 		op.close()
 
-		// a wait that ran out with the deadline is the deadline's doing
+		// a wait that failed once its context had ended may have failed
+		// for that, so the error carries both
 		if waitErr != nil && ctx.Err() != nil {
 			return "", fmt.Errorf("%w: %w", waitErr, context.Cause(ctx))
 		}

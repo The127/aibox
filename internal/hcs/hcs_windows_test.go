@@ -51,13 +51,27 @@ func TestTimeoutOfRoundsUpToTheNextMillisecond(t *testing.T) {
 	t.Parallel()
 
 	// arrange
-	ctx := deadlineIn{t.Context(), time.Millisecond + 500*time.Microsecond}
+	ctx := deadlineIn{t.Context(), time.Millisecond + 999*time.Microsecond}
 
 	// act
 	timeout := hcs.TimeoutOf(ctx)
 
 	// assert
 	assert.Equal(t, uint32(2), timeout)
+}
+
+func TestTimeoutOfStopsShortOfTheValueForNoLimitForADeadlineCenturiesAway(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	ctx, cancel := context.WithDeadline(t.Context(), time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC))
+	defer cancel()
+
+	// act
+	timeout := hcs.TimeoutOf(ctx)
+
+	// assert
+	assert.Equal(t, uint32(math.MaxUint32-1), timeout)
 }
 
 func TestTimeoutOfStopsShortOfTheValueForNoLimit(t *testing.T) {

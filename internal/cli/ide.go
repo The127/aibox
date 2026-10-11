@@ -22,8 +22,8 @@ import (
 const idePort = 3131
 
 // errIDEPort is a port of the allow list that the IDE link takes on the
-// loopback of the VM. It is refused whether an IDE is open or not, so that
-// a config does not stop working once one is.
+// loopback of the VM. With the IDE turned on it is refused whether an IDE
+// is open or not, so that a config does not stop working once one is.
 var errIDEPort = fmt.Errorf("allow names port %d of the loopback, which the VM needs for the IDE", idePort)
 
 // errOwnSSEPort is a variable of env that aibox sets itself for the IDE.

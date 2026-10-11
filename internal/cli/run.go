@@ -108,22 +108,24 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		}
 	}
 
-	if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
-		return err
-	}
+	if r.config.IDE {
+		if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
+			return err
+		}
 
-	found, ok, err := findIDE(deps, cwd)
-	if err != nil {
-		return err
-	}
-
-	if ok {
-		env, bridge, err := linkIDE(found, cwd, r.project.Home, r.log)
+		found, ok, err := findIDE(deps, cwd)
 		if err != nil {
 			return err
 		}
 
-		r.env, r.ide, r.ideHostPort = append(r.env, env...), bridge, found.Port
+		if ok {
+			env, bridge, err := linkIDE(found, cwd, r.project.Home, r.log)
+			if err != nil {
+				return err
+			}
+
+			r.env, r.ide, r.ideHostPort = append(r.env, env...), bridge, found.Port
+		}
 	}
 
 	spec := r.spec(cmd)

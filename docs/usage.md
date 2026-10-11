@@ -54,13 +54,14 @@ On your machine the Claude Code extension of the IDE does this through a
 server that only listens on your machine. The VM can't reach it, and it
 shouldn't, because that server also runs code and opens files anywhere.
 
-aibox links the two for you. Open the project in VS Code, then start
-`aibox run` in its terminal:
+aibox can link the two for you. It's off until you turn it on in the
+[project config](config.md#ide):
 
-```
-aibox run
+```yaml
+ide: true
 ```
 
+Then open the project in VS Code and start `aibox run` in its terminal.
 Claude Code in the VM connects to the IDE by itself. `/ide` shows it as
 connected. aibox only passes on what the IDE integration needs, and only for
 files in the project:

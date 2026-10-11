@@ -29,6 +29,7 @@ func TestRunWritesNoFileOfTheHostThroughASymlinkTheVMPlanted(t *testing.T) {
 			f := newFixture(t)
 			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
 			writeHostLock(t, filepath.Join(f.homeDir, ".claude", "ide"), f.cwd)
+			f.writeConfig(t, "ide: true\n")
 			outside := t.TempDir()
 			zshrc := filepath.Join(outside, ".zshrc")
 			require.NoError(t, os.WriteFile(zshrc, []byte("export PATH\n"), 0o600))

@@ -45,6 +45,7 @@ func TestRunLinksTheIDEThatHasTheProjectOpen(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "ide: true\n")
 	writeHostLock(t, filepath.Join(f.homeDir, ".claude", "ide"), f.cwd)
 
 	// act
@@ -73,6 +74,7 @@ func TestRunFindsTheIDEInTheFolderOfClaudeConfigDir(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "ide: true\n")
 	configDir := t.TempDir()
 	writeHostLock(t, filepath.Join(configDir, "ide"), f.cwd)
 	f.deps.lookupEnv = func(name string) (string, bool) { return configDir, name == "CLAUDE_CONFIG_DIR" }
@@ -89,6 +91,7 @@ func TestRunWithoutAnIDELinksNone(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "ide: true\n")
 	writeHostLock(t, filepath.Join(f.homeDir, ".claude", "ide"), t.TempDir())
 
 	// act
@@ -102,13 +105,13 @@ func TestRunWithoutAnIDELinksNone(t *testing.T) {
 	assert.Nil(t, f.launch.spec.Proxy.Local)
 }
 
-func TestRunRefusesWhatTheIDELinkNeedsEvenWithoutAnIDE(t *testing.T) {
+func TestRunWithTheIDETurnedOnRefusesWhatItNeedsEvenWithoutAnIDE(t *testing.T) {
 	tests := map[string]struct {
 		config string
 		want   error
 	}{
-		"the loopback port":    {"allow:\n  - 127.0.0.1:3131\n", errIDEPort},
-		"CLAUDE_CODE_SSE_PORT": {"env:\n  - CLAUDE_CODE_SSE_PORT=1234\n", errOwnSSEPort},
+		"the loopback port":    {"ide: true\nallow:\n  - 127.0.0.1:3131\n", errIDEPort},
+		"CLAUDE_CODE_SSE_PORT": {"ide: true\nenv:\n  - CLAUDE_CODE_SSE_PORT=1234\n", errOwnSSEPort},
 	}
 
 	for name, test := range tests {
@@ -132,6 +135,7 @@ func TestRunReplacesTheLockFileOfAnEarlierRun(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "ide: true\n")
 	writeHostLock(t, filepath.Join(f.homeDir, ".claude", "ide"), f.cwd)
 	require.NoError(t, f.run("--image", image))
 	earlier := vmLock(t, f)["authToken"]
@@ -149,4 +153,21 @@ func TestRunReplacesTheLockFileOfAnEarlierRun(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
+}
+
+func TestRunLinksNoIDEUnlessTheConfigTurnsItOn(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	writeHostLock(t, filepath.Join(f.homeDir, ".claude", "ide"), f.cwd)
+	f.writeConfig(t, "allow:\n  - 127.0.0.1:3131\nenv:\n  - CLAUDE_CODE_SSE_PORT=1234\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(f.project(t).Home, ".claude", "ide", "3131.lock"))
+	assert.Equal(t, []string{"CLAUDE_CODE_SSE_PORT=1234"}, f.launch.spec.Env)
+	assert.NotContains(t, f.launch.spec.Ports, uint16(23214))
 }

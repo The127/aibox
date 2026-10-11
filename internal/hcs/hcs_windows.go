@@ -415,9 +415,14 @@ func Enumerate(ctx context.Context, owner string) ([]Summary, error) {
 		return nil, fmt.Errorf("read the list of compute systems of %s: %w: %s", owner, err, doc)
 	}
 
-	// The filter of the service is tested on one build of Windows only. A
-	// build that ignored it would hand a sweep the VMs of other programs.
-	return slices.DeleteFunc(systems, func(s Summary) bool { return s.Owner != owner }), nil
+	return ownedBy(systems, owner), nil
+}
+
+// ownedBy keeps the systems of the owner. The filter of the service is
+// tested on one build of Windows only, and a build that ignored it would
+// hand a sweep the VMs of other programs.
+func ownedBy(systems []Summary, owner string) []Summary {
+	return slices.DeleteFunc(systems, func(s Summary) bool { return s.Owner != owner })
 }
 
 // GrantVMAccess lets the VM with the id read the file or the folder at

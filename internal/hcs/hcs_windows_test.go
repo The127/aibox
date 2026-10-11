@@ -120,6 +120,24 @@ func TestSummaryReadsAListWithSystemsOfOtherPrograms(t *testing.T) {
 	}, systems)
 }
 
+func TestOwnedByDropsTheSystemsOfOtherPrograms(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	systems := []hcs.Summary{
+		{ID: "1", Owner: "aibox"},
+		{ID: "2", Owner: "docker"},
+		{ID: "3", Owner: "aibox"},
+		{ID: "4", Owner: "aibox-other"},
+	}
+
+	// act
+	mine := hcs.OwnedBy(systems, "aibox")
+
+	// assert
+	assert.Equal(t, []hcs.Summary{{ID: "1", Owner: "aibox"}, {ID: "3", Owner: "aibox"}}, mine)
+}
+
 func TestPropertiesReadTheStateBesideTheSummary(t *testing.T) {
 	t.Parallel()
 

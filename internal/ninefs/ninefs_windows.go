@@ -250,7 +250,6 @@ type file struct {
 	templatefs.NotLockable
 	templatefs.NilSyncer
 	templatefs.XattrUnimplemented
-	unchangeable
 
 	fs *FS
 	h  windows.Handle
@@ -394,13 +393,9 @@ func (f *file) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 		return p9.QID{}, 0, linux.ELOOP
 	}
 
-	if mode.Mode() != p9.ReadOnly {
-		return p9.QID{}, 0, linux.EROFS
-	}
-
-	access := uint32(windows.FILE_GENERIC_READ)
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		access = windows.FILE_LIST_DIRECTORY | windows.FILE_READ_ATTRIBUTES
+	access, err := f.accessFor(mode, info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0)
+	if err != nil {
+		return p9.QID{}, 0, err
 	}
 
 	h, err := openAt(f.h, "", access)

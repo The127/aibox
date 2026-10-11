@@ -178,7 +178,7 @@ func (k *SSHKeys) agent(socket string) []ssh.Signer {
 	a := &sshAgent{}
 	k.agents[socket] = a
 
-	conn, err := net.Dial("unix", socket)
+	conn, err := dialAgent(socket)
 	if err != nil {
 		return nil
 	}
@@ -260,8 +260,8 @@ type resolved struct {
 func (k *SSHKeys) sshConfig(ctx context.Context, host string) (resolved, error) {
 	config := resolved{
 		hostname: host, port: "22", user: "git",
-		identityAgent: os.Getenv("SSH_AUTH_SOCK"),
-		knownHosts:    []string{filepath.Join(k.home, ".ssh", "known_hosts"), "/etc/ssh/ssh_known_hosts"},
+		identityAgent: defaultAgent(),
+		knownHosts:    append([]string{filepath.Join(k.home, ".ssh", "known_hosts")}, systemKnownHosts()...),
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, sshConfigTimeout)
@@ -333,7 +333,7 @@ func (k *SSHKeys) agentSocket(value string) string {
 	case "none":
 		return ""
 	case "SSH_AUTH_SOCK", "$SSH_AUTH_SOCK":
-		return os.Getenv("SSH_AUTH_SOCK")
+		return defaultAgent()
 	}
 
 	path, _ := k.path(value)
@@ -344,6 +344,8 @@ func (k *SSHKeys) agentSocket(value string) string {
 // path expands a ~ at the start of a path of the ssh config, and is false
 // for a path that is not absolute then.
 func (k *SSHKeys) path(value string) (string, bool) {
+	value = expandProgramData(value)
+
 	if rest, ok := strings.CutPrefix(value, "~/"); ok {
 		value = filepath.Join(k.home, rest)
 	}

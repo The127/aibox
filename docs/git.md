@@ -81,6 +81,17 @@ without a passphrase. A key with a passphrase works through the agent, which
 has to keep running while aibox does. aibox refuses a host that your config
 reaches through `ProxyJump` or `ProxyCommand`.
 
+On Windows aibox uses the agent of Windows' OpenSSH, the service "OpenSSH
+Authentication Agent", unless `SSH_AUTH_SOCK` names another one. Windows
+turns that service off by default: start it with `Start-Service
+ssh-agent`, set it to start by itself, and add your key with `ssh-add`.
+The agent of Git Bash sets `SSH_AUTH_SOCK` to a path only Git Bash can
+reach, so unset it for aibox. It reads
+the known hosts of everyone from `%ProgramData%\ssh\ssh_known_hosts`, as
+that ssh does. It asks the `ssh` that comes first on your `PATH`. The one of
+Git Bash writes its paths as `/c/Users/...`, which aibox can't read, so
+keep Windows' own `ssh` first.
+
 Your known hosts check the server. aibox refuses a server that isn't in
 them, so connect to it with `ssh` once to add it.
 

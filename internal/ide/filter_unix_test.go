@@ -21,7 +21,7 @@ func TestFilterKeepsASelectionBehindASymlinkFromTheVM(t *testing.T) {
 	require.NoError(t, os.Symlink(secret, filepath.Join(host, "notes.md")))
 
 	// act
-	forward := f.toVM([]byte(`{"jsonrpc":"2.0","method":"selection_changed","params":{"text":"key","filePath":"` + filepath.Join(host, "notes.md") + `"}}`))
+	forward, _ := f.toVM([]byte(`{"jsonrpc":"2.0","method":"selection_changed","params":{"text":"key","filePath":"` + filepath.Join(host, "notes.md") + `"}}`))
 
 	// assert
 	assert.Nil(t, forward)
@@ -56,7 +56,7 @@ func TestFilterTakesASelectionInTheProjectBehindASymlinkedPath(t *testing.T) {
 	f := newFilter(paths{host: link})
 
 	// act
-	forward := f.toVM([]byte(`{"jsonrpc":"2.0","method":"selection_changed","params":{"text":"x","filePath":"` + filepath.Join(target, "main.go") + `"}}`))
+	forward, _ := f.toVM([]byte(`{"jsonrpc":"2.0","method":"selection_changed","params":{"text":"x","filePath":"` + filepath.Join(target, "main.go") + `"}}`))
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","method":"selection_changed","params":{"text":"x","filePath":"/project/main.go"}}`, string(forward))
@@ -78,7 +78,7 @@ func TestFilterHidesThePathOfTheHostWithAnAmpersandAndBehindASymlink(t *testing.
 	require.NoError(t, err)
 
 	// act: an IDE writes & as it is
-	forward := f.toVM([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"` + project + `/a and ` + link + `/b"}}`))
+	forward, _ := f.toVM([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"` + project + `/a and ` + link + `/b"}}`))
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"error":{"code":-1,"message":"/project/a and /project/b"}}`, string(forward))

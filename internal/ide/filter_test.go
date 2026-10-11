@@ -135,7 +135,7 @@ func TestFilterGivesTheVMTheDiagnosticsOfTheProjectOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	forward := f.toVM(answer)
+	forward, _ := f.toVM(answer)
 
 	// assert
 	want := `[{"diagnostics":[{"message":"unused"}],"uri":"file:///project/main.go"}]`
@@ -153,7 +153,8 @@ func TestFilterPassesTheAnswerToARequestOnlyOnce(t *testing.T) {
 	answer := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"CLOSED_0_DIFF_TABS"}]}}`)
 
 	// act
-	first, second := f.toVM(answer), f.toVM(answer)
+	first, _ := f.toVM(answer)
+	second, _ := f.toVM(answer)
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"text","text":"CLOSED_0_DIFF_TABS"}]}}`, string(first))
@@ -171,7 +172,7 @@ func TestFilterGivesTheVMWhatThePersonSelectsInTheProject(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	forward := f.toVM(selection)
+	forward, _ := f.toVM(selection)
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","method":"selection_changed","params":{"text":"package main","filePath":"/project/main.go","fileUrl":"file:///project/main.go","selection":{"start":{"line":0,"character":0}}}}`, string(forward))
@@ -191,7 +192,7 @@ func TestFilterKeepsFromTheVMWhatThePersonDoesOutsideTheProject(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			// act
-			forward := f.toVM([]byte(message))
+			forward, _ := f.toVM([]byte(message))
 
 			// assert
 			assert.Nil(t, forward)
@@ -214,7 +215,7 @@ func TestFilterTellsAnswersApartWhateverIDsTheVMGives(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	forward := f.toVM(answer)
+	forward, _ := f.toVM(answer)
 
 	// assert
 	assert.Contains(t, string(first), `"id":1`)
@@ -264,7 +265,7 @@ func TestFilterTakesThePathOfTheHostOutOfAnError(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	forward := f.toVM(answer)
+	forward, _ := f.toVM(answer)
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"error":{"code":-1,"message":"cannot read /project/main.go"}}`, string(forward))
@@ -280,7 +281,7 @@ func TestFilterTakesThePathOfTheHostOutOfAnswers(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	forward := f.toVM(answer)
+	forward, _ := f.toVM(answer)
 
 	// assert
 	assert.NotContains(t, string(forward), host)
@@ -311,8 +312,20 @@ func TestFilterHidesThePathOfTheHostButNotOfAFolderNextToIt(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	forward := f.toVM(answer)
+	forward, _ := f.toVM(answer)
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"text","text":"/project/a `+host+`-old/b /project"},{"type":"image","data":"x"}]}}`, string(forward))
+}
+
+func TestFilterAnswersAPingOfTheIDEItself(t *testing.T) {
+	// arrange
+	_, f := project(t)
+
+	// act
+	forward, reply := f.toVM([]byte(`{"jsonrpc":"2.0","id":"p1","method":"ping"}`))
+
+	// assert
+	assert.Nil(t, forward)
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":"p1","result":{}}`, string(reply))
 }

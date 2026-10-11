@@ -213,30 +213,39 @@ func (f *filter) toIDE(data []byte) (forward, reply []byte, err error) {
 	return forward, nil, err
 }
 
-// toVM decides about a message of the IDE and returns what goes on to the
-// VM: answers to the requests the filter passed on, fit for the VM, and
-// the notifications that tell Claude Code what the person does in the
-// project.
-func (f *filter) toVM(data []byte) []byte {
+// toVM decides about a message of the IDE: what goes on to the VM, or what
+// goes back to the IDE in its place. Answers to the requests the filter
+// passed on go to the VM, fit for it, and so do the notifications that
+// tell Claude Code what the person does in the project. The filter answers
+// a ping of the IDE itself, so that the IDE keeps the link, without
+// letting the IDE ask the VM anything.
+func (f *filter) toVM(data []byte) (forward, reply []byte) {
 	m, ok := parse(data)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	if method, isRequest := m.method(); isRequest {
-		if _, hasID := m["id"]; hasID || !f.notification(method, m) {
-			return nil
+		id, hasID := m["id"]
+		if hasID && method == "ping" {
+			reply, _ = json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}})
+
+			return nil, reply
+		}
+
+		if hasID || !f.notification(method, m) {
+			return nil, nil
 		}
 	} else if !f.answer(m) {
-		return nil
+		return nil, nil
 	}
 
 	forward, err := json.Marshal(m)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
-	return forward
+	return forward, nil
 }
 
 // answer makes an answer of the IDE fit for the VM, with the ID the VM

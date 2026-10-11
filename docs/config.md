@@ -189,9 +189,9 @@ with its own.
 
 ## ide
 
-Claude Code can use the IDE that has your project open, like VS Code. It sees the
-code you select, shows its changes as a diff in the editor and reads the
-errors the IDE reports. This is off by default, because aibox then passes
+Claude Code can use the IDE that has your project open, like VS Code or
+GoLand. It sees the code you select, shows its changes as a diff in the
+editor and reads the errors the IDE reports. This is off by default, because aibox then passes
 messages between the VM and a program on your machine. To turn it on, set:
 
 ```yaml

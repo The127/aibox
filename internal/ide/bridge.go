@@ -128,8 +128,13 @@ func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		err := pump(ctx, ide, func(message []byte) error {
-			if forward := filter.toVM(message); forward != nil {
+			forward, reply := filter.toVM(message)
+			if forward != nil {
 				return vm.Write(ctx, websocket.MessageText, forward)
+			}
+
+			if reply != nil {
+				return ide.Write(ctx, websocket.MessageText, reply)
 			}
 
 			b.logf("held back from the VM: %s", summary(message))

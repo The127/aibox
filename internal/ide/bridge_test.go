@@ -343,3 +343,14 @@ func TestBridgeKeepsOneLinkAndANewOneReplacesTheOld(t *testing.T) {
 	_, _, err = old.Read(ctx)
 	assert.Error(t, err)
 }
+
+func TestBridgeAnswersAPingOfTheIDE(t *testing.T) {
+	// arrange
+	f, _ := linked(t)
+
+	// act
+	f.send <- `{"jsonrpc":"2.0","id":7,"method":"ping"}`
+
+	// assert
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":7,"result":{}}`, arrived(t, f))
+}

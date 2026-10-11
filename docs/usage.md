@@ -48,10 +48,10 @@ disk never gets wiped.
 
 ## In your IDE
 
-Claude Code can work with VS Code: it sees the code you select, shows its
-changes as a diff in the editor and reads the errors of the Problems panel.
-On your machine the Claude Code extension of the IDE does this through a
-server that only listens on your machine. The VM can't reach it, and it
+Claude Code can work with your IDE, like VS Code or GoLand: it sees the
+code you select, shows its changes as a diff in the editor and reads the
+errors the IDE reports. On your machine the IDE's Claude Code extension or
+plugin does this through a server that only listens on your machine. The VM can't reach it, and it
 shouldn't, because that server also runs code and opens files anywhere.
 
 aibox can link the two for you. It's off until you turn it on in the
@@ -61,7 +61,7 @@ aibox can link the two for you. It's off until you turn it on in the
 ide: true
 ```
 
-Then open the project in VS Code and start `aibox run` in its terminal.
+Then open the project in your IDE and start `aibox run` in its terminal.
 Claude Code in the VM connects to the IDE by itself. `/ide` shows it as
 connected. aibox only passes on what the IDE integration needs, and only for
 files in the project:
@@ -83,8 +83,8 @@ in the IDE. When you accept or edit a diff in the IDE, the IDE writes the
 file itself, and the VM could have turned it into a link to a file outside
 the project. See [What aibox does not protect](security.md#what-aibox-does-not-protect).
 
-aibox has been tested with VS Code. JetBrains IDEs use the same way to
-connect, but aibox may hold back some of what their plugin asks for.
+aibox has been tested with VS Code and GoLand. Other JetBrains IDEs use the
+same plugin and should work too.
 
 ### How it works
 

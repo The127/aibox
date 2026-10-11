@@ -34,6 +34,17 @@ func writeLock(t *testing.T, dir, name, ideName string, folders []string, at tim
 	require.NoError(t, os.Chtimes(path, at, at))
 }
 
+// jsonText is the text as a JSON string, so that a path of Windows with
+// its backslashes fits into a message of a test.
+func jsonText(t *testing.T, text string) string {
+	t.Helper()
+
+	data, err := json.Marshal(text)
+	require.NoError(t, err)
+
+	return string(data)
+}
+
 func folder(t *testing.T, parts ...string) string {
 	t.Helper()
 
@@ -141,9 +152,9 @@ func TestFindSkipsWhatIsNoLockFileOfAWebSocket(t *testing.T) {
 	}
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "1001.lock"), []byte("{not json"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "1002.lock"), []byte(`{"workspaceFolders":["`+project+`"],"transport":"sse","authToken":"t"}`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "1003.lock"), []byte(`{"workspaceFolders":["`+project+`"],"transport":"ws"}`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "1004.lock"), []byte(`{"workspaceFolders":["`+project+`"],"transport":"ws","authToken":"`+strings.Repeat("x", 64<<10)+`"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "1002.lock"), []byte(`{"workspaceFolders":[`+jsonText(t, project)+`],"transport":"sse","authToken":"t"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "1003.lock"), []byte(`{"workspaceFolders":[`+jsonText(t, project)+`],"transport":"ws"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "1004.lock"), []byte(`{"workspaceFolders":[`+jsonText(t, project)+`],"transport":"ws","authToken":"`+strings.Repeat("x", 64<<10)+`"}`), 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "1005.lock"), 0o700))
 
 	// act
@@ -158,7 +169,7 @@ func TestFindReadsALockFileOfTheMostBytesAllowed(t *testing.T) {
 	// arrange
 	dir, root := t.TempDir(), t.TempDir()
 	project := folder(t, root, "aibox")
-	head := `{"workspaceFolders":["` + project + `"],"transport":"ws","authToken":"`
+	head := `{"workspaceFolders":[` + jsonText(t, project) + `],"transport":"ws","authToken":"`
 	tail := `"}`
 	data := head + strings.Repeat("x", 64<<10-len(head)-len(tail)) + tail
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "1001.lock"), []byte(data), 0o600))
@@ -202,18 +213,6 @@ func TestFindWithoutTheFolderOfTheLockFilesFindsNothing(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Empty(t, ides)
-}
-
-func TestFindFailsWhenTheFolderOfTheLockFilesCannotBeRead(t *testing.T) {
-	// arrange
-	file := filepath.Join(t.TempDir(), "ide")
-	require.NoError(t, os.WriteFile(file, nil, 0o600))
-
-	// act
-	_, err := ide.Find(file, t.TempDir())
-
-	// assert
-	assert.ErrorContains(t, err, "read the lock files of the IDEs")
 }
 
 func TestIDEPrintsWithoutItsToken(t *testing.T) {

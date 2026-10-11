@@ -28,12 +28,12 @@ const outside = `{"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"aibox
 func TestFilterPassesAnAllowedToolWithThePathsOfTheHost(t *testing.T) {
 	// arrange
 	host, f := project(t)
-	file := filepath.ToSlash(filepath.Join(host, "main.go"))
+	file := jsonString(filepath.Join(host, "main.go"))
 
 	tests := map[string]struct{ call, want string }{
 		"openDiff": {
 			`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":"/project/main.go","new_file_path":"/project/main.go","new_file_contents":"package main\n","tab_name":"t"}}}`,
-			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":"` + file + `","new_file_path":"` + file + `","new_file_contents":"package main\n","tab_name":"t"}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":` + file + `,"new_file_path":` + file + `,"new_file_contents":"package main\n","tab_name":"t"}}}`,
 		},
 		"getDiagnostics of a file": {
 			`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"getDiagnostics","arguments":{"uri":"file:///project/main.go"}}}`,
@@ -315,7 +315,12 @@ func TestFilterHidesThePathOfTheHostButNotOfAFolderNextToIt(t *testing.T) {
 	forward, _ := f.toVM(answer)
 
 	// assert
-	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"text","text":"/project/a `+host+`-old/b /project"},{"type":"image","data":"x"}]}}`, string(forward))
+	want, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 5, "result": map[string]any{"content": []any{
+		map[string]any{"type": "text", "text": "/project/a " + host + "-old/b /project"},
+		map[string]any{"type": "image", "data": "x"},
+	}}})
+	require.NoError(t, err)
+	assert.JSONEq(t, string(want), string(forward))
 }
 
 func TestFilterAnswersAPingOfTheIDEItself(t *testing.T) {
@@ -328,4 +333,12 @@ func TestFilterAnswersAPingOfTheIDEItself(t *testing.T) {
 	// assert
 	assert.Nil(t, forward)
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":"p1","result":{}}`, string(reply))
+}
+
+// jsonString is the text as a JSON string, so that a path of Windows with
+// its backslashes fits into a message of a test.
+func jsonString(text string) string {
+	data, _ := json.Marshal(text)
+
+	return string(data)
 }

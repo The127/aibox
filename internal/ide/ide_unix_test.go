@@ -57,3 +57,16 @@ func TestFindSkipsALockFileThatIsASymlink(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, ides)
 }
+
+// Windows reports a file where the folder should be as a missing folder.
+func TestFindFailsWhenTheFolderOfTheLockFilesCannotBeRead(t *testing.T) {
+	// arrange
+	file := filepath.Join(t.TempDir(), "ide")
+	require.NoError(t, os.WriteFile(file, nil, 0o600))
+
+	// act
+	_, err := ide.Find(file, t.TempDir())
+
+	// assert
+	assert.ErrorContains(t, err, "read the lock files of the IDEs")
+}

@@ -45,6 +45,9 @@ var maxMessage = func() int {
 // ErrMessageTooLong is a message longer than either side reads.
 var ErrMessageTooLong = errors.New("the message is too long")
 
+// ErrBadMessage is a line that is not a message of the protocol.
+var ErrBadMessage = errors.New("not a message of the protocol")
+
 // Op is what a request asks of the service.
 type Op string
 
@@ -133,9 +136,10 @@ func NewReader(r io.Reader) *bufio.Reader {
 
 // Read reads the next message, one line, into message, which should be a
 // new value: fields the line leaves out keep what message had. Read waits
-// for the line however long it takes, so a caller that reads from someone
-// it doesn't trust sets a deadline. After ErrMessageTooLong the rest of
-// the line is still unread, so the stream is of no further use.
+// for the line however long it takes; a caller that must not wait closes
+// the stream. After ErrMessageTooLong the rest of the line is still
+// unread, so the stream is of no further use; after ErrBadMessage it is,
+// as the line was read whole.
 func Read(r *bufio.Reader, message any) error {
 	line, err := r.ReadSlice('\n')
 	if errors.Is(err, bufio.ErrBufferFull) {
@@ -147,7 +151,7 @@ func Read(r *bufio.Reader, message any) error {
 	}
 
 	if err := json.Unmarshal(line, message); err != nil {
-		return fmt.Errorf("decode the message: %w", err)
+		return fmt.Errorf("%w: %w", ErrBadMessage, err)
 	}
 
 	return nil

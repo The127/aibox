@@ -16,8 +16,7 @@ import (
 const lxMod = "$LXMOD"
 
 // modeBits are the bits of a mode kept in the attribute. The type comes
-// from NTFS, never from the attribute. The p9 library passes on the
-// permissions and the sticky bit only, so setuid and setgid never arrive.
+// from NTFS, never from the attribute.
 const modeBits = 0o7777
 
 // readMode reads the mode the guest set on the file, if it set one. The

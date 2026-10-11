@@ -1,5 +1,3 @@
-//go:build windows
-
 // Package hcs talks to the Host Compute Service of Windows, which runs VMs
 // on Hyper-V, through computecore.dll and nothing else: it creates, starts,
 // ends and lists compute systems and grants a VM access to files on the

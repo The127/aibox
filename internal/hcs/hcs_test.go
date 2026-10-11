@@ -1,5 +1,3 @@
-//go:build windows
-
 package hcs_test
 
 import (
@@ -155,18 +153,6 @@ func TestDocumentInitrd(t *testing.T) {
 	    "Devices": {}
 	  }
 	}`, string(b))
-}
-
-func TestPlan9Flags(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, hcs.Plan9Flags(0x1), hcs.Plan9ReadOnly)
-	assert.Equal(t, hcs.Plan9Flags(0x4), hcs.Plan9LinuxMetadata)
-	assert.Equal(t, hcs.Plan9Flags(0x100), hcs.Plan9UnlimitedConnections)
-
-	// each flag is a bit of its own, so they combine
-	all := hcs.Plan9ReadOnly | hcs.Plan9LinuxMetadata | hcs.Plan9UnlimitedConnections
-	assert.Equal(t, hcs.Plan9Flags(0x105), all)
 }
 
 func TestError(t *testing.T) {

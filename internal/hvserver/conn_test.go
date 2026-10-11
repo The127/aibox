@@ -82,6 +82,7 @@ type fixture struct {
 	calls   *calls
 	docs    []hcs.Document
 	diskErr error
+	granted []string
 	client  net.Conn
 	r       *bufio.Reader
 	done    chan struct{}
@@ -115,21 +116,18 @@ const aStateDisk = `C:\Users\me\.aibox\projects\x\state.ext4`
 
 // fakePeer is the client of a connection, who hands over a state disk
 // under a handle; diskErr refuses it.
-type fakePeer struct {
-	f       *fixture
-	diskErr error
-}
+type fakePeer struct{ f *fixture }
 
 func (p fakePeer) client() (hvservice.Client, error) {
 	return hvservice.Client{User: "S-1-5-21-1-2-3-1001"}, nil
 }
 
-func (p fakePeer) stateDisk(_ context.Context, id string, handle uint64) (stateDisk, error) {
-	if p.diskErr != nil {
-		return stateDisk{}, p.diskErr
+func (p fakePeer) stateDisk(id string, handle uint64) (stateDisk, error) {
+	if p.f.diskErr != nil {
+		return stateDisk{}, p.f.diskErr
 	}
 
-	p.f.calls.add(fmt.Sprintf("grant handle %d to %s", handle, id))
+	p.f.granted = append(p.f.granted, fmt.Sprintf("grant handle %d to %s", handle, id))
 
 	return stateDisk{path: aStateDisk, revoke: func() error {
 		p.f.calls.add("revoke")
@@ -140,7 +138,7 @@ func (p fakePeer) stateDisk(_ context.Context, id string, handle uint64) (stateD
 
 // peer is the fake peer of the fixture's connection.
 func (f *fixture) peer() fakePeer {
-	return fakePeer{f: f, diskErr: f.diskErr}
+	return fakePeer{f: f}
 }
 
 // serve serves the connection with ctx until it ends.
@@ -211,10 +209,9 @@ func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	assert.Equal(t, aRuntimeID.String(), created.RuntimeID)
 	assert.True(t, strings.HasPrefix(created.ConsolePipe, `\\.\pipe\aibox-console-`))
 	assert.Equal(t, hvservice.Reply{}, started)
-	calls := f.calls.all()
-	require.NotEmpty(t, calls)
-	assert.True(t, strings.HasPrefix(calls[0], "grant handle 420 to "), calls[0])
-	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, calls[1:])
+	require.Len(t, f.granted, 1)
+	assert.True(t, strings.HasPrefix(f.granted[0], "grant handle 420 to "), f.granted[0])
+	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all())
 	assert.Zero(t, f.srv.ledger.used, "the memory of the VM is free again")
 
 	require.Len(t, f.docs, 1)
@@ -320,7 +317,7 @@ func TestAVMThatFailsToBeMadeTakesNoMemory(t *testing.T) {
 	// assert
 	assert.Contains(t, reply.Error, "HRESULT 0x80070005")
 	assert.Zero(t, f.srv.ledger.used)
-	assert.Equal(t, []string{"create", "revoke"}, f.calls.all()[1:], "the VM's access to the state disk is gone with it")
+	assert.Equal(t, []string{"create", "revoke"}, f.calls.all(), "the VM's access to the state disk is gone with it")
 }
 
 func TestAVMEndsThoughTheServicesContextHas(t *testing.T) {
@@ -337,7 +334,7 @@ func TestAVMEndsThoughTheServicesContextHas(t *testing.T) {
 	f.hangUp()
 
 	// assert
-	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all()[1:], "the VM ended though the service's context had")
+	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all(), "the VM ended though the service's context had")
 }
 
 func TestStoppingTheServiceStopsAVMBeingMade(t *testing.T) {
@@ -426,7 +423,7 @@ func TestAVMThatFailsHalfwayEndsAndLetsTheClientMakeAnother(t *testing.T) {
 
 			// assert
 			assert.NotEmpty(t, failed.Error)
-			assert.Equal(t, tt.want, f.calls.all()[1:], "the VM ended")
+			assert.Equal(t, tt.want, f.calls.all(), "the VM ended")
 			assert.Zero(t, f.srv.ledger.used, "and gave its memory back")
 			assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
 		})
@@ -463,7 +460,7 @@ func TestAVMTheHostHasNoMemoryLeftForTakesNoStateDisk(t *testing.T) {
 
 	// assert
 	assert.Contains(t, reply.Error, "too little memory")
-	assert.Equal(t, []string{"revoke"}, f.calls.all()[1:], "the VM's access to the state disk is taken away again")
+	assert.Equal(t, []string{"revoke"}, f.calls.all(), "the VM's access to the state disk is taken away again")
 }
 
 func TestAStopEndsTheVMBeforeItIsAnsweredAndLetsTheClientMakeAnother(t *testing.T) {
@@ -480,7 +477,7 @@ func TestAStopEndsTheVMBeforeItIsAnsweredAndLetsTheClientMakeAnother(t *testing.
 
 	// assert
 	assert.Equal(t, hvservice.Reply{}, stopped)
-	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all()[1:], "the VM was gone before the answer")
+	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all(), "the VM was gone before the answer")
 	assert.Zero(t, f.srv.ledger.used)
 	assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
 }

@@ -49,33 +49,28 @@ func listen(path, sddl string) (net.Listener, error) {
 type pipePeer struct {
 	pipe  windows.Handle
 	disks stateDisks
-	// err is why the connection is no pipe, which every question about
-	// the client answers with
-	err error
 }
 
-// peerOf is the peer of a connection on the pipe.
+// peerOf is the peer of a connection on the pipe. A connection that is no
+// pipe tells nothing of its client, so every question about it fails.
 func peerOf(conn net.Conn, disks stateDisks) peer {
 	pipe, ok := conn.(interface{ Fd() uintptr })
 	if !ok {
-		return pipePeer{err: fmt.Errorf("a connection that is no pipe: %T", conn)}
+		return noPeer{fmt.Errorf("a connection that is no pipe: %T", conn)}
 	}
 
 	return pipePeer{pipe: windows.Handle(pipe.Fd()), disks: disks}
 }
 
-func (p pipePeer) client() (hvservice.Client, error) {
-	if p.err != nil {
-		return hvservice.Client{}, p.err
-	}
+func (p pipePeer) client() (hvservice.Client, error) { return hvservice.ClientOf(p.pipe) }
 
-	return hvservice.ClientOf(p.pipe)
+func (p pipePeer) stateDisk(id string, handle uint64) (stateDisk, error) {
+	return p.disks.take(p.pipe, id, handle)
 }
 
-func (p pipePeer) stateDisk(ctx context.Context, id string, handle uint64) (stateDisk, error) {
-	if p.err != nil {
-		return stateDisk{}, p.err
-	}
+// noPeer is the peer of a connection that tells nothing of its client.
+type noPeer struct{ err error }
 
-	return p.disks.take(ctx, p.pipe, id, handle)
-}
+func (p noPeer) client() (hvservice.Client, error) { return hvservice.Client{}, p.err }
+
+func (p noPeer) stateDisk(string, uint64) (stateDisk, error) { return stateDisk{}, p.err }

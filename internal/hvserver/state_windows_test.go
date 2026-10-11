@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 
+	"github.com/the127/aibox/internal/hcs"
 	"github.com/the127/aibox/internal/hvservice"
 )
 
@@ -21,6 +22,7 @@ import (
 type grants struct {
 	granted, revoked []string
 	grantErr         error
+	revokeErr        error
 	onGrant          func()
 }
 
@@ -40,6 +42,10 @@ func (g *grants) disks() stateDisks {
 			return nil
 		},
 		revoke: func(id, path string) error {
+			if g.revokeErr != nil {
+				return g.revokeErr
+			}
+
 			g.revoked = append(g.revoked, id+" "+path)
 
 			return nil
@@ -121,7 +127,7 @@ func TestTakeLetsTheVMAtTheFileOfTheHandle(t *testing.T) {
 	g := &grants{}
 
 	// act
-	disk, err := g.disks().take(t.Context(), pipeOf(pipe), "vm-1", handle)
+	disk, err := g.disks().take(pipeOf(pipe), "vm-1", handle)
 
 	// assert
 	require.NoError(t, err)
@@ -191,7 +197,7 @@ func TestTakeRefusesWhatIsNoFileOfTheClient(t *testing.T) {
 			g := &grants{}
 
 			// act
-			_, err := g.disks().take(t.Context(), pipeOf(pipe), "vm-1", handle)
+			_, err := g.disks().take(pipeOf(pipe), "vm-1", handle)
 
 			// assert
 			assert.ErrorIs(t, err, hvservice.ErrBadRequest)
@@ -246,7 +252,7 @@ func TestTakeRevokesAGrantToAPathThatChangedMeanwhile(t *testing.T) {
 	}}
 
 	// act
-	_, err := g.disks().take(t.Context(), pipeOf(pipe), "vm-1", handle)
+	_, err := g.disks().take(pipeOf(pipe), "vm-1", handle)
 
 	// assert
 	assert.ErrorIs(t, err, hvservice.ErrBadRequest)
@@ -263,7 +269,7 @@ func TestTakeTellsAGrantThatFailed(t *testing.T) {
 	g := &grants{grantErr: context.DeadlineExceeded}
 
 	// act
-	_, err := g.disks().take(t.Context(), pipeOf(pipe), "vm-1", handle)
+	_, err := g.disks().take(pipeOf(pipe), "vm-1", handle)
 
 	// assert
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
@@ -299,4 +305,23 @@ func TestHCSPathRefusesWhatIsOnNoDriveOfThisMachine(t *testing.T) {
 			assert.ErrorIs(t, err, hvservice.ErrBadRequest)
 		})
 	}
+}
+
+func TestRevokeTakesAPathThatIsGoneForRevoked(t *testing.T) {
+	t.Parallel()
+
+	// arrange: as a task's disk is, unlinked while its VM ran
+	pipe := servedPipe(t)
+	_, handle := aDisk(t, t.TempDir())
+	g := &grants{}
+	g.revokeErr = &hcs.Error{Op: "HcsRevokeVmAccess", HRESULT: 0x80070002}
+
+	disk, err := g.disks().take(pipeOf(pipe), "vm-1", handle)
+	require.NoError(t, err)
+
+	// act
+	err = disk.revoke()
+
+	// assert
+	assert.NoError(t, err)
 }

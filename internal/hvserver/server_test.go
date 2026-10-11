@@ -42,6 +42,6 @@ func TestTheServiceEndsTheVMsOfItsConnectionsWhenItStops(t *testing.T) {
 
 	// assert
 	require.NoError(t, <-ran)
-	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all()[1:], "run returned once the VM had ended")
+	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all(), "run returned once the VM had ended")
 	assert.Zero(t, f.srv.ledger.used)
 }

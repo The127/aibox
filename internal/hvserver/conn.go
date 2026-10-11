@@ -26,7 +26,7 @@ type peer interface {
 	client() (hvservice.Client, error)
 	// stateDisk takes the state disk the client holds open under the
 	// handle, lets the VM of the id at it, and tells its path.
-	stateDisk(ctx context.Context, id string, handle uint64) (stateDisk, error)
+	stateDisk(id string, handle uint64) (stateDisk, error)
 }
 
 // stateDisk is the state disk of a client as the VM gets it, and how to
@@ -176,7 +176,7 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 		return hvservice.Reply{}, err
 	}
 
-	disk, err := p.stateDisk(ctx, id.String(), c.State)
+	disk, err := p.stateDisk(id.String(), c.State)
 	if err != nil {
 		return hvservice.Reply{}, err
 	}

@@ -1,7 +1,6 @@
 package hvserver
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,10 +8,19 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/the127/aibox/internal/hcs"
 	"github.com/the127/aibox/internal/hvservice"
 )
 
 var procAccessCheck = windows.NewLazySystemDLL("advapi32.dll").NewProc("AccessCheck")
+
+// hresultOf is the HRESULT the Host Compute Service fails a call with for
+// the Win32 error.
+func hresultOf(err windows.Errno) uint32 {
+	const win32Facility = 0x80070000
+
+	return win32Facility | uint32(err) //nolint:gosec // a Win32 error code fits the low 16 bits
+}
 
 // stateDisks takes the state disks clients hand over by handle, and lets
 // VMs at them with grant and takes that away with revoke, which the tests
@@ -39,7 +47,7 @@ type fileIdentity struct {
 // writes it with the access the service grants. The grant goes by path,
 // so the file behind the path is checked to be the one of the handle once
 // the grant is made.
-func (d stateDisks) take(ctx context.Context, pipe windows.Handle, id string, handle uint64) (stateDisk, error) {
+func (d stateDisks) take(pipe windows.Handle, id string, handle uint64) (stateDisk, error) {
 	h, err := duplicate(pipe, handle)
 	if err != nil {
 		return stateDisk{}, err
@@ -65,7 +73,18 @@ func (d stateDisks) take(ctx context.Context, pipe windows.Handle, id string, ha
 		return stateDisk{}, err
 	}
 
-	revoke := func() error { return d.revoke(id, path) }
+	// a task's disk is unlinked while its VM runs, so the path is gone by
+	// the time the VM is, and its entry with it
+	revoke := func() error {
+		var hcsErr *hcs.Error
+
+		err := d.revoke(id, path)
+		if errors.As(err, &hcsErr) && hcsErr.HRESULT == hresultOf(windows.ERROR_FILE_NOT_FOUND) {
+			return nil
+		}
+
+		return err
+	}
 
 	if err := same(path, want); err != nil {
 		return stateDisk{}, errors.Join(err, revoke())
@@ -92,7 +111,7 @@ func duplicate(pipe windows.Handle, handle uint64) (windows.Handle, error) {
 	defer func() { _ = windows.CloseHandle(process) }()
 
 	var h windows.Handle
-	if err := windows.DuplicateHandle(process, windows.Handle(handle), windows.CurrentProcess(), &h, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil { //nolint:gosec // the number is the client's handle, which the copy checks
+	if err := windows.DuplicateHandle(process, windows.Handle(handle), windows.CurrentProcess(), &h, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
 		return 0, fmt.Errorf("%w: the state disk is not an open file of aibox: %w", hvservice.ErrBadRequest, err)
 	}
 
@@ -127,7 +146,7 @@ func diskFile(h windows.Handle) (fileIdentity, error) {
 	}
 
 	var identity fileIdentity
-	if err := windows.GetFileInformationByHandleEx(h, windows.FileIdInfo, (*byte)(unsafe.Pointer(&identity)), uint32(unsafe.Sizeof(identity))); err != nil {
+	if err := windows.GetFileInformationByHandleEx(h, windows.FileIdInfo, (*byte)(unsafe.Pointer(&identity)), uint32(unsafe.Sizeof(identity))); err != nil { //nolint:gosec // the struct is handed to the call as the ABI asks
 		return fileIdentity{}, fmt.Errorf("tell the state disk from other files: %w", err)
 	}
 
@@ -200,10 +219,11 @@ func writable(pipe, h windows.Handle) error {
 			allowed    int32
 		)
 
-		r, _, err := procAccessCheck.Call( //nolint:gosec // the structs are handed to the call as the ABI asks
-			uintptr(unsafe.Pointer(sd)), uintptr(token), windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE,
-			uintptr(unsafe.Pointer(&fileMapping)), uintptr(unsafe.Pointer(&privileges)), uintptr(unsafe.Pointer(&size)),
-			uintptr(unsafe.Pointer(&granted)), uintptr(unsafe.Pointer(&allowed)))
+		// the structs are handed to the call as the ABI asks
+		r, _, err := procAccessCheck.Call(
+			uintptr(unsafe.Pointer(sd)), uintptr(token), windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, //nolint:gosec // see above
+			uintptr(unsafe.Pointer(&fileMapping)), uintptr(unsafe.Pointer(&privileges)), uintptr(unsafe.Pointer(&size)), //nolint:gosec // see above
+			uintptr(unsafe.Pointer(&granted)), uintptr(unsafe.Pointer(&allowed))) //nolint:gosec // see above
 		if r == 0 {
 			return fmt.Errorf("check the client's access to the state disk: %w", err)
 		}

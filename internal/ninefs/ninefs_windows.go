@@ -488,6 +488,12 @@ func (f *file) ReadAt(p []byte, offset int64) (int, error) {
 		return 0, linux.EBADF
 	}
 
+	// Windows reads offset -1 and -2 as the end of the file and its current
+	// position, a guest's offset beyond int64
+	if offset < 0 {
+		return 0, linux.EINVAL
+	}
+
 	// one call at the offset, which the handle never keeps between calls
 	var n uint32
 

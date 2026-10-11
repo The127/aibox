@@ -347,3 +347,34 @@ func TestReadsAndWritesGoToTheirOffset(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "package MAIN\n", string(b))
 }
+
+func TestAnOffsetBeyondInt64IsRefused(t *testing.T) {
+	t.Parallel()
+
+	// arrange: Windows would read offset -1 as the end of the file
+	f := opened(t, direct(t, tree(t)), "src", "main.go")
+
+	// act
+	_, writeErr := f.WriteAt([]byte("x"), -1)
+	_, readErr := f.ReadAt(make([]byte, 1), -2)
+
+	// assert
+	assert.ErrorIs(t, writeErr, linux.EINVAL)
+	assert.ErrorIs(t, readErr, linux.EINVAL)
+}
+
+func TestAnUnlinkOrRenameOfNoNameIsRefused(t *testing.T) {
+	t.Parallel()
+
+	// arrange: past the library, which refuses an empty name itself, the
+	// server refuses it too
+	src := walk(t, direct(t, tree(t)), "src")
+
+	// act
+	unlinkErr := src.UnlinkAt("", atRemoveDir)
+	renameErr := src.RenameAt("", src, "elsewhere")
+
+	// assert
+	assert.ErrorIs(t, unlinkErr, linux.EINVAL)
+	assert.ErrorIs(t, renameErr, linux.EINVAL)
+}

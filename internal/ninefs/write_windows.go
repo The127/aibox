@@ -58,6 +58,11 @@ func (f *file) WriteAt(p []byte, offset int64) (int, error) {
 		return 0, linux.EBADF
 	}
 
+	// as for ReadAt: -1 would append
+	if offset < 0 {
+		return 0, linux.EINVAL
+	}
+
 	var n uint32
 
 	err := windows.WriteFile(f.open, p, &n, at(offset))
@@ -175,7 +180,7 @@ func (f *file) RenameAt(oldName string, newDir p9.File, newName string) error {
 }
 
 func (f *file) Rename(newDir p9.File, newName string) error {
-	return f.with("", windows.DELETE|windows.FILE_READ_ATTRIBUTES, func(h windows.Handle) error {
+	return f.withSelf(windows.DELETE|windows.FILE_READ_ATTRIBUTES, func(h windows.Handle) error {
 		return renameTo(h, f.share, newDir, newName)
 	})
 }
@@ -277,7 +282,7 @@ func (f *file) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 }
 
 func (f *file) truncate(size uint64) error {
-	return f.with("", windows.FILE_WRITE_DATA, func(h windows.Handle) error {
+	return f.withSelf(windows.FILE_WRITE_DATA, func(h windows.Handle) error {
 		end := int64(size) //nolint:gosec // a size beyond int64 turns negative, which NTFS refuses
 
 		return setInfo(h, windows.FileEndOfFileInfo, &end)
@@ -304,7 +309,7 @@ func (f *file) setTimes(valid p9.SetAttrMask, attr p9.SetAttr) error {
 		}
 	}
 
-	return f.with("", windows.FILE_WRITE_ATTRIBUTES, func(h windows.Handle) error {
+	return f.withSelf(windows.FILE_WRITE_ATTRIBUTES, func(h windows.Handle) error {
 		return setInfo(h, windows.FileBasicInfo, &basic)
 	})
 }
@@ -326,7 +331,7 @@ func (f *file) chmod(perm p9.FileMode) error {
 		return err
 	}
 
-	return f.with("", windows.FILE_WRITE_EA, func(h windows.Handle) error {
+	return f.withSelf(windows.FILE_WRITE_EA, func(h windows.Handle) error {
 		return writeMode(h, typeOf(info.FileAttributes, info.tag), perm)
 	})
 }

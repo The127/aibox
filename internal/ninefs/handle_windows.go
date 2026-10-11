@@ -12,18 +12,26 @@ import (
 const changeAccess = windows.DELETE | windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA |
 	windows.FILE_WRITE_ATTRIBUTES | windows.FILE_WRITE_EA | windows.WRITE_DAC | windows.WRITE_OWNER
 
-// with opens the name in the folder, or the file itself for an empty name,
-// again with the access, for fn. Every change of a file starts here, so a
-// read-only share refuses access to change it here.
+// with opens the name in the folder again with the access, for fn.
 func (f *file) with(name string, access uint32, fn func(h windows.Handle) error) error {
-	if access&changeAccess != 0 && f.share.readOnly {
-		return linux.EROFS
+	if err := checkName(name); err != nil {
+		return err
 	}
 
-	if name != "" {
-		if err := checkName(name); err != nil {
-			return err
-		}
+	return f.reopen(name, access, fn)
+}
+
+// withSelf opens the file itself again with the access, for fn.
+func (f *file) withSelf(access uint32, fn func(h windows.Handle) error) error {
+	return f.reopen("", access, fn)
+}
+
+// reopen is where every change of a file that exists starts, so a
+// read-only share refuses access to change a file here; making a new one
+// is refused in child.
+func (f *file) reopen(name string, access uint32, fn func(h windows.Handle) error) error {
+	if access&changeAccess != 0 && f.share.readOnly {
+		return linux.EROFS
 	}
 
 	h, err := openAt(f.h, name, access)

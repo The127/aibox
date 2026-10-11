@@ -104,5 +104,5 @@ aibox keeps Claude Code away from the rest of your machine. It does not check
 what Claude Code does with the things you give it. With `aibox run` the VM can
 change anything in your project folder, `.git` included, and a task can use
 every host and secret you allow it. Read
-[What the VM writes](what-the-vm-writes.md) and [Security](security.md) to
-see where the limits are.
+[What the VM writes](what-the-vm-writes.md), [Security](security.md) and the
+[Threat model](threat-model.md) to see where the limits are.

@@ -41,6 +41,23 @@ login and passes on what the list allows. When it refuses something, git in
 the VM shows you why. The broker writes what it refused, and every push it
 passed on, into `proxy.log`.
 
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+  participant git as git in the VM
+  participant broker as Broker in aibox
+  participant server as Git server
+  git->>broker: clone, fetch or push
+  broker->>broker: check it against the git list
+  alt allowed
+    broker->>server: the request, with your login
+    server-->>broker: answer
+    broker-->>git: answer
+  else refused
+    broker-->>git: why it was refused
+  end
+```
+
 The host doesn't need to be on the allow list for git.
 
 To `go get` a private module, set `GOPRIVATE` in `env`. For hosts other than

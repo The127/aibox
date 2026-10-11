@@ -5,6 +5,7 @@ runs in a fresh VM on a clone of the last commit. When it's done, you get its
 commits back as a git bundle to review, and the VM is deleted.
 
 ```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
 sequenceDiagram
   participant You
   participant aibox

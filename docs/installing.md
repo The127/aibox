@@ -1,12 +1,31 @@
 # Installing
 
-## macOS
+## Homebrew
 
-On a Mac with Apple silicon, install aibox with [Homebrew](https://brew.sh):
+On a Mac with Apple silicon or on Linux on amd64, install aibox with
+[Homebrew](https://brew.sh):
 
 ```
 brew install --cask the127/tap/aibox
 ```
+
+On Linux, Homebrew installs just the binary. Install QEMU, virtiofsd and
+bubblewrap from your distribution, not from Homebrew. aibox binds the
+libraries of QEMU into its sandbox, and it only knows `/usr/lib64` and the
+Nix store. A QEMU from Homebrew has its libraries somewhere else. Ubuntu
+also lets only its own bubblewrap make the namespaces that the sandbox
+needs.
+
+```
+sudo apt install qemu-system-x86 virtiofsd bubblewrap        # Debian, Ubuntu
+sudo dnf install qemu-system-x86-core virtiofsd bubblewrap   # Fedora
+```
+
+aibox takes the first of these programs on your `PATH`, and Homebrew puts
+its own folder first. If you installed any of them with Homebrew, uninstall
+them there.
+
+The rest of [Linux](#linux) applies too.
 
 ## Linux
 

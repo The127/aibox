@@ -19,9 +19,10 @@ Releases are made from the commit messages on `main`. Nobody tags by hand.
 
    Tags with a suffix such as `-rc.1` are marked as pre-releases.
 4. goreleaser also writes the Homebrew cask `aibox` to
-   [The127/homebrew-tap](https://github.com/The127/homebrew-tap). The cask
-   removes the quarantine from the binary, since macOS refuses to start a
-   downloaded program that is signed ad hoc and not notarized.
+   [The127/homebrew-tap](https://github.com/The127/homebrew-tap), for macOS
+   on arm64 and Linux on amd64. The cask removes the quarantine from the
+   binary, since macOS refuses to start a downloaded program that is signed
+   ad hoc and not notarized.
 5. cosign signs `checksums.txt` without a key. The workflow's own identity
    signs it, so there is no key or secret to keep. The signature is
    uploaded as `checksums.txt.sigstore.json`.

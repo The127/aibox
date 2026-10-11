@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/the127/aibox/internal/fence"
 	"github.com/the127/aibox/internal/ide"
 )
 
@@ -93,45 +92,13 @@ func linkIDE(found ide.IDE, project, home string, log io.Writer) ([]string, http
 		return nil, nil, err
 	}
 
-	if err := writeInHome(home, filepath.Join(".claude", "ide", strconv.Itoa(idePort)+".lock"), lock); err != nil {
+	// the VM can change its home, and a symlink it put there must not lead
+	// the write to a file of the host
+	if err := fence.WriteFile(home, filepath.Join(".claude", "ide", strconv.Itoa(idePort)+".lock"), lock); err != nil {
 		return nil, nil, fmt.Errorf("write the lock file of the IDE: %w", err)
 	}
 
 	env := []string{"CLAUDE_CODE_SSE_PORT=" + strconv.Itoa(idePort)}
 
 	return env, &ide.Bridge{IDE: found, Token: token, Project: project, Log: log}, nil
-}
-
-// writeInHome writes a new file into the home of the VM. The VM can change
-// that home, and a symlink it put there must not lead the write to a file
-// of the host. So the write stays inside the home, and whatever has the
-// name of the file goes first.
-func writeInHome(home, name string, data []byte) error {
-	root, err := os.OpenRoot(home)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = root.Close() }()
-
-	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
-		return err
-	}
-
-	if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-
-		return err
-	}
-
-	return f.Close()
 }

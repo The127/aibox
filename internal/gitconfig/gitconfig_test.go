@@ -37,7 +37,7 @@ func TestReadFollowsWhatGitUsesInTheFolder(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	identity := gitconfig.Read(repo)
+	identity := gitconfig.Read(repo, exec.Command)
 
 	// assert
 	assert.Equal(t, gitconfig.Identity{Name: "Global Name", Email: "repo@example.com"}, identity)
@@ -50,7 +50,7 @@ func TestReadIsEmptyWithoutAnIdentity(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 	// act
-	identity := gitconfig.Read(t.TempDir())
+	identity := gitconfig.Read(t.TempDir(), exec.Command)
 
 	// assert
 	assert.Equal(t, gitconfig.Identity{}, identity)

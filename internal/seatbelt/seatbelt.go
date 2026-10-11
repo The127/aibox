@@ -67,12 +67,40 @@ func Profile(ports []uint16) string {
 // run after every child of the process has started, because children
 // inherit it.
 func Apply(ports []uint16) error {
-	profile := C.CString(Profile(ports))
-	defer C.free(unsafe.Pointer(profile))
+	return ApplyProfile(Profile(ports))
+}
+
+// WriteProfile is a sandbox that allows everything but writing files
+// outside the folder, or anywhere but /dev/null when it is empty. The
+// sandbox compares the path a file really has, so the folder must have no
+// symlinks on its path.
+func WriteProfile(dir string) string {
+	var b strings.Builder
+
+	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	b.WriteString(`(allow file-write* (literal "/dev/null"))` + "\n")
+
+	if dir != "" {
+		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", quote(dir))
+	}
+
+	return b.String()
+}
+
+// quote is the path as a string of the profile language.
+func quote(path string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(path) + `"`
+}
+
+// ApplyProfile confines the whole process with the profile for good, as
+// Apply does.
+func ApplyProfile(profile string) error {
+	cProfile := C.CString(profile)
+	defer C.free(unsafe.Pointer(cProfile))
 
 	var reason *C.char
 
-	failed := C.confine(profile, &reason) //nolint:gocritic // the comparison is in the code cgo generates for the call
+	failed := C.confine(cProfile, &reason) //nolint:gocritic // the comparison is in the code cgo generates for the call
 	if failed != 0 {
 		defer C.sandbox_free_error(reason)
 

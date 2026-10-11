@@ -13,13 +13,14 @@ type Identity struct {
 }
 
 // Read returns the identity git uses for commits in dir on the host, or an
-// empty one when git has none or is not installed.
-func Read(dir string) Identity {
-	return Identity{Name: get(dir, "user.name"), Email: get(dir, "user.email")}
+// empty one when git has none or is not installed. command makes the
+// command that runs git, as exec.Command does.
+func Read(dir string, command func(name string, args ...string) *exec.Cmd) Identity {
+	return Identity{Name: get(dir, "user.name", command), Email: get(dir, "user.email", command)}
 }
 
-func get(dir, key string) string {
-	out, err := exec.Command("git", "-C", dir, "config", "--get", key).Output() //nolint:gosec // the keys are aibox's own constants
+func get(dir, key string, command func(name string, args ...string) *exec.Cmd) string {
+	out, err := command("git", "-C", dir, "config", "--get", key).Output()
 	if err != nil {
 		return ""
 	}

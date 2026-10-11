@@ -80,6 +80,7 @@ Everything the VM can reach on your machine goes through one of these.
 | The VM tries to | What stops it |
 |---|---|
 | read a file outside the project | The VM only sees its shares. |
+| get aibox to write a file outside through a symlink in the project or its home | aibox works in those folders in a helper that the kernel lets write only there. See [The host side](security.md#the-host-side). |
 | give itself more hosts, secrets or branches | The config isn't in the project, and aibox reads it once when it starts. |
 | write to a read-only mount | Your machine enforces read-only, not the VM. |
 | break out through a bug in its kernel | The VM has its own kernel, so a bug in it gives the attacker nothing on your machine. The kernel has no modules, no network drivers and no `bpf()`. The attacker then has to break the hypervisor too. |

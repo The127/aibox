@@ -100,12 +100,13 @@ func TestCheckReadsOnlyTheLow32BitsOfTheReturnValue(t *testing.T) {
 	assert.NoError(t, hcs.Check("start", 0xFFFFFFFF_00000000, ""))
 }
 
-func TestSummaryReadsTheListTheServiceAnswers(t *testing.T) {
+func TestSummaryReadsAListWithSystemsOfOtherPrograms(t *testing.T) {
 	t.Parallel()
 
 	// arrange
 	doc := `[{"Id":"275ad416-38f5-4fce-8daa-64d3588d9078","SystemType":"VirtualMachine",` +
-		`"Owner":"aibox-scratch","RuntimeId":"275ad416-38f5-4fce-8daa-64d3588d9078"}]`
+		`"Owner":"aibox-scratch","RuntimeId":"275ad416-38f5-4fce-8daa-64d3588d9078"},` +
+		`{"Id":"other","SystemType":"Container","Owner":"someone","RuntimeId":""}]`
 
 	// act
 	var systems []hcs.Summary
@@ -113,10 +114,10 @@ func TestSummaryReadsTheListTheServiceAnswers(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	require.Len(t, systems, 1)
-	assert.Equal(t, "275ad416-38f5-4fce-8daa-64d3588d9078", systems[0].ID)
-	assert.Equal(t, "aibox-scratch", systems[0].Owner)
-	assert.Equal(t, "275ad416-38f5-4fce-8daa-64d3588d9078", systems[0].RuntimeID.String())
+	assert.Equal(t, []hcs.Summary{
+		{ID: "275ad416-38f5-4fce-8daa-64d3588d9078", Owner: "aibox-scratch"},
+		{ID: "other", Owner: "someone"},
+	}, systems)
 }
 
 func TestPropertiesReadTheStateBesideTheSummary(t *testing.T) {

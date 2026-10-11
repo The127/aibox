@@ -323,6 +323,9 @@ func (s *System) Terminate(ctx context.Context) error {
 type Properties struct {
 	Summary
 
+	// RuntimeID is the id of the VM at the hypervisor, which is the one
+	// its Hyper-V socket is addressed by.
+	RuntimeID guid.GUID `json:"RuntimeId"`
 	// State is the state of the system, such as Created, Running or
 	// Stopped.
 	State string `json:"State"`
@@ -363,16 +366,15 @@ func (s *System) Close() error {
 	return nil
 }
 
-// Summary is what the service lists about a compute system. The list
-// leaves out the state, which Properties has.
+// Summary is what a sweep needs of a compute system the service lists. It
+// leaves the runtime id to Properties, since a list holds systems of other
+// programs too, and one id that is no GUID would fail to read the whole
+// list.
 type Summary struct {
 	// ID is the id the system was created under.
 	ID string `json:"Id"`
 	// Owner names the program the system belongs to.
 	Owner string `json:"Owner"`
-	// RuntimeID is the id of the VM at the hypervisor, which is the one
-	// its Hyper-V socket is addressed by.
-	RuntimeID guid.GUID `json:"RuntimeId"`
 }
 
 // Enumerate lists the compute systems of the owner, the Owner of their

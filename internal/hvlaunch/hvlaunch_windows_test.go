@@ -29,8 +29,10 @@ type fakeService struct {
 	mu   sync.Mutex
 	ops  []hvservice.Op
 	made *hvservice.Create
-	// refuse is what the service refuses a create with, if anything
-	refuse string
+	// refuse is what the service refuses a create with, refuseStart what
+	// it refuses a start with, if anything
+	refuse      string
+	refuseStart string
 	// stateGoneAtStop tells whether the state disk's name was gone when
 	// the VM was stopped, as a task's should be
 	stateGoneAtStop bool
@@ -83,6 +85,7 @@ func (s *fakeService) serve(conn net.Conn) {
 			}
 
 		case hvservice.OpStart:
+			reply.Error = s.refuseStart
 		}
 
 		s.mu.Unlock()
@@ -265,6 +268,21 @@ func TestRunTellsWhatTheServiceRefused(t *testing.T) {
 	// assert
 	assert.ErrorContains(t, err, "9 processors, not between 1 and the 8 the host has")
 	assert.Equal(t, []hvservice.Op{hvservice.OpCreate}, f.service.asked(), "nothing was started or stopped")
+}
+
+func TestRunDoesNotStopAVMThatDidNotStart(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+	f.service.refuseStart = "the service could not start the VM: HRESULT 0xC03A001A"
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	assert.ErrorContains(t, err, "HRESULT 0xC03A001A")
+	assert.Equal(t, []hvservice.Op{hvservice.OpCreate, hvservice.OpStart}, f.service.asked(), "the service ended the VM that did not start")
 }
 
 func TestRunRefusesAStateDiskAnotherVMHasOpen(t *testing.T) {

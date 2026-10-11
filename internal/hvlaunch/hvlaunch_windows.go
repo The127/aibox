@@ -200,8 +200,9 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		OnPaste:  spec.OnPaste,
 	})
 
+	// the service ends a VM that did not start, so there is none to stop
 	if _, err := s.ask(hvservice.Request{Op: hvservice.OpStart}); err != nil {
-		return host.Result(errors.Join(fmt.Errorf("start the VM: %w", err), s.stop()), stopTerminal(), spec.ConsoleLog)
+		return host.Result(fmt.Errorf("start the VM: %w", err), stopTerminal(), spec.ConsoleLog)
 	}
 
 	// the VM has the disk open, which keeps the data until it is gone. A

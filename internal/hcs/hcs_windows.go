@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -190,9 +191,14 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 
 // System is an open compute system of the service, a VM, from Create or
 // Open until Close. Its handle is one of the handles that keep a VM alive
-// whose Document says ShouldTerminateOnLastHandleClosed.
+// whose Document says ShouldTerminateOnLastHandleClosed. Its methods may be
+// called from several goroutines, so that one can terminate the VM while
+// another starts it.
 type System struct {
-	id     string
+	id string
+
+	// mu keeps Close from closing the handle while a call uses it.
+	mu     sync.RWMutex
 	handle uintptr
 }
 
@@ -276,7 +282,16 @@ func (s *System) ID() string {
 // call runs a call of the service that takes the system, an operation and
 // no options, and returns its result document.
 func (s *System) call(ctx context.Context, what string, proc *windows.LazyProc) (string, error) {
-	return run(ctx, what+" the compute system "+s.id, func(op operation) uintptr {
+	what += " the compute system " + s.id
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.handle == 0 {
+		return "", fmt.Errorf("%s: %w", what, ErrClosed)
+	}
+
+	return run(ctx, what, func(op operation) uintptr {
 		hresult, _, _ := proc.Call(s.handle, uintptr(op), 0)
 
 		return hresult
@@ -332,6 +347,9 @@ func (s *System) Properties(ctx context.Context) (Properties, error) {
 // service reports no error for it, so Close never returns one, but it is
 // an io.Closer.
 func (s *System) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.handle == 0 {
 		return nil
 	}

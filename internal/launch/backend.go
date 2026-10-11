@@ -64,6 +64,7 @@ func (b Backend) prepare(spec backend.Spec) (vm.Machine, Options, error) {
 		Ports:       spec.Ports,
 		Proxy:       spec.Proxy,
 		Env:         spec.Env,
+		OnPaste:     spec.OnPaste,
 		NoSandbox:   spec.Unsandboxed,
 	}
 

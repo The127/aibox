@@ -74,6 +74,9 @@ type Spec struct {
 	Stdin  *os.File
 	Stdout io.Writer
 	Stderr io.Writer
+	// OnPaste is called each time the person presses Ctrl+V on the
+	// terminal, or is nil.
+	OnPaste func()
 }
 
 // Mount is a host folder that appears read-only at Guest in the VM.

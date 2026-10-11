@@ -27,6 +27,8 @@ type Client struct {
 	Resized <-chan Size
 	// Env are variables for the command, as NAME=value.
 	Env []string
+	// OnPaste is called each time the person presses Ctrl+V, or is nil.
+	OnPaste func()
 }
 
 // NewClient prepares the terminal on stdin for a session: raw mode, its size
@@ -169,6 +171,10 @@ func (c Client) Attach(conn net.Conn) (int, error) {
 
 	s.Stdin = c.In
 	s.Stdout = c.Out
+
+	if c.In != nil && c.OnPaste != nil {
+		s.Stdin = watchPaste(c.In, c.OnPaste)
+	}
 
 	if err := s.RequestPty(c.Term, int(c.Size.Rows), int(c.Size.Cols), ssh.TerminalModes{}); err != nil {
 		return 0, fmt.Errorf("request a terminal: %w", err)

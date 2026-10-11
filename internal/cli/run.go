@@ -19,6 +19,7 @@ import (
 
 	"github.com/the127/aibox/internal/anthropic"
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/clipboard"
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitbroker"
 	"github.com/the127/aibox/internal/gitconfig"
@@ -26,6 +27,7 @@ import (
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
+	"github.com/the127/aibox/internal/vm"
 )
 
 // The programs that run the VM and the proxy would run with root rights on
@@ -128,6 +130,17 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		}
 	}
 
+	if r.config.Clipboard == nil || *r.config.Clipboard {
+		gate, helper, err := shareClipboard(deps, r.config.Allow.LoopbackPorts(), r.log)
+		if err != nil {
+			return err
+		}
+
+		defer func() { _ = helper.Close() }()
+
+		r.clipboard = gate
+	}
+
 	spec := r.spec(cmd)
 	spec.State = r.project.State
 	spec.Project = cwd
@@ -185,6 +198,9 @@ type projectRun struct {
 	// gets none, and ideHostPort is the port the IDE listens on
 	ide         http.Handler
 	ideHostPort uint16
+	// clipboard lets the VM read the clipboard right after Ctrl+V, or is
+	// nil when the VM gets none
+	clipboard *clipboard.Gate
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -320,6 +336,11 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 		spec.Loopback = append(spec.Loopback, brokerPort)
 	}
 
+	if r.clipboard != nil {
+		spec.Loopback = append(spec.Loopback, vm.ClipboardPort)
+		spec.OnPaste = r.clipboard.Arm
+	}
+
 	if r.ide != nil {
 		spec.Loopback = append(spec.Loopback, idePort)
 
@@ -350,9 +371,10 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 
 // local returns the handlers the proxy serves itself on the loopback of
 // the VM: the forwarder of the API key, the git broker, which writes to
-// log, and the link to the IDE. It is nil when the VM gets none of them.
+// log, the link to the IDE and the clipboard. It is nil when the VM gets
+// none of them.
 func (r projectRun) local(log io.Writer) func(host, port string) http.Handler {
-	if r.forwarder == nil && len(r.gitRemotes) == 0 && r.ide == nil {
+	if r.forwarder == nil && len(r.gitRemotes) == 0 && r.ide == nil && r.clipboard == nil {
 		return nil
 	}
 
@@ -368,6 +390,10 @@ func (r projectRun) local(log io.Writer) func(host, port string) http.Handler {
 
 	if r.ide != nil {
 		handlers[strconv.Itoa(idePort)] = r.ide
+	}
+
+	if r.clipboard != nil {
+		handlers[strconv.Itoa(int(vm.ClipboardPort))] = r.clipboard
 	}
 
 	return func(host, port string) http.Handler {

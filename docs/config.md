@@ -35,6 +35,7 @@ mounts:
   - ~/sdk/go1.26.8:/opt/go
 skills: all
 ide: true
+clipboard: false
 path:
   - /opt/go/bin
 env:
@@ -204,6 +205,20 @@ part about diffs.
 
 With `ide` turned on, your `env` can't set `CLAUDE_CODE_SSE_PORT`, because
 aibox sets it itself. Tasks never get the IDE, only `aibox run` does.
+
+## clipboard
+
+When you press Ctrl+V in Claude Code, it pastes the image on your clipboard.
+The VM can read your clipboard only right after you press the key, and only
+once. This is on by default. To turn it off, set:
+
+```yaml
+clipboard: false
+```
+
+The VM reaches the clipboard on port 3132 of its loopback, so with the
+clipboard on, `allow` can't name that port. Tasks never get the clipboard,
+only `aibox run` does. See [Pasting images](usage.md#pasting-images).
 
 ## path
 

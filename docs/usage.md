@@ -101,6 +101,43 @@ The bridge reads every message and passes on only the ones it knows, with
 It refuses paths outside the project, also through symlinks, and gives each
 request an ID of its own. `proxy.log` shows what it held back.
 
+## Pasting images
+
+Press Ctrl+V in Claude Code to paste the image on your clipboard, like a
+screenshot. Pasting text works like in any terminal, and so does copying.
+
+The VM can't read your clipboard whenever it likes. If it could, it would
+see every password you copy. aibox lets it read the clipboard only right
+after you press Ctrl+V, for 5 seconds, and only one image. If you don't want
+that either, set `clipboard: false` in the
+[project config](config.md#clipboard).
+
+Note that aibox watches for the key, not for Claude Code. Ctrl+V in another
+program in the VM, like bash or vim, lets the VM read the clipboard too. If
+you bind image paste in Claude Code to another key, aibox doesn't see it and
+pasting images stops working.
+
+On Linux aibox reads the clipboard with `wl-paste` under Wayland and with
+`xclip` under X. Install the one you need on your machine. On macOS it uses
+`osascript`.
+
+### How it works
+
+aibox reads what you type before it goes to the VM. It looks for Ctrl+V as
+the terminal sends it: as a control character, in the kitty keyboard
+protocol or with xterm's modifyOtherKeys. Text you paste into the terminal
+doesn't count.
+
+In the VM, `xclip` and `wl-paste` are aibox's init under another name. When
+Claude Code runs them for Ctrl+V, they ask aibox on port 3132 of the
+loopback. The first asks which types the clipboard holds, the second asks
+for the image. They answer nothing else, so Claude Code can't read text from
+your clipboard.
+
+Once the VM runs, aibox can't start programs any more. So before the VM
+starts, aibox starts a helper, a second aibox. The helper reads the
+clipboard when aibox asks and does nothing else. It ends with aibox.
+
 ## On macOS
 
 The VM runs arm64 Linux, so Mac programs don't run in it. If you mount a

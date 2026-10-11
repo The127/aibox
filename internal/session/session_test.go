@@ -265,6 +265,27 @@ func TestSessionTypesWhatTheClientSendsIntoTheProcess(t *testing.T) {
 	assert.Eventually(t, func() bool { return f.process.typed.String() == "ls\r" }, 5*time.Second, 10*time.Millisecond)
 }
 
+func TestSessionTellsTheClientOfCtrlVAndStillTypesIt(t *testing.T) {
+	// arrange
+	pasted := make(chan struct{}, 1)
+	f := newFixture(t, nil, func(c *session.Client) { c.OnPaste = func() { pasted <- struct{}{} } })
+	f.waitStarted(t)
+
+	// act
+	_, err := io.WriteString(f.keyboard, "\x16")
+
+	// assert
+	require.NoError(t, err)
+
+	select {
+	case <-pasted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the client was not told of Ctrl+V")
+	}
+
+	assert.Eventually(t, func() bool { return f.process.typed.String() == "\x16" }, 5*time.Second, 10*time.Millisecond)
+}
+
 func TestSessionStartsTheProcessAsTheClientAsked(t *testing.T) {
 	// arrange
 	f := newFixture(t, nil)

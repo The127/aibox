@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/clipboard"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/image"
 	"github.com/the127/aibox/internal/version"
@@ -46,6 +47,8 @@ type dependencies struct {
 	fetchImage func(ctx context.Context, version, arch, digest, dir string) error
 	// stdout and stderr are where a task reports
 	stdout, stderr io.Writer
+	// startClipboard starts the helper that reads the clipboard, which logs to log
+	startClipboard func(log io.Writer) (clipboardHelper, error)
 }
 
 // sshKeys say how the host reaches a git server over SSH, until Close.
@@ -104,6 +107,7 @@ func NewRootCommand() *cli.Command {
 		fetchImage:      fetchImage(os.Stderr),
 		stdout:          os.Stdout,
 		stderr:          os.Stderr,
+		startClipboard:  func(log io.Writer) (clipboardHelper, error) { return clipboard.Start(log) },
 	})
 }
 
@@ -112,7 +116,7 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
-		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), configCommand(deps)}, platformCommands()...),
+		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), configCommand(deps), clipboardCommand()}, platformCommands()...),
 	}
 }
 

@@ -64,7 +64,7 @@ func TestRunLinksTheIDEThatHasTheProjectOpen(t *testing.T) {
 
 	spec := f.launch.spec
 	assert.Contains(t, spec.Env, "CLAUDE_CODE_SSE_PORT=3131")
-	assert.Equal(t, []uint16{3131}, spec.Loopback)
+	assert.Equal(t, []uint16{3132, 3131}, spec.Loopback)
 	assert.Contains(t, spec.Ports, uint16(23214))
 	require.NotNil(t, spec.Proxy.Local)
 	assert.NotNil(t, spec.Proxy.Local("localhost", "3131"))
@@ -101,8 +101,8 @@ func TestRunWithoutAnIDELinksNone(t *testing.T) {
 	require.NoError(t, err)
 	assert.NoFileExists(t, filepath.Join(f.project(t).Home, ".claude", "ide", "3131.lock"))
 	assert.NotContains(t, f.launch.spec.Env, "CLAUDE_CODE_SSE_PORT=3131")
-	assert.Empty(t, f.launch.spec.Loopback)
-	assert.Nil(t, f.launch.spec.Proxy.Local)
+	assert.NotContains(t, f.launch.spec.Loopback, uint16(3131))
+	assert.Nil(t, f.launch.spec.Proxy.Local("localhost", "3131"))
 }
 
 func TestRunWithTheIDETurnedOnRefusesWhatItNeedsEvenWithoutAnIDE(t *testing.T) {

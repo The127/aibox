@@ -1446,6 +1446,29 @@ func TestRunLogsRefusedHosts(t *testing.T) {
 	log, err := os.ReadFile(f.project(t).Log)
 	require.NoError(t, err)
 	assert.Contains(t, string(log), `refused "evil.example"`)
+	assert.Contains(t, string(log), `summary refused "evil.example" 1 time, last at`)
+}
+
+func TestRunSummarizesTheTargetsItConnectedTo(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		spec.Proxy.OnConnected("github.com:443")
+		spec.Proxy.OnClosed("github.com:443")
+
+		return nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+
+	log, err := os.ReadFile(f.project(t).Log)
+	require.NoError(t, err)
+	assert.Contains(t, string(log), `summary connected "github.com:443" 1 time, last closed at`)
 }
 
 func TestRunWhenTheConfigIsBroken(t *testing.T) {

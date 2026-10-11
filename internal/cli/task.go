@@ -197,7 +197,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 
 	// the targets of this task, apart from those of other runs
 	network := proxy.NewLog(t.proxyLog)
-	spec.Proxy.OnConnected, spec.Proxy.OnRefused = network.Connected, network.Refused
+	spec.Proxy.OnConnected, spec.Proxy.OnRefused, spec.Proxy.OnClosed = network.Connected, network.Refused, network.Closed
 	spec.Proxy.Local = r.local(t.proxyLog)
 
 	progress := task.NewLineCleaner(vm)
@@ -232,6 +232,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	}()
 
 	runErr := deps.backend.Run(ctx, spec)
+	network.Summarize()
 
 	// this comes before the pipe closes, since the close makes Receive end
 	// with an error that is no refusal

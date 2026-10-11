@@ -331,9 +331,11 @@ func TestTaskReportsTheTargetsOfTheProxy(t *testing.T) {
 	f.launch.vm = func(ctx context.Context, spec backend.Spec) error {
 		for i := range 7 {
 			spec.Proxy.OnConnected(fmt.Sprintf("host%d.example:443", i))
+			spec.Proxy.OnClosed(fmt.Sprintf("host%d.example:443", i))
 		}
 
 		spec.Proxy.OnConnected("host0.example:443")
+		spec.Proxy.OnClosed("host0.example:443")
 		spec.Proxy.OnRefused("evil\x1b[31m.example:443")
 
 		return vm(ctx, spec)
@@ -352,9 +354,11 @@ func TestTaskReportsTheTargetsOfTheProxy(t *testing.T) {
 
 	log, err := os.ReadFile(filepath.Join(dir, proxyLogFile)) //nolint:gosec // the folder is the test's own
 	require.NoError(t, err)
-	assert.Equal(t, 8, strings.Count(string(log), "\n"))
+	assert.Equal(t, 16, strings.Count(string(log), "\n"), "a line when the task first met each target and one in the summary")
 	assert.Contains(t, string(log), `connected "host6.example:443"`)
 	assert.Contains(t, string(log), `refused "evil\x1b[31m.example:443"`)
+	assert.Contains(t, string(log), `summary connected "host0.example:443" 2 times, last closed at`)
+	assert.Contains(t, string(log), `summary refused "evil\x1b[31m.example:443" 1 time, last at`)
 
 	project, err := os.ReadFile(f.project(t).Log)
 	require.NoError(t, err)

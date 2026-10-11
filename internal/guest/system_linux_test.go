@@ -67,7 +67,7 @@ func TestPlan9OptionsHandTheConnectionToTheKernelForTheShare(t *testing.T) {
 	options := guest.Plan9Options(7, "project")
 
 	// assert
-	assert.Equal(t, "trans=fd,rfdno=7,wfdno=7,msize=65536,aname=project", options)
+	assert.Equal(t, "trans=fd,rfdno=7,wfdno=7,msize=65536,aname=project,cache=mmap", options)
 }
 
 // scsiClass makes a folder like /sys/class/scsi_disk with a disk of the

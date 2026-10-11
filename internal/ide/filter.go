@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/the127/aibox/internal/realpath"
 )
 
 // handshake are the methods of the VM that set up the connection and do
@@ -333,7 +335,7 @@ func hostPattern(host string) *regexp.Regexp {
 	}
 
 	names := []string{filepath.Clean(host)}
-	if resolved, err := filepath.EvalSymlinks(host); err == nil && resolved != names[0] {
+	if resolved, err := realpath.Of(host); err == nil && resolved != names[0] {
 		names = append(names, resolved)
 	}
 

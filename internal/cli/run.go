@@ -28,6 +28,7 @@ import (
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
+	"github.com/the127/aibox/internal/realpath"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -728,7 +729,7 @@ func refuseUnsafeMounts(mounts []config.Mount, home, aibox string) error {
 	return nil
 }
 
-// holds tells whether the folder is the one at path or holds it. It
+// holds tells whether the folder is the one at name or holds it. It
 // compares files, not names, since a folder has more names than one: a
 // symlink, another case where the file system tells no case apart, a
 // firmlink of macOS or a bind mount. The folder holds the path when the
@@ -739,13 +740,13 @@ func refuseUnsafeMounts(mounts []config.Mount, home, aibox string) error {
 // path makes it refused too, which errs on the safe side. The folder must
 // be absolute: on Windows C: alone is the folder the drive is at, and
 // folders joined to it would be relative to that.
-func holds(folder, path string) bool {
-	path = resolved(path)
+func holds(folder, name string) bool {
+	name = realpath.Resolved(name)
 
-	target, err := os.Stat(path)
-	for err != nil && path != filepath.Dir(path) {
-		path = filepath.Dir(path)
-		target, err = os.Stat(path)
+	target, err := os.Stat(name)
+	for err != nil && name != filepath.Dir(name) {
+		name = filepath.Dir(name)
+		target, err = os.Stat(name)
 	}
 
 	if err != nil {
@@ -754,7 +755,7 @@ func holds(folder, path string) bool {
 
 	// the folders of the path after its volume, C: or \\server\share on
 	// Windows, where \ and / both part them
-	names := strings.FieldsFunc(path[len(filepath.VolumeName(path)):], func(r rune) bool {
+	names := strings.FieldsFunc(name[len(filepath.VolumeName(name)):], func(r rune) bool {
 		return r == '/' || r == filepath.Separator
 	})
 
@@ -772,19 +773,9 @@ func holds(folder, path string) bool {
 // Windows, the root of any drive or share, as / names only the drive
 // aibox runs on there.
 func isRoot(folder string) bool {
-	path := resolved(folder)
+	resolved := realpath.Resolved(folder)
 
-	return filepath.Dir(path) == path || holds(folder, "/")
-}
-
-// resolved is the path with its symlinks followed, or the path as it is
-// when that fails, for example because it does not exist yet.
-func resolved(path string) string {
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		return target
-	}
-
-	return filepath.Clean(path)
+	return filepath.Dir(resolved) == resolved || holds(folder, "/")
 }
 
 // defaultImage is the folder of the image that this aibox uses. An image a

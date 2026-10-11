@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/the127/aibox/internal/testlink"
 )
 
 // project is a project folder on the host with a file, as the filter of a
@@ -67,7 +69,7 @@ func TestFilterPassesAnAllowedToolWithThePathsOfTheHost(t *testing.T) {
 func TestFilterRefusesPathsOutsideTheProject(t *testing.T) {
 	// arrange
 	host, f := project(t)
-	require.NoError(t, os.Symlink(filepath.Dir(host), filepath.Join(host, "out")))
+	testlink.Folder(t, filepath.Dir(host), filepath.Join(host, "out"))
 
 	for name, args := range map[string]string{
 		"a path above":                 `"old_file_path":"/project/../etc/passwd","new_file_path":"/project/main.go"`,

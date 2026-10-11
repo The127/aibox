@@ -2,6 +2,7 @@ package hcs_test
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -70,6 +71,21 @@ func TestCheckReadsOnlyTheLow32BitsOfTheReturnValue(t *testing.T) {
 	t.Parallel()
 
 	assert.NoError(t, hcs.Check("start", 0xFFFFFFFF_00000000, ""))
+}
+
+func TestOpenFailsWithTheCauseOfAnEndedContext(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	cause := errors.New("the client went away")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(cause)
+
+	// act
+	_, err := hcs.Open(ctx, "00000000-0000-0000-0000-000000000000")
+
+	// assert
+	assert.ErrorIs(t, err, cause)
 }
 
 func TestSystemRefusesCallsOnceClosed(t *testing.T) {

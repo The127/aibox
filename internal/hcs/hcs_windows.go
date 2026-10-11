@@ -143,8 +143,8 @@ func timeoutOf(ctx context.Context) uint32 {
 // the call to finish, or for the context to end. start makes the call and
 // returns its HRESULT. A call whose context ended may still finish.
 func run(ctx context.Context, what string, start func(op operation) uintptr) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("%s: %w", what, err)
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%s: %w", what, context.Cause(ctx))
 	}
 
 	op, err := newOperation()
@@ -252,8 +252,8 @@ func Create(ctx context.Context, id string, doc Document) (*System, error) {
 
 // Open opens the compute system with the id, with every right to it.
 func Open(ctx context.Context, id string) (*System, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("open the compute system %s: %w", id, context.Cause(ctx))
 	}
 
 	if err := load(); err != nil {

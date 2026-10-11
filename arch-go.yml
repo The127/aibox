@@ -123,6 +123,16 @@ dependenciesRules:
       internal:
         - '**.internal.hcs$'
         - '**.internal.hvservice$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvinstall puts the service in place, as an Administrator, and knows
+  # nothing of aibox but the service
+  - package: '**.internal.hvinstall$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.hvserver$'
+        - '**.internal.hvservice$'
         - '**.internal.vhd$'
     shouldNotDependsOn:
       external:

@@ -5,7 +5,9 @@
 package launch
 
 import (
+	"bytes"
 	"context"
+	"debug/elf"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +49,6 @@ const (
 	// systemVirtiofsd is where Debian, Ubuntu and Fedora put virtiofsd,
 	// which is not on the PATH
 	systemVirtiofsd = "/usr/libexec/virtiofsd"
-	systemLibraries = "/usr/lib64"
 	firmwareOfQEMU  = "share/qemu/qboot.rom"
 )
 
@@ -93,8 +95,9 @@ type Options struct {
 	// throws it away.
 	ConsoleLog string
 	// Libraries and Firmware are what QEMU is made of on the host, bound
-	// into its sandbox. Empty means those of the QEMU found, see hostFiles.
-	Libraries string
+	// into its sandbox. Empty means those of the QEMU found, see libraries
+	// and firmware.
+	Libraries []string
 	Firmware  string
 	// StopDelay is how long a stopped program may take before it is
 	// killed, and SessionEndDelay how long the session may go on after
@@ -524,20 +527,18 @@ func findPrograms(options *Options) error {
 		return fmt.Errorf("find qemu: %w", err)
 	}
 
-	libraries, firmware := hostFiles(resolved)
-
-	if options.Libraries == "" {
-		options.Libraries = libraries
+	if options.Libraries == nil {
+		if options.Libraries, err = libraries(resolved); err != nil {
+			return fmt.Errorf("find the libraries of qemu for its sandbox, or run with --no-sandbox: %w", err)
+		}
 	}
 
 	if options.Firmware == "" {
-		options.Firmware = firmware
+		options.Firmware = firmware(resolved)
 	}
 
-	for _, path := range []string{options.Libraries, options.Firmware} {
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", path, err)
-		}
+	if _, err := os.Stat(options.Firmware); err != nil {
+		return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", options.Firmware, err)
 	}
 
 	return nil
@@ -562,17 +563,85 @@ func findVirtiofsd(options *Options) error {
 	return nil
 }
 
-// hostFiles are the libraries and the firmware of the QEMU at the real
-// path. A QEMU from Nix has its libraries in the store, one of the system
-// in /usr/lib64. Either has its firmware next to its bin folder, as
-// /usr/share/qemu or <store path>/share/qemu.
-func hostFiles(qemu string) (libraries, firmware string) {
-	libraries = systemLibraries
-	if strings.HasPrefix(qemu, sandbox.NixStore+"/") {
-		libraries = sandbox.NixStore
+// firmware is the firmware of the QEMU at the real path, next to its bin
+// folder, as /usr/share/qemu or <store path>/share/qemu.
+func firmware(qemu string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(qemu)), firmwareOfQEMU)
+}
+
+// libraries are the program's loader and the libraries it loads, as the
+// loader finds them on the host. Distributions put them in different
+// folders, so only the loader knows.
+func libraries(program string) ([]string, error) {
+	file, err := elf.Open(program)
+	if err != nil {
+		return nil, err
 	}
 
-	return libraries, filepath.Join(filepath.Dir(filepath.Dir(qemu)), firmwareOfQEMU)
+	defer func() { _ = file.Close() }()
+
+	var loader string
+
+	for _, prog := range file.Progs {
+		if prog.Type == elf.PT_INTERP {
+			name, err := io.ReadAll(prog.Open())
+			if err != nil {
+				return nil, err
+			}
+
+			loader = string(bytes.TrimRight(name, "\x00"))
+		}
+	}
+
+	if !filepath.IsAbs(loader) {
+		return nil, fmt.Errorf("%s names no loader by its path", program)
+	}
+
+	// an empty environment, as in the sandbox, so that the host's
+	// LD_LIBRARY_PATH can't change the list. glibc loads libgcc_s only when
+	// a thread ends with pthread_exit or pthread_cancel, and aborts the
+	// program if it's missing then. Preloading it finds it where glibc would.
+	cmd := exec.Command(loader, "--preload", "libgcc_s.so.1", "--list", program) //nolint:gosec // the loader the program names
+	cmd.Env = []string{}
+
+	list, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(bytes.TrimSpace(exit.Stderr)) > 0 {
+			err = fmt.Errorf("%w: %s", err, bytes.TrimSpace(exit.Stderr))
+		}
+
+		return nil, fmt.Errorf("list the libraries of %s: %w", program, err)
+	}
+
+	return listed(loader, list)
+}
+
+// listed are the loader and the files in its list, which has lines like
+// "libfoo.so.1 => /usr/lib/libfoo.so.1 (0x...)" or
+// "/lib64/ld-linux-x86-64.so.2 (0x...)". The vDSO is in the kernel, not a
+// file.
+func listed(loader string, list []byte) ([]string, error) {
+	files := []string{loader}
+
+	for line := range strings.Lines(string(list)) {
+		name, path, found := strings.Cut(strings.TrimSpace(line), " => ")
+		if !found {
+			path = name
+		}
+
+		if strings.HasPrefix(path, "not found") {
+			return nil, fmt.Errorf("the loader finds no %s", name)
+		}
+
+		path, _, _ = strings.Cut(path, " (")
+
+		if filepath.IsAbs(path) && !slices.Contains(files, path) {
+			files = append(files, path)
+		}
+	}
+
+	return files, nil
 }
 
 // qemuCommand is QEMU in its sandbox, or QEMU alone without one. Outside

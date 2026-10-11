@@ -20,8 +20,19 @@ func Start(cmd *exec.Cmd) error {
 	return start(cmd)
 }
 
-// HostFiles are the libraries and the firmware of the QEMU at the path, as
-// Run binds them into the sandbox when the options name none.
-func HostFiles(qemu string) (libraries, firmware string) {
-	return hostFiles(qemu)
+// Firmware is the firmware of the QEMU at the path, as Run binds it into
+// the sandbox when the options name none.
+func Firmware(qemu string) string {
+	return firmware(qemu)
+}
+
+// Libraries are the loader and the libraries of the program, as Run binds
+// them into the sandbox when the options name none.
+func Libraries(program string) ([]string, error) {
+	return libraries(program)
+}
+
+// Listed are the loader and the files in the list of the loader.
+func Listed(loader string, list []byte) ([]string, error) {
+	return listed(loader, list)
 }

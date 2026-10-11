@@ -88,9 +88,8 @@ nfpms:
 
 # the cask takes the quarantine off aibox: macOS refuses to start a
 # downloaded program that is signed ad hoc and not notarized. On Linux it
-# has no dependencies: the sandbox binds the libraries of QEMU from
-# /usr/lib64 or /nix/store, not from Homebrew, and Ubuntu lets only
-# /usr/bin/bwrap make user namespaces.
+# has no dependencies: QEMU, virtiofsd and bubblewrap come from the
+# distribution, since Ubuntu lets only /usr/bin/bwrap make user namespaces.
 homebrew_casks:
   - name: aibox
     ids:

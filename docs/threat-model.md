@@ -84,7 +84,7 @@ Everything the VM can reach on your machine goes through one of these.
 | give itself more hosts, secrets or branches | The config isn't in the project, and aibox reads it once when it starts. |
 | write to a read-only mount | Your machine enforces read-only, not the VM. |
 | break out through a bug in its kernel | The VM has its own kernel, so a bug in it gives the attacker nothing on your machine. The kernel has no modules, no network drivers and no `bpf()`. The attacker then has to break the hypervisor too. |
-| break out through a bug in the hypervisor | On Linux QEMU runs in bubblewrap with no network, no environment and no writable file system, and filters its own syscalls. On macOS the VM runs in a Virtualization.framework process, which aibox can't put in a sandbox of its own. |
+| break out through a bug in the hypervisor | On Linux QEMU runs in bubblewrap with no network, only `LD_LIBRARY_PATH` in its environment and no writable file system, and filters its own syscalls. On macOS the VM runs in a Virtualization.framework process, which aibox can't put in a sandbox of its own. |
 | take over aibox through a bug in the proxy or the broker | aibox locks itself down once the VM runs. On Linux 6.7 or newer that's Landlock and seccomp, on macOS Seatbelt. |
 | send your data to a host of its own | The proxy only connects to the allow list. |
 | reach your router or a server on your machine | The proxy refuses a name that resolves to your own networks. A loopback port needs its address on the allow list. |

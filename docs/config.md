@@ -12,8 +12,9 @@ aibox config edit
 ```
 
 This opens the config in the same editor git would use: `$VISUAL`, then
-`$EDITOR`, then `vi`. Pass `--editor` to pick another one. When you close
-the editor, aibox checks the file and tells you about mistakes.
+`$EDITOR`, then `vi`, or Notepad on Windows. Pass `--editor` to pick
+another one. When you close the editor, aibox checks the file and tells
+you about mistakes.
 
 An editor that returns right away, like `code` without `--wait`,
 gets checked before you've made your changes.

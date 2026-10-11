@@ -25,19 +25,35 @@ like it always does. Its changes show up in the folder right away, so you
 keep your editor open next to it. You log in with your Claude account like
 you would on your machine, and aibox keeps the login.
 
-If you list repositories in the config, git in the VM can fetch from them
-and push to the branches you name, with the git login on your machine. That
-login never enters the VM. You can bring your own tools, install more in the
-VM and run containers with podman. If you turn it on, Claude Code also
-connects to VS Code or GoLand.
+You can bring your own tools, install more in the VM and run containers
+with podman. If you turn it on, Claude Code also connects to VS Code or
+GoLand.
+
+## Your keys and logins
+
+Your API key never enters the VM. Claude Code gets a placeholder, and aibox
+puts in the real key on the way to the Claude API. A subscription token is
+different. It goes into the VM as it is, because Anthropic's terms don't
+allow anyone but you to handle it.
+
+Your git login stays on your machine too. If you list repositories in the
+config, git in the VM can fetch from them and push to the branches you name.
+aibox refuses pushes to other branches, deletes and tags. It can't stop a
+force push to a branch you allowed.
+
+The config lives on your machine and never in the project. So a repository
+you clone can't give itself hosts, secrets or branches, and the VM can't
+change its own config.
 
 ## Two ways to use it
 
 - `aibox run` starts Claude Code in your project folder, and you work with
   it like you always do.
 - `aibox task` hands Claude Code a job to do on its own. It works on a clone
-  of the last commit and you get its commits back to review.
-  The VM is deleted afterwards.
+  of the last commit, or of any branch, tag or commit you name, and you get
+  its commits back to review. The VM is deleted afterwards. You can give it
+  a plan from a file, a timeout and a budget, and run several tasks at
+  once.
 
 ## Why a VM
 
@@ -100,6 +116,10 @@ Claude Code needs. To allow more, run:
 ```
 aibox config edit
 ```
+
+Presets like `preset:go`, `preset:npm` and `preset:github` stand for the
+hosts a tool needs. `proxy.log` in the project's folder in
+`~/.aibox/projects` shows each host the proxy connected to or refused.
 
 Note that the VM can change anything in your project folder, `.git`
 included. Treat those changes like a pull request from a stranger.

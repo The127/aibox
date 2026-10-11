@@ -34,6 +34,7 @@ disk: 32
 mounts:
   - ~/sdk/go1.26.8:/opt/go
 skills: all
+ide: true
 path:
   - /opt/go/bin
 env:
@@ -109,13 +110,16 @@ aren't allowed either, because they lead to the loopback too.
 
 This works for any protocol over TCP, also for programs that don't use the
 proxy. A program in the VM can't listen on such a port itself. Port 3128
-can't be allowed, because the VM's proxy is there.
+can't be allowed, because the VM's proxy is there. With [`ide`](#ide)
+turned on, 3131 can't be allowed either, because Claude Code reaches your
+IDE there.
 
 Keep in mind that the server runs as you, on your machine, outside the VM,
 and does what the VM asks it to. An IDE's MCP server, for example, often has
 no login and can run commands and change files outside the project.
 Allowing its port lets the VM out. Only allow a port for a server you'd trust
-with whatever the VM asks of it.
+with whatever the VM asks of it. For your IDE, turn on [`ide`](#ide)
+instead of allowing its port.
 
 ### How it works
 
@@ -182,6 +186,24 @@ VM. Your settings, plugins and MCP servers are not shared. The VM starts
 with its own.
 
 `aibox run` and tasks get the same skills.
+
+## ide
+
+Claude Code can use the IDE that has your project open, like VS Code or
+GoLand. It sees the code you select, shows its changes as a diff in the
+editor and reads the errors the IDE reports. This is off by default, because aibox then passes
+messages between the VM and a program on your machine. To turn it on, set:
+
+```yaml
+ide: true
+```
+
+aibox only passes on what's needed, and only for files in the project. Read
+[In your IDE](usage.md#in-your-ide) before you turn it on, especially the
+part about diffs.
+
+With `ide` turned on, your `env` can't set `CLAUDE_CODE_SSE_PORT`, because
+aibox sets it itself. Tasks never get the IDE, only `aibox run` does.
 
 ## path
 

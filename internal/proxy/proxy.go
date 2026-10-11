@@ -197,8 +197,41 @@ func serveLocal(ctx context.Context, conn net.Conn, reader *bufio.Reader, handle
 	// the reader may hold bytes the client sent right after its request
 	listener := &oneConn{conn: bufferedConn{Conn: conn, reader: reader}, done: make(chan struct{})}
 
+	// a handler that takes the connection over, as for a WebSocket, goes on
+	// using it after the server is done with it, so the tunnel stays open
+	// until every handler has returned. Once the server is done no handler
+	// may start, or it could start after the wait.
+	var (
+		handlers sync.WaitGroup
+		mu       sync.Mutex
+		done     bool
+	)
+
+	defer func() {
+		mu.Lock()
+		done = true
+		mu.Unlock()
+		handlers.Wait()
+	}()
+
 	server := &http.Server{
-		Handler:           handler,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			if done {
+				mu.Unlock()
+				http.Error(w, "the tunnel is closing", http.StatusServiceUnavailable)
+
+				return
+			}
+
+			handlers.Add(1)
+			mu.Unlock()
+
+			defer handlers.Done()
+
+			handler.ServeHTTP(w, r)
+		}),
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: handshakeTimeout,
 		ConnState: func(_ net.Conn, state http.ConnState) {
 			if state == http.StateClosed || state == http.StateHijacked {

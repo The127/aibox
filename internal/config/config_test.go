@@ -277,6 +277,23 @@ func TestLoadWritesASkillsExampleIntoTheDefaultFile(t *testing.T) {
 	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "# skills: none\n")
+	assert.Contains(t, string(content), "# ide: true\n")
+}
+
+func TestLoadReadsWhetherTheIDEIsTurnedOn(t *testing.T) {
+	for content, want := range map[string]bool{"ide: true\n": true, "ide: false\n": false, "": false} {
+		t.Run(content, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			cfg, err := config.Load(path)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, want, cfg.IDE)
+		})
+	}
 }
 
 func TestLoadReadsThePath(t *testing.T) {

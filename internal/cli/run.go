@@ -108,6 +108,26 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		}
 	}
 
+	if r.config.IDE {
+		if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
+			return err
+		}
+
+		found, ok, err := findIDE(deps, cwd)
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			env, bridge, err := linkIDE(found, cwd, r.project.Home, r.log)
+			if err != nil {
+				return err
+			}
+
+			r.env, r.ide, r.ideHostPort = append(r.env, env...), bridge, found.Port
+		}
+	}
+
 	spec := r.spec(cmd)
 	spec.State = r.project.State
 	spec.Project = cwd
@@ -161,6 +181,10 @@ type projectRun struct {
 	// sshKeys hold the connection to the SSH agent the broker signs with,
 	// or are nil
 	sshKeys sshKeys
+	// ide serves the link to the IDE of the host, or is nil when the VM
+	// gets none, and ideHostPort is the port the IDE listens on
+	ide         http.Handler
+	ideHostPort uint16
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -296,6 +320,15 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 		spec.Loopback = append(spec.Loopback, brokerPort)
 	}
 
+	if r.ide != nil {
+		spec.Loopback = append(spec.Loopback, idePort)
+
+		// aibox itself connects to the IDE
+		if !slices.Contains(spec.Ports, r.ideHostPort) {
+			spec.Ports = append(spec.Ports, r.ideHostPort)
+		}
+	}
+
 	// aibox itself connects to the Claude API and to the git servers
 	if (r.forwarder != nil || len(r.gitRemotes) > 0) && !slices.Contains(spec.Ports, apiPort) {
 		spec.Ports = append(spec.Ports, apiPort)
@@ -316,10 +349,10 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 }
 
 // local returns the handlers the proxy serves itself on the loopback of
-// the VM: the forwarder of the API key and the git broker, which writes
-// to log. It is nil when the VM gets neither.
+// the VM: the forwarder of the API key, the git broker, which writes to
+// log, and the link to the IDE. It is nil when the VM gets none of them.
 func (r projectRun) local(log io.Writer) func(host, port string) http.Handler {
-	if r.forwarder == nil && len(r.gitRemotes) == 0 {
+	if r.forwarder == nil && len(r.gitRemotes) == 0 && r.ide == nil {
 		return nil
 	}
 
@@ -331,6 +364,10 @@ func (r projectRun) local(log io.Writer) func(host, port string) http.Handler {
 
 	if len(r.gitRemotes) > 0 {
 		handlers[strconv.Itoa(brokerPort)] = gitbroker.Broker(r.gitRemotes, r.roots, log)
+	}
+
+	if r.ide != nil {
+		handlers[strconv.Itoa(idePort)] = r.ide
 	}
 
 	return func(host, port string) http.Handler {

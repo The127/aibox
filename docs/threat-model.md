@@ -12,22 +12,49 @@ control, root in the VM included, and it may try bugs in the VM's kernel.
 
 Other programs on your machine can't reach the VM either. On Linux each VM
 has its own vsock namespace, so no other process can connect to it. On macOS
-only aibox can reach its VM's vsock. To allow a port on your machine's
-loopback, you write its exact address, `127.0.0.1` or `[::1]`, never
-`localhost`. It means both addresses, and another user could be listening
-on the one your server doesn't use.
+only aibox can reach its VM's vsock.
+
+Other programs also can't pose as a server you allowed. A server on your
+machine's loopback usually listens on only one address, `127.0.0.1` or
+`[::1]`. That's why the allow list takes the exact address and not
+`localhost`, which means both. Otherwise another user could listen on the
+other address and get the VM's connections.
 
 ## What aibox keeps safe
 
 - Your files outside the project folder and the mounts.
-- Your API key, your git login, your SSH keys and your IDE's token. Secrets
-  you put in `env`, and a subscription token, are not kept from the VM.
+- Your API key, your git login and SSH keys, and your IDE's token. Note that
+  a subscription token and the secrets in `env` do go into the VM.
 - Your machine's own networks and the servers that listen on its loopback.
 - The rest of the internet. Data leaves only through what you allowed, like
   a host, a port or a branch.
 - The branches, tags and repositories the `git` list doesn't name.
 - Your machine while the VM runs. The VM can't run code on it directly. What
   it writes into the project can. See [below](#what-aibox-doesnt-stop).
+- Your aibox config. It decides everything else on this list.
+
+## Why the config isn't in the project
+
+The project config decides what the VM gets: the hosts, the ports, the
+secrets, the mounts and the branches it can push to. So it lives on your
+machine, in `~/.aibox/projects/<escaped path>/config.yaml`, and never in the
+project or its git repository. aibox doesn't read a config from the project
+at all.
+
+People ask for a config file in the repository, like a dev container's
+`devcontainer.json`. aibox can't have one, for two reasons:
+
+- A repository would pick its own permissions. Whoever wrote it, or slipped
+  a change into it, would decide which hosts and secrets the VM gets. Running
+  `aibox run` in a stranger's repository would hand them your secrets.
+- The VM would rewrite its own config. With `aibox run` the VM can change
+  anything in the project, `.git` included. A config there could grant more
+  in one session and take effect at the next start. A task's commits could
+  carry one too, and you'd merge it with the rest of the change.
+
+aibox reads the config once, when it starts. Nothing the VM does while it
+runs changes what it gets. To change the config, run `aibox config edit` on
+your machine.
 
 ## Trust boundaries
 
@@ -35,8 +62,8 @@ Everything the VM can reach on your machine goes through one of these.
 
 | Boundary | What crosses it | What aibox does |
 |---|---|---|
-| The hypervisor | The VM's CPU, memory and devices | The VM has its own kernel. QEMU runs in a bubblewrap sandbox, and aibox locks itself down once the VM runs. See [The host side](security.md#the-host-side). |
-| The shares | The project, the mounts, your skills and the VM's home | Your machine enforces the read-only shares. aibox won't start in your home folder or above it. |
+| The hypervisor | The VM's CPU, memory and devices | The VM has its own kernel. On Linux it runs on QEMU in a bubblewrap sandbox. On macOS it runs on Virtualization.framework, which aibox can't sandbox. On both, aibox locks itself down once the VM runs. See [The host side](security.md#the-host-side). |
+| The shares | The project, the mounts, your skills and the VM's home | Your machine enforces the read-only shares. aibox won't start in your home folder or above it, and won't mount your home folder, a folder above it, or a folder in or above `~/.aibox`. See [mounts](config.md#mounts). |
 | The proxy | All network traffic, over vsock | The VM has no network card. The proxy only connects to the allow list and refuses names that lead to your own networks. See [allow](config.md#allow). |
 | The git broker | git's requests | The broker adds your login on your machine, only for the repositories and branches the config names. See [Git](git.md). |
 | The key forwarder | Requests to the Claude API | The VM gets a placeholder key. aibox adds the real one. See [API key](tasks.md#api-key). |
@@ -50,9 +77,10 @@ Everything the VM can reach on your machine goes through one of these.
 | The VM tries to | What stops it |
 |---|---|
 | read a file outside the project | The VM only sees its shares. |
+| give itself more hosts, secrets or branches | The config isn't in the project, and aibox reads it once when it starts. |
 | write to a read-only mount | Your machine enforces read-only, not the VM. |
-| break out through a bug in its kernel | The VM's kernel isn't yours. It has no modules, no network drivers and no `bpf()`. Getting past it is only the first step. The VM then has to get past QEMU's sandbox. |
-| break out through a bug in QEMU | QEMU runs in bubblewrap with no network, no environment and no writable file system, and filters its own syscalls. |
+| break out through a bug in its kernel | The VM's kernel isn't yours. It has no modules, no network drivers and no `bpf()`. Getting past it is only the first step. The VM then has to break the hypervisor too. |
+| break out through a bug in the hypervisor | On Linux QEMU runs in bubblewrap with no network, no environment and no writable file system, and filters its own syscalls. On macOS the VM runs in a Virtualization.framework process, which aibox can't put in a sandbox of its own. |
 | take over aibox through a bug in the proxy or the broker | aibox locks itself down once the VM runs. On Linux 6.7 or newer that's Landlock and seccomp, on macOS Seatbelt. |
 | send your data to a host of its own | The proxy only connects to the allow list. |
 | reach your router or a server on your machine | The proxy refuses a name that resolves to your own networks. A loopback port needs its address on the allow list. |
@@ -72,9 +100,13 @@ has the details.
 
 - What the VM writes into the project, `.git` included. A hook, `.envrc` or
   `package.json` can run on your machine later.
+- Code the VM wrote, once you run it on your machine. That includes tests
+  your IDE runs by itself, like on save, and the program you're working on
+  when you build or start it. A test or a line in the program can do
+  anything you can.
 - What you allowed. The VM can use every host, port, secret in `env` and
-  branch you give it. A subscription token goes into the VM as it is, so the
-  VM can read it.
+  branch you give it. A mount gives it every file in that folder. A
+  subscription token goes into the VM as it is, so the VM can read it.
 - The servers on your loopback that you allow. They run as you, often
   without a login, and do what the VM asks. See
   [Ports on your machine](config.md#ports-on-your-machine).

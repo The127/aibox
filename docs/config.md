@@ -168,6 +168,11 @@ home folder.
 - The VM caches names and attributes for the whole run. If you change the
   folder on your machine, a running VM may not see it.
 - On macOS the VM runs arm64 Linux, so Mac programs don't run in it.
+- The host folder can't be the root of a drive or share either.
+- On Windows write the host folder with its drive, like
+  `C:\Users\me\sdk:/opt/go`, or with forward slashes, `C:/Users/me/sdk:/opt/go`.
+  `~\` works like `~/`. Don't put the entry in double quotes, because YAML
+  reads backslashes in double quotes as escapes; single quotes are fine.
 
 ## skills
 
@@ -235,6 +240,8 @@ An entry can also be the name of a variable, like `PATH` or `DIRENV_PATH`.
 It then stands for the folders in that variable on your machine, without the
 relative and empty ones. That way the VM finds the tools of a `nix develop`
 or `direnv` shell, as long as `/nix/store` is mounted at the same path.
+On Windows the folders of such a variable are Windows folders, which the VM
+doesn't have, so it adds none of them.
 
 ## env
 

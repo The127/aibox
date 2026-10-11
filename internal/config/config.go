@@ -258,7 +258,11 @@ func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func parseMount(text string) (Mount, error) {
-	host, guest, ok := strings.Cut(text, ":")
+	// a volume, C: or \\server\share on Windows, is the only colon a host
+	// folder has; a guest path has none
+	volume := filepath.VolumeName(text)
+	host, guest, ok := strings.Cut(text[len(volume):], ":")
+	host = volume + host
 	if !ok || strings.Contains(guest, ":") || !cmdlineSafe(guest) {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrBadMount)
 	}
@@ -289,10 +293,10 @@ func cmdlineSafe(text string) bool {
 	})
 }
 
-func expandHome(path string) (string, error) {
-	rest, ok := strings.CutPrefix(path, "~/")
-	if !ok {
-		return path, nil
+func expandHome(folder string) (string, error) {
+	// ~\ on Windows too, where \ parts folders as / does
+	if len(folder) < 2 || folder[0] != '~' || folder[1] != '/' && folder[1] != filepath.Separator {
+		return folder, nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -300,7 +304,7 @@ func expandHome(path string) (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(home, rest), nil
+	return filepath.Join(home, folder[2:]), nil
 }
 
 // reserved tells whether the mount hides something the VM needs.

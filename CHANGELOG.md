@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.5.0](https://github.com/The127/aibox/compare/v1.4.1...v1.5.0) (2026-10-11)
+
+
+### Features
+
+* let the project config turn off the skills mount ([#74](https://github.com/The127/aibox/issues/74)) ([52f182f](https://github.com/The127/aibox/commit/52f182f2e7a903acaf5a88921b8375f24b4071a0)), closes [#59](https://github.com/The127/aibox/issues/59)
+* link Claude Code in the VM to your IDE ([#91](https://github.com/The127/aibox/issues/91)) ([c1f2ef1](https://github.com/The127/aibox/commit/c1f2ef196db01ed4afd42864d19c7fa385db74f4))
+* refuse to boot a kernel other than the one of the release ([#73](https://github.com/The127/aibox/issues/73)) ([75bc717](https://github.com/The127/aibox/commit/75bc71785514e2714410736d68b7c92534bf0d03)), closes [#70](https://github.com/The127/aibox/issues/70)
+* summarize how often and when last each proxy target was used ([#86](https://github.com/The127/aibox/issues/86)) ([60130a2](https://github.com/The127/aibox/commit/60130a245e629d55c4d680186d865abadfa823e5)), closes [#35](https://github.com/The127/aibox/issues/35)
+* take the first steps towards Windows support, aibox doesn't run on Windows yet ([1eed772](https://github.com/The127/aibox/commit/1eed77215067e82a849027a4955108688599a742))
+* tell why vsock namespaces are missing and load vsock first ([ac195e3](https://github.com/The127/aibox/commit/ac195e320e039afde2558985edca66c8ff8baa71))
+* use a VM image that a package installed ([#69](https://github.com/The127/aibox/issues/69)) ([d6e5a6c](https://github.com/The127/aibox/commit/d6e5a6c9599f303286b1747599479cb40e63ba09)), closes [#68](https://github.com/The127/aibox/issues/68)
+
+
+### Bug Fixes
+
+* say that aibox needs Linux 7.0, not 6.7 ([ac195e3](https://github.com/The127/aibox/commit/ac195e320e039afde2558985edca66c8ff8baa71))
+
 ## [1.4.1](https://github.com/The127/aibox/compare/v1.4.0...v1.4.1) (2026-10-09)
 
 

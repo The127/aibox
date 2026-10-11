@@ -11,15 +11,22 @@ var (
 	bob   = lockOwner{client: "guest", pid: 2}
 )
 
+// set is try for a test that has no wait for the lock in its way.
+func set[K comparable](table *lockTable[K], file K, owner lockOwner, read, write bool, start, length uint64) bool {
+	ok, _ := table.try(file, owner, read, write, start, length)
+
+	return ok
+}
+
 func TestReadLocksOfTwoOwnersShareARange(t *testing.T) {
 	t.Parallel()
 
 	// arrange
 	var table lockTable[string]
-	assert.True(t, table.set("db", alice, true, false, 0, 100))
+	assert.True(t, set(&table, "db", alice, true, false, 0, 100))
 
 	// act
-	ok := table.set("db", bob, true, false, 50, 100)
+	ok := set(&table, "db", bob, true, false, 50, 100)
 
 	// assert
 	assert.True(t, ok)
@@ -44,10 +51,10 @@ func TestAWriteLockKeepsOtherOwnersOutOfItsRange(t *testing.T) {
 
 			// arrange
 			var table lockTable[string]
-			assert.True(t, table.set("db", alice, false, true, 0, 100))
+			assert.True(t, set(&table, "db", alice, false, true, 0, 100))
 
 			// act
-			ok := table.set("db", bob, !other.write, other.write, other.start, other.length)
+			ok := set(&table, "db", bob, !other.write, other.write, other.start, other.length)
 
 			// assert
 			assert.Equal(t, other.ok, ok)
@@ -60,14 +67,14 @@ func TestAnOwnerNeverConflictsWithItself(t *testing.T) {
 
 	// arrange
 	var table lockTable[string]
-	assert.True(t, table.set("db", alice, true, false, 0, 100))
+	assert.True(t, set(&table, "db", alice, true, false, 0, 100))
 
 	// act: a read lock turned into a write lock, as SQLite does
-	ok := table.set("db", alice, false, true, 0, 100)
+	ok := set(&table, "db", alice, false, true, 0, 100)
 
 	// assert
 	assert.True(t, ok)
-	assert.False(t, table.set("db", bob, true, false, 0, 1))
+	assert.False(t, set(&table, "db", bob, true, false, 0, 1))
 }
 
 func TestAnUnlockOfPartOfARangeLeavesTheRest(t *testing.T) {
@@ -75,15 +82,15 @@ func TestAnUnlockOfPartOfARangeLeavesTheRest(t *testing.T) {
 
 	// arrange
 	var table lockTable[string]
-	assert.True(t, table.set("db", alice, false, true, 0, 100))
+	assert.True(t, set(&table, "db", alice, false, true, 0, 100))
 
 	// act
-	table.set("db", alice, false, false, 40, 20)
+	set(&table, "db", alice, false, false, 40, 20)
 
 	// assert
-	assert.True(t, table.set("db", bob, false, true, 40, 20))
-	assert.False(t, table.set("db", bob, false, true, 39, 1))
-	assert.False(t, table.set("db", bob, false, true, 60, 1))
+	assert.True(t, set(&table, "db", bob, false, true, 40, 20))
+	assert.False(t, set(&table, "db", bob, false, true, 39, 1))
+	assert.False(t, set(&table, "db", bob, false, true, 60, 1))
 }
 
 func TestAnUnlockOfEverythingForgetsTheFile(t *testing.T) {
@@ -91,11 +98,11 @@ func TestAnUnlockOfEverythingForgetsTheFile(t *testing.T) {
 
 	// arrange
 	var table lockTable[string]
-	assert.True(t, table.set("db", alice, false, true, 0, 100))
-	assert.True(t, table.set("db", alice, true, false, 200, 0))
+	assert.True(t, set(&table, "db", alice, false, true, 0, 100))
+	assert.True(t, set(&table, "db", alice, true, false, 200, 0))
 
 	// act
-	table.set("db", alice, false, false, 0, 0)
+	set(&table, "db", alice, false, false, 0, 0)
 
 	// assert
 	assert.Empty(t, table.files)
@@ -106,10 +113,10 @@ func TestLocksOfDifferentFilesNeverMeet(t *testing.T) {
 
 	// arrange
 	var table lockTable[string]
-	assert.True(t, table.set("a", alice, false, true, 0, 0))
+	assert.True(t, set(&table, "a", alice, false, true, 0, 0))
 
 	// act
-	ok := table.set("b", bob, false, true, 0, 0)
+	ok := set(&table, "b", bob, false, true, 0, 0)
 
 	// assert
 	assert.True(t, ok)
@@ -128,7 +135,7 @@ func TestConflictFindsOnlyAnotherOwnersLockThatMatters(t *testing.T) {
 
 	// arrange
 	var table lockTable[string]
-	assert.True(t, table.set("db", alice, true, false, 0, 10))
+	assert.True(t, set(&table, "db", alice, true, false, 0, 10))
 
 	// act
 	_, readerBlocked := table.conflict("db", bob, false, 0, 10)
@@ -140,4 +147,28 @@ func TestConflictFindsOnlyAnotherOwnersLockThatMatters(t *testing.T) {
 	assert.True(t, writerBlocked)
 	assert.Equal(t, lockRange{owner: alice, start: 0, end: 10}, l)
 	assert.False(t, selfBlocked)
+}
+
+func TestTryHandsOutAChannelThatClosesAtTheNextChange(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	var table lockTable[string]
+	assert.True(t, set(&table, "db", alice, false, true, 0, 0))
+
+	ok, changed := table.try("db", bob, false, true, 0, 0)
+	assert.False(t, ok)
+
+	// act
+	set(&table, "db", alice, false, false, 0, 0)
+
+	// assert
+	select {
+	case <-changed:
+	default:
+		t.Fatal("the channel did not close when the lock went")
+	}
+
+	ok, _ = table.try("db", bob, false, true, 0, 0)
+	assert.True(t, ok)
 }

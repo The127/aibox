@@ -26,6 +26,9 @@ type lockRange struct {
 type lockTable[K comparable] struct {
 	mu    sync.Mutex
 	files map[K][]lockRange
+	// changed is closed at the next change of the table, for locks that
+	// wait for one in their way to go
+	changed chan struct{}
 }
 
 // lockEnd is where a lock of the length from start ends. A length of 0
@@ -38,10 +41,12 @@ func lockEnd(start, length uint64) uint64 {
 	return start + length
 }
 
-// set takes, changes or, with neither read nor write, releases the owner's
-// lock on the range of the file. It reports false, and changes nothing,
-// when another owner's lock is in the way.
-func (t *lockTable[K]) set(file K, owner lockOwner, read, write bool, start, length uint64) bool {
+// try takes, changes or, with neither read nor write, releases the owner's
+// lock on the range of the file. When another owner's lock is in the way,
+// it changes nothing and returns false and a channel that is closed at the
+// next change of the table, taken before anything else can change it, so
+// that no release goes unnoticed.
+func (t *lockTable[K]) try(file K, owner lockOwner, read, write bool, start, length uint64) (bool, <-chan struct{}) {
 	end := lockEnd(start, length)
 
 	t.mu.Lock()
@@ -50,10 +55,12 @@ func (t *lockTable[K]) set(file K, owner lockOwner, read, write bool, start, len
 	locks := t.files[file]
 
 	if read || write {
-		for _, l := range locks {
-			if l.owner != owner && l.start < end && start < l.end && (l.write || write) {
-				return false
+		if _, ok := firstConflict(locks, owner, write, start, end); ok {
+			if t.changed == nil {
+				t.changed = make(chan struct{})
 			}
+
+			return false, t.changed
 		}
 	}
 
@@ -91,7 +98,12 @@ func (t *lockTable[K]) set(file K, owner lockOwner, read, write bool, start, len
 		t.files[file] = kept
 	}
 
-	return true
+	if t.changed != nil {
+		close(t.changed)
+		t.changed = nil
+	}
+
+	return true, nil
 }
 
 // conflict is a lock of another owner in the way of the owner's lock on
@@ -102,7 +114,13 @@ func (t *lockTable[K]) conflict(file K, owner lockOwner, write bool, start, leng
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	for _, l := range t.files[file] {
+	return firstConflict(t.files[file], owner, write, start, end)
+}
+
+// firstConflict is the first of the locks in the way of the owner's lock
+// on the bytes from start up to end, if one is.
+func firstConflict(locks []lockRange, owner lockOwner, write bool, start, end uint64) (lockRange, bool) {
+	for _, l := range locks {
 		if l.conflicts(owner, write, start, end) {
 			return l, true
 		}

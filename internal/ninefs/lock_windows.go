@@ -1,16 +1,24 @@
 package ninefs
 
 import (
+	"context"
 	"math"
 
 	"github.com/hugelgupf/p9/linux"
 	"github.com/hugelgupf/p9/p9"
 )
 
-// Lock takes, changes or releases a POSIX record lock of a process of the
-// guest. A lock in the way answers Blocked, after which the guest's kernel
-// waits and asks again for a blocking lock, and fails a non-blocking one.
-func (f *file) Lock(pid int, lockType p9.LockType, _ p9.LockFlags, start, length uint64, client string) (p9.LockStatus, error) {
+// Lock is LockContext for a request that must not wait.
+func (f *file) Lock(pid int, lockType p9.LockType, flags p9.LockFlags, start, length uint64, client string) (p9.LockStatus, error) {
+	return f.LockContext(context.Background(), pid, lockType, flags&^p9.LockFlagsBlock, start, length, client)
+}
+
+// LockContext takes, changes or releases a POSIX record lock of a process of
+// the guest. A lock in the way answers Blocked to a request that may not
+// wait. One that may waits here until the lock is free, or until the guest
+// flushes the request or goes away and the context ends: the guest's
+// kernel would otherwise only ask again after its own timeout.
+func (f *file) LockContext(ctx context.Context, pid int, lockType p9.LockType, flags p9.LockFlags, start, length uint64, client string) (p9.LockStatus, error) {
 	if f.open == 0 {
 		return p9.LockStatusError, linux.EBADF
 	}
@@ -34,11 +42,30 @@ func (f *file) Lock(pid int, lockType p9.LockType, _ p9.LockFlags, start, length
 		return p9.LockStatusError, linux.EINVAL
 	}
 
-	if !f.fs.locks.set(key, owner, read, write, start, length) {
-		return p9.LockStatusBlocked, nil
-	}
+	for {
+		// The guest may still take the answer to a request it flushed, so
+		// a request that waited is not tried again once it is flushed. One
+		// tried as the flush comes may still take the lock, and says so.
+		select {
+		case <-ctx.Done():
+			return p9.LockStatusBlocked, nil
+		default:
+		}
 
-	return p9.LockStatusOK, nil
+		ok, changed := f.fs.locks.try(key, owner, read, write, start, length)
+		if ok {
+			return p9.LockStatusOK, nil
+		}
+
+		if flags&p9.LockFlagsBlock == 0 {
+			return p9.LockStatusBlocked, nil
+		}
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+		}
+	}
 }
 
 // GetLock tells the guest which lock is in the way of the one it asks

@@ -1,7 +1,9 @@
 package ninefs_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/hugelgupf/p9/p9"
 	"github.com/stretchr/testify/assert"
@@ -138,4 +140,87 @@ func TestGetLockAnswersUnlockWhenNothingIsInTheWay(t *testing.T) {
 	assert.Equal(t, p9.Unlock, typ)
 	assert.Equal(t, uint64(5), start)
 	assert.Equal(t, uint64(1), length)
+}
+
+func TestABlockingLockWaitsUntilTheOtherProcessUnlocks(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := mount(t, tree(t))
+	first := opened(t, root, "src", "main.go")
+	second := opened(t, root, "src", "main.go")
+
+	_, err := first.Lock(1, p9.WriteLock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	got := make(chan p9.LockStatus, 1)
+
+	go func() {
+		status, _ := second.Lock(2, p9.WriteLock, p9.LockFlagsBlock, 0, 0, "guest")
+		got <- status
+	}()
+
+	// a lock that did not wait would answer Blocked at once
+	select {
+	case status := <-got:
+		t.Fatalf("the blocking lock answered %s while the other lock was held", status)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// act
+	_, err = first.Lock(1, p9.Unlock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	// assert
+	select {
+	case status := <-got:
+		assert.Equal(t, p9.LockStatusOK, status)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the blocking lock still waits after the unlock")
+	}
+}
+
+func TestAWaitingLockEndsWithItsContextAndTakesNothing(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := direct(t, tree(t))
+	first := opened(t, root, "src", "main.go")
+	second := opened(t, root, "src", "main.go")
+
+	_, err := first.Lock(1, p9.WriteLock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	got := make(chan p9.LockStatus, 1)
+
+	go func() {
+		status, _ := second.(p9.ContextLocker).LockContext(ctx, 2, p9.WriteLock, p9.LockFlagsBlock, 0, 0, "guest")
+		got <- status
+	}()
+
+	// a lock that did not wait would answer Blocked at once
+	select {
+	case status := <-got:
+		t.Fatalf("the blocking lock answered %s while the other lock was held", status)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// act
+	cancel()
+
+	// assert
+	select {
+	case status := <-got:
+		assert.Equal(t, p9.LockStatusBlocked, status)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the lock still waits after its context ended")
+	}
+
+	_, err = first.Lock(1, p9.Unlock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	third, err := second.Lock(3, p9.WriteLock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+	assert.Equal(t, p9.LockStatusOK, third, "the lock whose context ended holds the file")
 }

@@ -3,6 +3,7 @@ package hvlaunch
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,8 +26,9 @@ func aState(t *testing.T) string {
 
 // hyperVOpen opens the file as Hyper-V opens a disk: for its data, to
 // write, sharing no write. Whether Hyper-V shares a delete is to be seen
-// on Hyper-V; the test shares what the backend's unlink needs.
-func hyperVOpen(t *testing.T, path string) windows.Handle {
+// on Hyper-V; the test shares what the backend's unlink needs. It returns
+// the handle and what closes it.
+func hyperVOpen(t *testing.T, path string) (windows.Handle, func() error) {
 	t.Helper()
 
 	p, err := windows.UTF16PtrFromString(path)
@@ -34,9 +36,13 @@ func hyperVOpen(t *testing.T, path string) windows.Handle {
 
 	h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = windows.CloseHandle(h) })
 
-	return h
+	// a handle closed twice may close a file a parallel test has open by
+	// then, which Windows gave the same number
+	closeOnce := sync.OnceValue(func() error { return windows.CloseHandle(h) })
+	t.Cleanup(func() { _ = closeOnce() })
+
+	return h, closeOnce
 }
 
 func TestPrepareStateMakesADynamicVHDOnceAndKeepsIt(t *testing.T) {
@@ -142,7 +148,7 @@ func TestUnlinkRemovesTheNameNowAndTheDataWhenTheVMLetsGo(t *testing.T) {
 
 	// arrange
 	path := aState(t)
-	vm := hyperVOpen(t, path)
+	vm, closeVM := hyperVOpen(t, path)
 
 	// act
 	err := unlink(path)
@@ -156,6 +162,6 @@ func TestUnlinkRemovesTheNameNowAndTheDataWhenTheVMLetsGo(t *testing.T) {
 	var info windows.ByHandleFileInformation
 	assert.NoError(t, windows.GetFileInformationByHandle(vm, &info), "the VM still has its disk")
 
-	require.NoError(t, windows.CloseHandle(vm))
+	require.NoError(t, closeVM())
 	require.NoError(t, os.WriteFile(path, nil, 0o600), "the name is free for a new file")
 }

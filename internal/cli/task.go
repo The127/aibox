@@ -539,7 +539,12 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 	}
 
 	bundle := filepath.Join(t.share, task.InputBundle)
-	if err := bundleCommit(cwd, base, t.dir, bundle, filepath.Join(t.dir, "input.git")); err != nil {
+	scratch, err := scratchRepository(t.dir)
+	if err != nil {
+		return nil, fmt.Errorf("make a repository for the bundle: %w", err)
+	}
+
+	if err := bundleCommit(cwd, base, t.dir, bundle, scratch); err != nil {
 		return nil, fmt.Errorf("bundle the commit the task starts from: %w", err)
 	}
 
@@ -827,8 +832,11 @@ func readAll(file *os.File) ([]byte, error) {
 // no fsmonitor from it. Filters it cannot turn off, so aibox runs no git
 // command that reads the working tree, such as status. git runs in the
 // helper and may write only below writable, or nowhere when it is empty.
+// Git for Windows takes paths longer than 260 characters, such as those
+// of the folder of a task, only with core.longpaths; git elsewhere has no
+// such option and ignores it.
 func gitOutput(dir, writable string, args ...string) (string, error) {
-	cmd := fence.Command(writable, "git", append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd := fence.Command(writable, "git", append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.longpaths=true"}, args...)...)
 	cmd.Dir = dir
 
 	var stderr bytes.Buffer

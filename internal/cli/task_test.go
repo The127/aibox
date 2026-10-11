@@ -781,6 +781,12 @@ func TestTaskStartsFromTheCommitOfFrom(t *testing.T) {
 	refs := f.git(t, "for-each-ref")
 	f.succeeds(t)
 
+	// the repository the bundle comes from is in the folder of the task, or
+	// on Windows in the temporary folder
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp)
+
 	// act
 	err := f.task("--from", "start", "fix it")
 
@@ -790,6 +796,10 @@ func TestTaskStartsFromTheCommitOfFrom(t *testing.T) {
 	assert.Contains(t, f.stderr.String(), "starts from refs/tags/start ("+short(f.base)+")")
 	assert.Equal(t, refs, f.git(t, "for-each-ref"))
 	assert.NoDirExists(t, filepath.Join(f.taskDir(t), "input.git"))
+
+	left, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, left, "the repository of the bundle is gone")
 }
 
 func TestTaskStartsFromHEAD(t *testing.T) {

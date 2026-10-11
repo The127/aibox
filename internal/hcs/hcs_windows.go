@@ -159,23 +159,20 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 		return "", err
 	}
 
-	type outcome struct {
-		doc string
-		err error
-	}
+	var doc string
 
-	done := make(chan outcome, 1)
+	done := make(chan struct{})
 
 	go func() {
-		doc, err := op.wait(ctx, what)
-		done <- outcome{doc, err}
+		doc, err = op.wait(ctx, what)
+		close(done)
 	}()
 
 	select {
-	case o := <-done:
+	case <-done:
 		op.close()
 
-		return o.doc, o.err
+		return doc, err
 	case <-ctx.Done():
 		// The wait can't be interrupted, and the operation may only be
 		// closed once it has returned.

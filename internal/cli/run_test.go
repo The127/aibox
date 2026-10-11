@@ -1404,6 +1404,154 @@ func TestRunWhenAMountedPathIsAFile(t *testing.T) {
 	assert.False(t, f.launch.called)
 }
 
+func TestRunRefusesAMountOfTheRootFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeConfig(t, "mounts:\n  - /:/mnt/host\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, "root of the file system")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountOfTheHomeFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeConfig(t, "mounts:\n  - "+f.homeDir+":/mnt/home\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, "home directory")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountAboveTheHomeFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	users := t.TempDir()
+	f.homeDir = filepath.Join(users, "someone")
+	require.NoError(t, os.MkdirAll(f.homeDir, 0o700))
+	f.writeConfig(t, "mounts:\n  - "+users+":/mnt/users\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountOfTheHomeFolderBehindASymlink(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	link := filepath.Join(t.TempDir(), "link")
+	symlink(t, f.homeDir, link)
+	f.writeConfig(t, "mounts:\n  - "+link+":/mnt/home\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountOfTheHomeFolderSpelledInAnotherCase(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.homeDir = filepath.Join(t.TempDir(), "home")
+	require.NoError(t, os.MkdirAll(f.homeDir, 0o700))
+	f.writeConfig(t, "mounts:\n  - "+otherCase(t, f.homeDir)+":/mnt/home\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountOfTheAiboxFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeConfig(t, "mounts:\n  - "+f.aiboxDir+":/mnt/aibox\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, f.aiboxDir)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountAboveTheAiboxFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	state := t.TempDir()
+	f.aiboxDir = filepath.Join(state, ".aibox")
+	require.NoError(t, os.MkdirAll(f.aiboxDir, 0o700))
+	f.writeConfig(t, "mounts:\n  - "+state+":/mnt/state\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountInsideTheAiboxFolder(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeConfig(t, "mounts:\n  - "+filepath.Join(f.aiboxDir, "projects")+":/mnt/projects\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, "inside")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountOfTheAiboxFolderBehindASymlink(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	link := filepath.Join(t.TempDir(), "link")
+	symlink(t, f.aiboxDir, link)
+	f.writeConfig(t, "mounts:\n  - "+link+":/mnt/aibox\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAMountOfTheAiboxFolderSpelledInAnotherCase(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.aiboxDir = filepath.Join(t.TempDir(), "aibox")
+	require.NoError(t, os.MkdirAll(f.aiboxDir, 0o700))
+	f.writeConfig(t, "mounts:\n  - "+otherCase(t, f.aiboxDir)+":/mnt/aibox\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.False(t, f.launch.called)
+}
+
 func TestRunPassesTheAllowListToTheProxy(t *testing.T) {
 	// arrange
 	f := newFixture(t)

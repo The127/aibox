@@ -141,6 +141,19 @@ func TestConfigEditReportsAFileThatDoesNotReadBack(t *testing.T) {
 	require.ErrorContains(t, err, f.project(t).Config)
 }
 
+func TestConfigEditReportsAMountTheVMMustNotSee(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.editor.onEdit = writes("mounts:\n  - " + f.homeDir + ":/mnt/home\n")
+
+	// act
+	err := f.configEdit()
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, "home directory")
+}
+
 func TestConfigEditReportsAnEditorThatFailsAndSkipsTheReadBack(t *testing.T) {
 	// arrange
 	f := newFixture(t)

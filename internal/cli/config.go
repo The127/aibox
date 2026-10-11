@@ -62,7 +62,7 @@ func editConfig(deps dependencies, editor string) error {
 		return fmt.Errorf("%s: %w", editor, err)
 	}
 
-	_, err = config.Load(p.Config)
+	_, err = loadConfig(deps, p.Config, aibox)
 
 	return err
 }

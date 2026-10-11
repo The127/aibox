@@ -49,3 +49,9 @@ func dispose(h windows.Handle, flags uint32) error {
 
 	return setInfo(h, windows.FileDispositionInfoEx, &disposition)
 }
+
+// at is where a read or write of a synchronous handle starts. The handle
+// still waits for the call to finish.
+func at(offset int64) *windows.Overlapped {
+	return &windows.Overlapped{Offset: uint32(offset), OffsetHigh: uint32(offset >> 32)} //nolint:gosec // an offset is the two halves of the value
+}

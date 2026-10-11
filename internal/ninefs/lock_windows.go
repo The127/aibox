@@ -9,7 +9,7 @@ import (
 // guest. A lock in the way answers Blocked, after which the guest's kernel
 // waits and asks again for a blocking lock, and fails a non-blocking one.
 func (f *file) Lock(pid int, lockType p9.LockType, _ p9.LockFlags, start, length uint64, client string) (p9.LockStatus, error) {
-	if f.open == nil {
+	if f.open == 0 {
 		return p9.LockStatusError, linux.EBADF
 	}
 

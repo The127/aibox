@@ -1,6 +1,7 @@
 package ninefs_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -325,4 +326,37 @@ func TestCreatingANameAFolderHasFails(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, linux.EEXIST)
+}
+
+func TestReadsAndWritesGoToTheirOffset(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	dir := tree(t)
+	f := walk(t, mount(t, dir), "src", "main.go")
+
+	_, _, err := f.Open(p9.ReadWrite)
+	require.NoError(t, err)
+
+	// act
+	_, writeErr := f.WriteAt([]byte("MAIN"), 8)
+
+	buf := make([]byte, 4)
+	n, readErr := f.ReadAt(buf, 8)
+
+	past := make([]byte, 4)
+	pastN, pastErr := f.ReadAt(past, 1000)
+
+	// assert
+	require.NoError(t, writeErr)
+	require.NoError(t, readErr)
+	assert.Equal(t, "MAIN", string(buf[:n]))
+	// the server answers no bytes and no error, which the library's
+	// client turns into io.EOF
+	assert.ErrorIs(t, pastErr, io.EOF)
+	assert.Zero(t, pastN)
+
+	b, err := os.ReadFile(filepath.Join(dir, "src", "main.go")) //nolint:gosec // the test's own folder
+	require.NoError(t, err)
+	assert.Equal(t, "package MAIN\n", string(b))
 }

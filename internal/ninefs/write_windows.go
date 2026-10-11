@@ -2,7 +2,6 @@ package ninefs
 
 import (
 	"errors"
-	"os"
 	"time"
 	"unsafe"
 
@@ -55,23 +54,25 @@ func (f *file) accessFor(mode p9.OpenFlags, dir bool) (uint32, error) {
 }
 
 func (f *file) WriteAt(p []byte, offset int64) (int, error) {
-	if f.open == nil {
+	if f.open == 0 {
 		return 0, linux.EBADF
 	}
 
-	n, err := f.open.WriteAt(p, offset)
+	var n uint32
 
-	return n, errno(err)
+	err := windows.WriteFile(f.open, p, &n, at(offset))
+
+	return int(n), errno(err)
 }
 
 func (f *file) FSync() error {
 	// Windows flushes only what a handle may write, and Linux syncs a file
 	// or folder opened to read as well, where there is nothing to flush
-	if f.open == nil || !f.writable {
+	if f.open == 0 || !f.writable {
 		return nil
 	}
 
-	return errno(windows.FlushFileBuffers(windows.Handle(f.open.Fd())))
+	return errno(windows.FlushFileBuffers(f.open))
 }
 
 // child checks that the name may be made in the folder.
@@ -115,7 +116,7 @@ func (f *file) Create(name string, mode p9.OpenFlags, perm p9.FileMode, _ p9.UID
 		return nil, p9.QID{}, 0, err
 	}
 
-	created := &file{fs: f.fs, h: attrs, share: f.share, open: os.NewFile(uintptr(h), ""), writable: mode.Mode() != p9.ReadOnly}
+	created := &file{fs: f.fs, h: attrs, share: f.share, open: h, writable: mode.Mode() != p9.ReadOnly}
 
 	qid, _, err := created.info()
 	if err != nil {

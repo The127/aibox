@@ -3,8 +3,6 @@ package ninefs
 import (
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"unsafe"
 
@@ -280,8 +278,9 @@ type file struct {
 	h  windows.Handle
 	// share is the share of the file, which a link or rename can't leave
 	share *share
-	open  *os.File
-	// writable is whether open may write
+	// open is the handle Open opened with the access the guest asked for,
+	// 0 before; writable says whether it may write, which flushing needs
+	open     windows.Handle
 	writable bool
 	// entries is the listing of the folder, taken when the guest starts
 	// reading it, so that offsets stay where they were
@@ -460,36 +459,35 @@ func (f *file) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 		return p9.QID{}, 0, err
 	}
 
-	f.open = os.NewFile(uintptr(h), "")
+	f.open = h
 	f.writable = mode.Mode() != p9.ReadOnly
 
 	return qid, 0, nil
 }
 
 func (f *file) ReadAt(p []byte, offset int64) (int, error) {
-	if f.open == nil {
+	if f.open == 0 {
 		return 0, linux.EBADF
 	}
 
-	n, err := f.open.ReadAt(p, offset)
-	if errors.Is(err, io.EOF) {
-		return n, nil
+	// one call at the offset, which the handle never keeps between calls
+	var n uint32
+
+	err := windows.ReadFile(f.open, p, &n, at(offset))
+	if errors.Is(err, windows.ERROR_HANDLE_EOF) {
+		return int(n), nil
 	}
 
-	if err != nil {
-		return n, errno(err)
-	}
-
-	return n, nil
+	return int(n), errno(err)
 }
 
 func (f *file) Readdir(offset uint64, _ uint32) (p9.Dirents, error) {
-	if f.open == nil {
+	if f.open == 0 {
 		return nil, linux.EBADF
 	}
 
 	if offset == 0 || f.entries == nil {
-		entries, err := list(windows.Handle(f.open.Fd()))
+		entries, err := list(f.open)
 		if err != nil {
 			return nil, err
 		}
@@ -579,9 +577,9 @@ func (f *file) StatFS() (p9.FSStat, error) {
 
 func (f *file) Close() error {
 	var errs []error
-	if f.open != nil {
-		errs = append(errs, f.open.Close())
-		f.open = nil
+	if f.open != 0 {
+		errs = append(errs, windows.CloseHandle(f.open))
+		f.open = 0
 	}
 
 	if f.h != 0 {

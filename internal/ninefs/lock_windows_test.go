@@ -10,9 +10,9 @@ import (
 	"github.com/the127/aibox/internal/ninefs"
 )
 
-// direct is the root of a share of the folder without the wire between:
-// the client of the p9 library sends Tlock without the fid, which the
-// guest's kernel does send.
+// direct is the root of a share of the folder with no wire between: the
+// client of the p9 library leaves the fid out of Tlock, where the guest's
+// kernel sends it.
 func direct(t *testing.T, dir string) p9.File {
 	t.Helper()
 

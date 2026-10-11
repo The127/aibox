@@ -33,11 +33,11 @@ func TestAWriteLockKeepsOtherOwnersOutOfItsRange(t *testing.T) {
 		start, length uint64
 		ok            bool
 	}{
-		"a read inside":          {false, 10, 5, false},
-		"a write overlapping":    {true, 90, 20, false},
-		"a write right after":    {true, 100, 10, true},
-		"a read to the end":      {false, 99, 0, false},
-		"a write before, adjoin": {true, 0, 0, false},
+		"a read inside":       {false, 10, 5, false},
+		"a write overlapping": {true, 90, 20, false},
+		"a write right after": {true, 100, 10, true},
+		"a read to the end":   {false, 99, 0, false},
+		"a write to the end":  {true, 0, 0, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

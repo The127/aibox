@@ -17,14 +17,15 @@ var ErrAccessDenied = errors.New("the Host Compute Service serves only Administr
 // ErrClosed is a call on a System after its Close.
 var ErrClosed = errors.New("the compute system is closed")
 
-// Error is a call of the service that failed. Op names the call, HRESULT
-// is the code the service failed it with and Result is the result document
-// of the call, if the service wrote one: JSON that says in words what the
-// HRESULT says in a number.
+// Error is a call of the service that failed.
 type Error struct {
-	Op      string
+	// Op names the call.
+	Op string
+	// HRESULT is the code the service failed the call with.
 	HRESULT uint32
-	Result  string
+	// Result is the result document of the call, if the service wrote one:
+	// JSON that says in words what the HRESULT says in a number.
+	Result string
 }
 
 // Error names the call and the HRESULT, and quotes the result document if

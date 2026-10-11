@@ -47,7 +47,9 @@ type Document struct {
 // SchemaVersion is a version of the schema of the service. Version 2.1 is
 // the one the documents of this package follow.
 type SchemaVersion struct {
+	// Major is the major version.
 	Major uint32 `json:"Major"`
+	// Minor is the minor version.
 	Minor uint32 `json:"Minor"`
 }
 
@@ -68,6 +70,7 @@ type VirtualMachine struct {
 // Chipset is how a VM boots. The only way this package knows is a Linux
 // kernel loaded straight from a file on the host.
 type Chipset struct {
+	// LinuxKernelDirect is the kernel the VM boots.
 	LinuxKernelDirect LinuxKernelDirect `json:"LinuxKernelDirect"`
 }
 
@@ -82,13 +85,15 @@ type LinuxKernelDirect struct {
 	KernelCmdLine string `json:"KernelCmdLine"`
 }
 
-// ComputeTopology is the memory and the processors of a VM.
+// ComputeTopology is how much of the host a VM may use.
 type ComputeTopology struct {
-	Memory    Memory    `json:"Memory"`
+	// Memory is the memory the VM gets.
+	Memory Memory `json:"Memory"`
+	// Processor is the processors the VM gets.
 	Processor Processor `json:"Processor"`
 }
 
-// Memory is the memory of a VM.
+// Memory is how much memory a VM gets and how the host backs it.
 type Memory struct {
 	// SizeInMB is the size of the memory in MiB.
 	SizeInMB uint64 `json:"SizeInMB"`
@@ -97,8 +102,9 @@ type Memory struct {
 	AllowOvercommit bool `json:"AllowOvercommit"`
 }
 
-// Processor is the processors of a VM.
+// Processor is how many virtual processors a VM gets.
 type Processor struct {
+	// Count is the number of virtual processors.
 	Count uint32 `json:"Count"`
 }
 
@@ -120,12 +126,16 @@ type Devices struct {
 // ComPort is a serial port of a VM, served as a named pipe on the host,
 // which is where the console of the guest comes out.
 type ComPort struct {
+	// NamedPipe is the name of the pipe, \\.\pipe\ and a name. The service
+	// connects to it, so the host listens on it before the VM starts.
 	NamedPipe string `json:"NamedPipe"`
 }
 
 // Scsi is a SCSI controller of a VM with its attachments, keyed by their
 // number as a string.
 type Scsi struct {
+	// Attachments are the disks of the controller, keyed by their LUN,
+	// which is how the guest tells them apart.
 	Attachments map[string]Attachment `json:"Attachments,omitempty"`
 }
 
@@ -142,6 +152,7 @@ type Attachment struct {
 // HvSocket is the Hyper-V socket of a VM, the vsock of the guest, and who
 // on the host may use it.
 type HvSocket struct {
+	// HvSocketConfig is who on the host may use the socket.
 	HvSocketConfig HvSocketConfig `json:"HvSocketConfig"`
 }
 
@@ -160,6 +171,7 @@ type HvSocketConfig struct {
 // Plan9 are the folders of the host shared with the guest over 9p, which
 // the guest reaches over its vsock.
 type Plan9 struct {
+	// Shares are the shared folders.
 	Shares []Plan9Share `json:"Shares"`
 }
 

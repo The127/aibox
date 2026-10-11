@@ -200,7 +200,8 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	spec.Proxy.OnConnected, spec.Proxy.OnRefused, spec.Proxy.OnClosed = network.Connected, network.Refused, network.Closed
 	spec.Proxy.Local = r.local(t.proxyLog)
 
-	progress := task.NewLineCleaner(vm)
+	// a writer of its own, so that its last line ends before the report
+	progress := log.Writer("vm")
 	spec.Progress = progress
 
 	results, resultsWriter := io.Pipe()

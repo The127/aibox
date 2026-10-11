@@ -35,8 +35,13 @@ func (l *Log) Writer(label string) *LogWriter {
 	return &LogWriter{log: l, label: label}
 }
 
-// LogWriter is a writer of a Log. Close writes what is left of the last
-// line, and a write after Close goes out at once, so that none is lost.
+// maxLineBytes is how long a line of a LogWriter may get. The rest of a
+// longer line is dropped.
+const maxLineBytes = 4096
+
+// LogWriter is a writer of a Log. It cleans each line with CleanText and
+// takes a CRLF for a newline. Close writes what is left of the last line,
+// and a write after Close goes out at once, so that none is lost.
 type LogWriter struct {
 	log    *Log
 	label  string
@@ -89,7 +94,7 @@ func (w *LogWriter) Close() error {
 }
 
 func (w *LogWriter) flush() error {
-	text := strings.TrimPrefix(string(w.line), w.label+": ")
+	text := CleanText(strings.TrimPrefix(strings.TrimSuffix(string(w.line), "\r"), w.label+": "))
 	w.line = w.line[:0]
 
 	_, err := fmt.Fprintf(w.log.w, "%s %s[%s]: %s\n", w.log.now().Format(time.TimeOnly), w.label, w.log.id, text)

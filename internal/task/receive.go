@@ -3,7 +3,6 @@ package task
 import (
 	"archive/tar"
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -208,60 +207,4 @@ func Indent(text, prefix string) string {
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// maxLineBytes is how long a line of a LineCleaner may get. The rest of a
-// longer line is dropped.
-const maxLineBytes = 4096
-
-// LineCleaner passes text on line by line, each cleaned with CleanText,
-// and takes a CRLF for a newline. Close passes on a last line without its
-// newline.
-type LineCleaner struct {
-	w    io.Writer
-	line []byte
-}
-
-// NewLineCleaner returns a LineCleaner that writes to w.
-func NewLineCleaner(w io.Writer) *LineCleaner {
-	return &LineCleaner{w: w}
-}
-
-func (c *LineCleaner) Write(b []byte) (int, error) {
-	n := len(b)
-
-	for len(b) > 0 {
-		part, rest, ended := bytes.Cut(b, []byte("\n"))
-		c.line = append(c.line, part[:min(len(part), maxLineBytes-len(c.line))]...)
-
-		if !ended {
-			break
-		}
-
-		if err := c.flush(); err != nil {
-			return 0, err
-		}
-
-		b = rest
-	}
-
-	return n, nil
-}
-
-func (c *LineCleaner) flush() error {
-	line := CleanText(strings.TrimSuffix(string(c.line), "\r")) + "\n"
-	c.line = c.line[:0]
-
-	_, err := io.WriteString(c.w, line)
-
-	return err
-}
-
-// Close writes what is left of the last line.
-func (c *LineCleaner) Close() error {
-	if len(c.line) == 0 {
-		return nil
-	}
-
-	return c.flush()
 }

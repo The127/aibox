@@ -115,3 +115,40 @@ func TestLogKeepsTheLinesOfWritersThatWriteAtOnce(t *testing.T) {
 		assert.Regexp(t, `^15:04:05 (aibox|vm)\[a1b2c3\]: a line$`, line)
 	}
 }
+
+func TestLogCleansEachLine(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	w := task.NewLog(&out, "a1b2c3", fixedTime).Writer("vm")
+
+	// act
+	_, err := w.Write([]byte("one\x1b[31m\tred\nt"))
+	require.NoError(t, err)
+	_, err = w.Write([]byte("wo\u202e\nlast\x07"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	// assert
+	assert.Equal(t, "15:04:05 vm[a1b2c3]: one?[31m red\n"+
+		"15:04:05 vm[a1b2c3]: two?\n"+
+		"15:04:05 vm[a1b2c3]: last?\n", out.String())
+}
+
+func TestLogTakesACRLFForANewline(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	w := task.NewLog(&out, "a1b2c3", fixedTime).Writer("vm")
+
+	// act
+	_, err := w.Write([]byte("one\r\ntwo\r"))
+	require.NoError(t, err)
+	_, err = w.Write([]byte("\nthree\rfour\n"))
+	require.NoError(t, err)
+
+	// assert
+	assert.Equal(t, "15:04:05 vm[a1b2c3]: one\n"+
+		"15:04:05 vm[a1b2c3]: two\n"+
+		"15:04:05 vm[a1b2c3]: three?four\n", out.String())
+}

@@ -117,7 +117,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
-	return deps.backend.Run(ctx, spec)
+	err = deps.backend.Run(ctx, spec)
+	r.proxyLog.Summarize()
+
+	return err
 }
 
 // folders returns the current folder and the aibox folder.
@@ -275,6 +278,7 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 			Pinned:      r.config.Allow.Pinned,
 			OnConnected: r.proxyLog.Connected,
 			OnRefused:   r.proxyLog.Refused,
+			OnClosed:    r.proxyLog.Closed,
 			Hint:        "Add it to " + r.project.Config + " to allow it.",
 		},
 		Ports:    r.config.Allow.Ports(),

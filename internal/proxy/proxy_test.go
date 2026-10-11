@@ -379,6 +379,85 @@ func TestLogWritesEachTargetOnce(t *testing.T) {
 	assert.Equal(t, []string{"evil.example:443", "evil.example:80"}, refused)
 }
 
+func TestLogSummarizesEachTarget(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+	log := proxy.NewLog(&out)
+	clock := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	proxy.SetNow(log, func() time.Time {
+		clock = clock.Add(time.Minute)
+
+		return clock
+	})
+
+	log.Connected("github.com:443") // 12:01
+	log.Connected("github.com:443") // 12:02
+	log.Closed("github.com:443")    // 12:03
+	log.Closed("github.com:443")    // 12:04
+	log.Refused("evil.example:443") // 12:05
+	log.Refused("evil.example:443") // 12:06
+	log.Connected("pypi.org:443")   // 12:07
+	log.Closed("pypi.org:443")      // 12:08
+	log.Refused("github.com:443")   // 12:09
+	out.Reset()
+
+	// act
+	log.Summarize() // 12:10
+
+	// assert
+	assert.Equal(t, `2026-10-11T12:10:00Z summary connected "github.com:443" 2 times, last closed at 2026-10-11T12:04:00Z
+2026-10-11T12:10:00Z summary connected "pypi.org:443" 1 time, last closed at 2026-10-11T12:08:00Z
+2026-10-11T12:10:00Z summary refused "evil.example:443" 2 times, last at 2026-10-11T12:06:00Z
+2026-10-11T12:10:00Z summary refused "github.com:443" 1 time, last at 2026-10-11T12:09:00Z
+`, out.String())
+}
+
+func TestLogSummarizesNothingWithoutTargets(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+	log := proxy.NewLog(&out)
+
+	// act
+	log.Summarize()
+
+	// assert
+	assert.Empty(t, out.String())
+}
+
+func TestServeReportsATunnelClosedOnceItStops(t *testing.T) {
+	cases := map[string]proxy.Options{
+		"to a target":       {},
+		"to a local target": {Local: func(string, string) http.Handler { return http.NotFoundHandler() }},
+	}
+
+	for name, options := range cases {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			var mu sync.Mutex
+
+			var closed []string
+
+			options.OnClosed = func(target string) { mu.Lock(); closed = append(closed, target); mu.Unlock() }
+			address, stop := start(t, options)
+			target, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = target.Close() })
+
+			status, _ := connect(t, address, target.Addr().String())
+			require.Equal(t, "HTTP/1.1 200 Connection Established", status)
+
+			// act
+			err = stop()
+
+			// assert
+			require.NoError(t, err)
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, []string{target.Addr().String()}, closed)
+		})
+	}
+}
+
 func TestServeReportsATargetItConnectedTo(t *testing.T) {
 	// arrange
 	connected := make(chan string, 1)
@@ -594,7 +673,11 @@ func TestServeRefusesATargetWithoutAHost(t *testing.T) {
 func TestServeReportsATargetItCannotReach(t *testing.T) {
 	// arrange
 	connected := make(chan string, 1)
-	address := serve(t, proxy.Options{OnConnected: func(target string) { connected <- target }})
+	ended := make(chan string, 1)
+	address, stop := start(t, proxy.Options{
+		OnConnected: func(target string) { connected <- target },
+		OnClosed:    func(target string) { ended <- target },
+	})
 	closed, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
@@ -604,7 +687,9 @@ func TestServeReportsATargetItCannotReach(t *testing.T) {
 
 	// assert
 	assert.Equal(t, "HTTP/1.1 502 Bad Gateway", status)
+	require.NoError(t, stop(), "Serve returns once every connection is handled")
 	assert.Empty(t, connected, "a target it could not reach was not connected to")
+	assert.Empty(t, ended, "a target it could not reach was not closed")
 }
 
 // acceptedListener tells on accepted each time it accepts a connection.

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,6 +34,9 @@ type Options struct {
 	OnConnected func(target string)
 	// OnRefused is called with the host:port of each refused request.
 	OnRefused func(target string)
+	// OnClosed is called with the host:port of each request the proxy
+	// reached once its tunnel has closed.
+	OnClosed func(target string)
 	// Hint is a line added to each refusal, such as where to allow the host.
 	Hint string
 	// Resolve looks a host name up. Nil uses the system resolver.
@@ -89,9 +93,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	}
 
 	if local != nil {
-		if options.OnConnected != nil {
-			options.OnConnected(net.JoinHostPort(host, port))
-		}
+		defer options.connected(net.JoinHostPort(host, port))()
 
 		serveLocal(ctx, conn, reader, local)
 
@@ -112,10 +114,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	}
 
 	defer func() { _ = upstream.Close() }()
-
-	if options.OnConnected != nil {
-		options.OnConnected(net.JoinHostPort(host, port))
-	}
+	defer options.connected(net.JoinHostPort(host, port))()
 
 	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
 	defer stop()
@@ -131,6 +130,20 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	}
 
 	tunnel.Join(conn, upstream)
+}
+
+// connected reports the target as reached and returns what reports it
+// closed.
+func (o Options) connected(target string) func() {
+	if o.OnConnected != nil {
+		o.OnConnected(target)
+	}
+
+	return func() {
+		if o.OnClosed != nil {
+			o.OnClosed(target)
+		}
+	}
 }
 
 // handshake reads the CONNECT request and returns the host and port to
@@ -330,34 +343,60 @@ func isPublic(ip net.IP) bool {
 }
 
 // Log writes each target the proxy connected to or refused to a writer
-// once, and keeps them. It writes what the guest asked for, not what went
-// through.
+// once, and keeps them with how often and when last they were used. It
+// writes what the guest asked for, not what went through.
 type Log struct {
 	mu        sync.Mutex
 	w         io.Writer
+	now       func() time.Time
 	connected targets
 	refused   targets
 }
 
 type targets struct {
 	list []string
-	seen map[string]bool
+	uses map[string]*use
+}
+
+// use is how often a target was used, and when last: when its last
+// connection closed, or when it was last refused.
+type use struct {
+	count int
+	last  time.Time
 }
 
 // NewLog returns a Log that writes to w.
 func NewLog(w io.Writer) *Log {
-	return &Log{w: w}
+	return &Log{w: w, now: time.Now}
 }
 
 // Connected logs a target the proxy connected to. It is an OnConnected
 // function.
 func (l *Log) Connected(target string) {
-	l.add("connected", target, &l.connected)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.add("connected", target, &l.connected, l.now())
+}
+
+// Closed notes when a connection to a target ended. It is an OnClosed
+// function.
+func (l *Log) Closed(target string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if u := l.connected.uses[target]; u != nil {
+		u.last = l.now()
+	}
 }
 
 // Refused logs a target the proxy refused. It is an OnRefused function.
 func (l *Log) Refused(target string) {
-	l.add("refused", target, &l.refused)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	l.add("refused", target, &l.refused, now).last = now
 }
 
 // Targets returns the targets the proxy connected to and those it refused,
@@ -369,23 +408,56 @@ func (l *Log) Targets() (connected, refused []string) {
 	return slices.Clone(l.connected.list), slices.Clone(l.refused.list)
 }
 
-func (l *Log) add(verb, target string, targets *targets) {
+// Summarize writes for each target how often the proxy connected to it or
+// refused it, and when last. Call it once the proxy has stopped, so that no
+// connection is still open.
+func (l *Log) Summarize() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if targets.seen[target] {
-		return
+	now := l.now()
+	l.connected.summarize(l.w, now, "connected", "last closed at")
+	l.refused.summarize(l.w, now, "refused", "last at")
+}
+
+// add counts a use of the target and writes the target the first time.
+// The caller holds l.mu.
+func (l *Log) add(verb, target string, targets *targets, now time.Time) *use {
+	u := targets.uses[target]
+	if u == nil {
+		if targets.uses == nil {
+			targets.uses = map[string]*use{}
+		}
+
+		u = &use{}
+		targets.uses[target] = u
+		targets.list = append(targets.list, target)
+
+		_, _ = fmt.Fprintf(l.w, "%s %s %q\n", stamp(now), verb, target)
 	}
 
-	if targets.seen == nil {
-		targets.seen = map[string]bool{}
+	u.count++
+
+	return u
+}
+
+func (t *targets) summarize(w io.Writer, now time.Time, verb, last string) {
+	for _, target := range t.list {
+		u := t.uses[target]
+		_, _ = fmt.Fprintf(w, "%s summary %s %q %s, %s %s\n", stamp(now), verb, target, times(u.count), last, stamp(u.last))
+	}
+}
+
+func times(n int) string {
+	if n == 1 {
+		return "1 time"
 	}
 
-	targets.seen[target] = true
-	targets.list = append(targets.list, target)
+	return strconv.Itoa(n) + " times"
+}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, _ = fmt.Fprintf(l.w, "%s %s %q\n", now, verb, target)
+func stamp(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
 }
 
 // writeTunnelOK answers a CONNECT. The reply has no headers about a body,

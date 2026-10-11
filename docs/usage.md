@@ -33,7 +33,7 @@ path:
 | `home/` | The VM's home folder, so Claude Code's login and `~/.claude` survive restarts. |
 | `state.ext4` | A disk for the VM's `/usr/local` and `~/.cache`. |
 | `console.log` | The kernel and init messages of the last run. |
-| `proxy.log` | Every host and port the proxy connected to or refused, once per run. |
+| `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. |
 | `tasks/` | The project's [tasks](tasks.md). |
 
 Tools you install into `/usr/local` in the VM stay on the state disk. They

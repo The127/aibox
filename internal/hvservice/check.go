@@ -28,9 +28,9 @@ func (r Request) Check() error {
 		}
 
 		return nil
-	case OpStart:
+	case OpStart, OpStop:
 		if r.Create != nil {
-			return fmt.Errorf("%w: start with a VM to create", ErrBadRequest)
+			return fmt.Errorf("%w: %s with a VM to create", ErrBadRequest, r.Op)
 		}
 
 		return nil

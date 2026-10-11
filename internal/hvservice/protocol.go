@@ -57,10 +57,14 @@ const (
 	OpCreate Op = "create"
 	// OpStart starts the VM of the connection.
 	OpStart Op = "start"
+	// OpStop ends the VM of the connection, and is answered once it is
+	// gone, which closing the connection, which ends it too, can't tell.
+	OpStop Op = "stop"
 )
 
 // Request is a message from aibox to the service. A connection is for one
-// VM: aibox creates it, starts it, and ends it by closing the connection.
+// VM: aibox creates it, starts it, and ends it with OpStop or by closing
+// the connection.
 type Request struct {
 	Op Op `json:"op"`
 	// Create is the VM to create, for OpCreate.

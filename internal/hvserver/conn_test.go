@@ -465,3 +465,36 @@ func TestAVMTheHostHasNoMemoryLeftForTakesNoStateDisk(t *testing.T) {
 	assert.Contains(t, reply.Error, "too little memory")
 	assert.Equal(t, []string{"revoke"}, f.calls.all()[1:], "the VM's access to the state disk is taken away again")
 }
+
+func TestAStopEndsTheVMBeforeItIsAnsweredAndLetsTheClientMakeAnother(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+	require.Empty(t, f.ask(t, createLine).Error)
+	require.Empty(t, f.ask(t, `{"op":"start"}`).Error)
+
+	// act
+	stopped := f.ask(t, `{"op":"stop"}`)
+
+	// assert
+	assert.Equal(t, hvservice.Reply{}, stopped)
+	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all()[1:], "the VM was gone before the answer")
+	assert.Zero(t, f.srv.ledger.used)
+	assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
+}
+
+func TestAStopOfNoVMIsRefused(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, `{"op":"stop"}`)
+
+	// assert
+	assert.Contains(t, reply.Error, "out of turn")
+}

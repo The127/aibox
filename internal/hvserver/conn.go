@@ -138,6 +138,13 @@ func (s *server) answer(ctx context.Context, sess *session, request hvservice.Re
 		}
 
 		sess.started = true
+	case hvservice.OpStop:
+		if sess.vm == nil {
+			return hvservice.Refusal(fmt.Errorf("%w: stop of no VM", errOutOfTurn))
+		}
+
+		// answered once the VM is gone, which is what the client waits for
+		s.end(ctx, sess)
 	}
 
 	return hvservice.Reply{}

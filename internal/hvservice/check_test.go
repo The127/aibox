@@ -15,6 +15,7 @@ func TestCheckTakesACreateWithItsVMAndABareStart(t *testing.T) {
 	for _, request := range []hvservice.Request{
 		{Op: hvservice.OpCreate, Create: &hvservice.Create{}},
 		{Op: hvservice.OpStart},
+		{Op: hvservice.OpStop},
 	} {
 		t.Run(string(request.Op), func(t *testing.T) {
 			t.Parallel()
@@ -36,6 +37,7 @@ func TestCheckRefusesARequestTheServiceWouldNotDoAsMeant(t *testing.T) {
 		"an unknown op":         {Op: "delete"},
 		"create without its VM": {Op: hvservice.OpCreate},
 		"start with a VM":       {Op: hvservice.OpStart, Create: &hvservice.Create{}},
+		"stop with a VM":        {Op: hvservice.OpStop, Create: &hvservice.Create{}},
 	}
 
 	for name, request := range tests {

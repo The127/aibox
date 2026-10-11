@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -267,11 +268,12 @@ func parseMount(text string) (Mount, error) {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, err)
 	}
 
-	if !filepath.IsAbs(host) || !filepath.IsAbs(guest) {
+	// the guest path is one of the VM, a Linux path, whatever the host
+	if !filepath.IsAbs(host) || !path.IsAbs(guest) {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrBadMount)
 	}
 
-	mount := Mount{Host: filepath.Clean(host), Guest: filepath.Clean(guest)}
+	mount := Mount{Host: filepath.Clean(host), Guest: path.Clean(guest)}
 	if mount.reserved() {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrReservedMount)
 	}
@@ -535,11 +537,11 @@ func parsePathEntry(text string) (string, error) {
 		return text, nil
 	}
 
-	if !filepath.IsAbs(text) || filepath.Clean(text) == "/" || strings.Contains(text, ":") || strings.ContainsFunc(text, unicode.IsControl) {
+	if !path.IsAbs(text) || path.Clean(text) == "/" || strings.Contains(text, ":") || strings.ContainsFunc(text, unicode.IsControl) {
 		return "", fmt.Errorf("path entry %q: %w", text, ErrBadPath)
 	}
 
-	return filepath.Clean(text), nil
+	return path.Clean(text), nil
 }
 
 // fitsCmdline fails when the mounts together are too much for the kernel

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -616,7 +617,8 @@ func pathFolders(entries []string, lookup func(string) (string, bool)) ([]string
 	var folders []string
 
 	for _, entry := range entries {
-		if filepath.IsAbs(entry) {
+		// folders of the VM, Linux paths, whatever the host
+		if path.IsAbs(entry) {
 			folders = appendFolder(folders, entry)
 
 			continue
@@ -628,8 +630,8 @@ func pathFolders(entries []string, lookup func(string) (string, bool)) ([]string
 		}
 
 		for _, folder := range strings.Split(value, ":") {
-			if filepath.IsAbs(folder) && filepath.Clean(folder) != "/" {
-				folders = appendFolder(folders, filepath.Clean(folder))
+			if path.IsAbs(folder) && path.Clean(folder) != "/" {
+				folders = appendFolder(folders, path.Clean(folder))
 			}
 		}
 	}

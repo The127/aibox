@@ -90,7 +90,6 @@ func check(op string, hresult uintptr, result string) error {
 // result, and the result document with it, once waited for.
 type operation uintptr
 
-// newOperation creates an operation, with nothing to call back.
 func newOperation() (operation, error) {
 	op, _, err := procCreateOperation.Call(0, 0)
 	if op == 0 {
@@ -100,7 +99,6 @@ func newOperation() (operation, error) {
 	return operation(op), nil
 }
 
-// close frees the operation.
 func (op operation) close() {
 	_, _, _ = procCloseOperation.Call(uintptr(op))
 }

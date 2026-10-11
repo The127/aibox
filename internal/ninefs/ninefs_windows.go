@@ -216,12 +216,8 @@ func (r *root) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, nil, err
 	}
 
-	start := &file{fs: r.fs, h: h, share: s}
-
-	qid, _, err := start.info()
+	start, qid, err := (&file{fs: r.fs, share: s}).fileOf(h)
 	if err != nil {
-		_ = start.Close()
-
 		return nil, nil, err
 	}
 
@@ -278,6 +274,8 @@ type file struct {
 	h  windows.Handle
 	// share is the share of the file, which a link or rename can't leave
 	share *share
+	// dir is whether the guest may walk into the file
+	dir bool
 	// open is the handle Open opened with the access the guest asked for,
 	// 0 before; writable says whether it may write, which flushing needs
 	open     windows.Handle
@@ -350,52 +348,72 @@ func typeOf(attributes, tag uint32) p9.FileMode {
 }
 
 func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
-	h, err := openAttrs(f.h, "")
-	if err != nil {
-		return nil, nil, err
+	if len(names) == 0 {
+		h, err := openAttrs(f.h, "")
+		if err != nil {
+			return nil, nil, err
+		}
+
+		clone, _, err := f.fileOf(h)
+
+		return nil, clone, err
 	}
 
-	cur := &file{fs: f.fs, h: h, share: f.share}
+	cur := f
 	qids := make([]p9.QID, 0, len(names))
+
+	// every step but the first closes the file of the step before
+	done := func() {
+		if cur != f {
+			_ = cur.Close()
+		}
+	}
 
 	for _, name := range names {
 		if err := checkName(name); err != nil {
-			_ = cur.Close()
+			done()
 
 			return nil, nil, err
 		}
 
-		if _, info, err := cur.info(); err != nil || !info.isDir() {
-			_ = cur.Close()
-
-			if err != nil {
-				return nil, nil, err
-			}
+		if !cur.dir {
+			done()
 
 			return nil, nil, linux.ENOTDIR
 		}
 
-		next, err := openAttrs(cur.h, name)
+		h, err := openAttrs(cur.h, name)
 
-		_ = cur.Close()
+		done()
 
 		if err != nil {
 			return nil, nil, err
 		}
 
-		cur = &file{fs: f.fs, h: next, share: f.share}
-
-		qid, _, err := cur.info()
+		next, qid, err := f.fileOf(h)
 		if err != nil {
-			_ = cur.Close()
-
 			return nil, nil, err
 		}
 
+		cur = next
 		qids = append(qids, qid)
 	}
 
 	return qids, cur, nil
+}
+
+// fileOf makes the file of a handle a walk opened, with its QID. It keeps
+// whether the file is a folder the guest may walk into, which the next walk
+// asks: the type behind an open handle never changes.
+func (f *file) fileOf(h windows.Handle) (*file, p9.QID, error) {
+	qid, info, err := infoOf(h)
+	if err != nil {
+		_ = windows.CloseHandle(h)
+
+		return nil, p9.QID{}, err
+	}
+
+	return &file{fs: f.fs, h: h, share: f.share, dir: info.isDir()}, qid, nil
 }
 
 func (f *file) GetAttr(p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {

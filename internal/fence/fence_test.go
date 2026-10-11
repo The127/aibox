@@ -49,6 +49,20 @@ func TestAProgramWritesBelowItsFolder(t *testing.T) {
 	assert.FileExists(t, file)
 }
 
+func TestAProgramWritesBelowAFolderWithQuotesInItsName(t *testing.T) {
+	// arrange
+	dir := filepath.Join(t.TempDir(), `a "quoted\" (folder)`)
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	file := filepath.Join(dir, "file")
+
+	// act
+	out, err := write(dir, file)
+
+	// assert
+	require.NoError(t, err, string(out))
+	assert.FileExists(t, file)
+}
+
 func TestAProgramCannotWriteThroughALinkOutOfItsFolder(t *testing.T) {
 	// arrange
 	dir, outside := t.TempDir(), t.TempDir()

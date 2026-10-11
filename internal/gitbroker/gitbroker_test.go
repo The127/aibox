@@ -138,6 +138,10 @@ func makeTemplate() (string, error) {
 	}{
 		{"", []string{"init", "--bare", "--initial-branch=main", bare}},
 		{bare, []string{"config", "http.receivepack", "true"}},
+		// receive-pack doesn't get GIT_CONFIG_COUNT, so only the config of
+		// the repository stops it from starting maintenance after a push
+		{bare, []string{"config", "receive.autogc", "false"}},
+		{bare, []string{"config", "maintenance.auto", "false"}},
 		{"", []string{"init", "--initial-branch=main", work}},
 		{work, []string{"commit", "--allow-empty", "-m", "first"}},
 		{work, []string{"push", bare, "main"}},
@@ -217,7 +221,8 @@ func gitIn(ctx context.Context, home, dir string, args ...string) (string, error
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
 		// maintenance in the background would make and remove files in a
-		// repository while a test copies it
+		// repository while a test copies or removes it. git drops this for
+		// receive-pack, so makeTemplate also sets it in the bare repository.
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false",
 	)
 

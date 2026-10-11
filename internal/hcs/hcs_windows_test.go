@@ -88,7 +88,7 @@ func TestOpenFailsWithTheCauseOfAnEndedContext(t *testing.T) {
 	assert.ErrorIs(t, err, cause)
 }
 
-func TestSystemRefusesCallsOnceClosed(t *testing.T) {
+func TestSystemWithoutAHandleRefusesCalls(t *testing.T) {
 	t.Parallel()
 
 	// arrange

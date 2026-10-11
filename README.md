@@ -128,6 +128,9 @@ signed off (`git commit -s`). Git hooks check both.
 
 ## Security
 
+The [threat model](https://the127.github.io/aibox/threat-model.html) says
+who aibox defends you against and where its limits are.
+
 Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
 ## License

@@ -4,6 +4,9 @@ A prompt or a file in a repository can steer Claude Code. So aibox doesn't
 trust anything in the VM: not Claude Code, not the programs it runs, and not
 what they write.
 
+[Threat model](threat-model.md) says who aibox defends you against and
+where the trust boundaries are. This page has the details.
+
 To report a vulnerability, see
 [SECURITY.md](https://github.com/The127/aibox/blob/main/SECURITY.md).
 

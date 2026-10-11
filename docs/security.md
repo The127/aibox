@@ -158,3 +158,6 @@ compares folders rather than paths, so a symlink, a different spelling on a
 file system that ignores case, or a bind mount doesn't get around it. On a
 Mac, `/users/YOU` and `/System/Volumes/Data/Users/you` are your home folder
 too, and `/System/Volumes/Data` contains it. aibox refuses those as well.
+
+aibox checks the host folder of a mount the same way. It also refuses a
+mount inside `~/.aibox`, because each project's config and login live there.

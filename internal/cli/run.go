@@ -43,6 +43,10 @@ var errNoTerminal = errors.New("run needs a terminal on stdin")
 // shell files and keys of the person, and could change its own allow list.
 var errNotAProject = errors.New("run must start in a project folder")
 
+// A mount is read-only, but from the home or ~/.aibox the VM would still read
+// the configs and logins of every project and the keys of the person.
+var errUnsafeMount = errors.New("the VM must not see this folder")
+
 // The skills of the person are shared from their home on the host into the
 // home of the VM.
 const (
@@ -250,7 +254,7 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
 	}
 
-	cfg, err := config.Load(p.Config)
+	cfg, err := loadConfig(deps, p.Config, aibox)
 	if err != nil {
 		return projectRun{}, err
 	}
@@ -677,6 +681,46 @@ func refuseUnsafeFolder(cwd, home, aibox string) error {
 
 	if holds(cwd, aibox) {
 		return fmt.Errorf("%w, not one that holds %s", errNotAProject, aibox)
+	}
+
+	return nil
+}
+
+// loadConfig returns the config in the file at path, or an error when one of
+// its mounts is unsafe.
+func loadConfig(deps dependencies, path, aibox string) (config.Config, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return config.Config{}, err
+	}
+
+	home, err := deps.homeDir()
+	if err != nil {
+		return config.Config{}, fmt.Errorf("find the home directory: %w", err)
+	}
+
+	if err := refuseUnsafeMounts(cfg.Mounts, home, aibox); err != nil {
+		return config.Config{}, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	return cfg, nil
+}
+
+// refuseUnsafeMounts is errUnsafeMount when the host folder of a mount is the
+// root, the home directory or above it, or the aibox folder, above it or
+// inside it.
+func refuseUnsafeMounts(mounts []config.Mount, home, aibox string) error {
+	for _, mount := range mounts {
+		switch {
+		case holds(mount.Host, "/"):
+			return fmt.Errorf("mount %s: %w, %s is the root of the file system", mount.Guest, errUnsafeMount, mount.Host)
+		case holds(mount.Host, home):
+			return fmt.Errorf("mount %s: %w, %s holds the home directory %s", mount.Guest, errUnsafeMount, mount.Host, home)
+		case holds(mount.Host, aibox):
+			return fmt.Errorf("mount %s: %w, %s holds %s", mount.Guest, errUnsafeMount, mount.Host, aibox)
+		case holds(aibox, mount.Host):
+			return fmt.Errorf("mount %s: %w, %s is inside %s", mount.Guest, errUnsafeMount, mount.Host, aibox)
+		}
 	}
 
 	return nil

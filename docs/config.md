@@ -156,6 +156,12 @@ home folder.
 - The guest path has to stay clear of the folders the VM needs: `/project`,
   `/dev`, `/proc`, `/sys`, `/run`, `/tmp`, `/etc`, `/bin`, `/sbin`, `/lib`,
   `/lib64`, `/usr` and `/root`. It also can't overlap with other mounts.
+- The host folder can't be your home folder or a folder above it, because
+  the VM would see your keys and shell files.
+- The host folder can't be `~/.aibox`, a folder in it or a folder above it,
+  because the VM would see every project's config and Claude Code login.
+- aibox compares folders rather than paths for these two rules, so a
+  symlink or another spelling doesn't get around them.
 - A mount inside `/home/user` is fine. The VM's home is a folder aibox
   manages, not your home folder. Leave `/home/user/.claude` itself alone,
   because the VM's login lives there.

@@ -168,7 +168,7 @@ func (f *file) UnlinkAt(name string, flags uint32) error {
 		return err
 	}
 
-	dir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 && info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0
+	dir := info.isDir()
 
 	switch {
 	case dir && flags&atRemoveDir == 0:
@@ -364,11 +364,6 @@ func filetime(ns int64) int64 {
 	return int64(ft.HighDateTime)<<32 | int64(ft.LowDateTime)
 }
 
-func (f *file) Symlink(string, string, p9.UID, p9.GID) (p9.QID, error) {
-	// symlinks come with a later stage of the server
-	return p9.QID{}, linux.EPERM
-}
-
 func (f *file) Mknod(string, p9.FileMode, uint32, uint32, p9.UID, p9.GID) (p9.QID, error) {
 	return p9.QID{}, linux.EPERM
 }
@@ -386,5 +381,5 @@ func (f *file) chmod(perm p9.FileMode) error {
 
 	defer func() { _ = windows.CloseHandle(h) }()
 
-	return writeMode(h, modeOf(info.FileAttributes).FileType(), perm)
+	return writeMode(h, modeOf(info.FileAttributes, info.tag).FileType(), perm)
 }

@@ -285,29 +285,52 @@ type file struct {
 // v9fsMagic is the f_type Linux reports for a 9p mount.
 const v9fsMagic = 0x01021997
 
-func (f *file) info() (p9.QID, windows.ByHandleFileInformation, error) {
-	var info windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(f.h, &info); err != nil {
+func (f *file) info() (p9.QID, fileInfo, error) {
+	var info fileInfo
+	if err := windows.GetFileInformationByHandle(f.h, &info.ByHandleFileInformation); err != nil {
 		return p9.QID{}, info, errno(err)
 	}
 
-	return qidOf(info.FileAttributes, uint64(info.FileIndexHigh)<<32|uint64(info.FileIndexLow)), info, nil
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		tag, err := reparseTag(f.h)
+		if err != nil {
+			return p9.QID{}, info, err
+		}
+
+		info.tag = tag
+	}
+
+	return qidOf(info.FileAttributes, info.tag, uint64(info.FileIndexHigh)<<32|uint64(info.FileIndexLow)), info, nil
+}
+
+// fileInfo is what Windows says about a file, with the tag of its reparse
+// point if it is one.
+type fileInfo struct {
+	windows.ByHandleFileInformation
+
+	tag uint32
+}
+
+func (i fileInfo) isLink() bool { return isLink(i.FileAttributes, i.tag) }
+
+// isDir tells whether the guest may walk into the file. A link to a folder
+// is a link, which the walk never follows.
+func (i fileInfo) isDir() bool {
+	return i.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 && !i.isLink()
 }
 
 // qidOf is the QID of a file with the attributes and the file id. The id
 // is unique on a volume, and a guest mounts one share per attach, whose
 // walks never cross to another volume.
-func qidOf(attributes uint32, id uint64) p9.QID {
-	return p9.QID{Type: modeOf(attributes).QIDType(), Path: id}
+func qidOf(attributes, tag uint32, id uint64) p9.QID {
+	return p9.QID{Type: modeOf(attributes, tag).QIDType(), Path: id}
 }
 
-// modeOf is the type and the mode the guest sees. Every reparse point
-// shows as a link, which the walk never follows, even those that are no
-// links, such as the files of OneDrive; telling them apart comes with
-// symlinks.
-func modeOf(attributes uint32) p9.FileMode {
+// modeOf is the type and the default mode the guest sees of a file with
+// the attributes and, for a reparse point, the tag.
+func modeOf(attributes, tag uint32) p9.FileMode {
 	switch {
-	case attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:
+	case isLink(attributes, tag):
 		return p9.ModeSymlink | 0o777
 	case attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0:
 		return p9.ModeDirectory | 0o755
@@ -332,8 +355,7 @@ func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
 			return nil, nil, err
 		}
 
-		if _, info, err := cur.info(); err != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 ||
-			info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		if _, info, err := cur.info(); err != nil || !info.isDir() {
 			_ = cur.Close()
 
 			if err != nil {
@@ -379,7 +401,7 @@ func (f *file) GetAttr(p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
 
 	size := uint64(info.FileSizeHigh)<<32 | uint64(info.FileSizeLow)
 	attr := p9.Attr{
-		Mode:      f.mode(info.FileAttributes),
+		Mode:      f.mode(info),
 		UID:       p9.UID(f.fs.owner.UID),
 		GID:       p9.GID(f.fs.owner.GID),
 		NLink:     p9.NLink(info.NumberOfLinks),
@@ -413,7 +435,7 @@ func (f *file) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 		return p9.QID{}, 0, err
 	}
 
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+	if info.isLink() {
 		return p9.QID{}, 0, linux.ELOOP
 	}
 
@@ -524,7 +546,8 @@ func list(h windows.Handle) (p9.Dirents, error) {
 			name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[nameAt])), info.FileNameLength/2)) //nolint:gosec // the name follows the entry, FileNameLength bytes long
 
 			if name != "." && name != ".." {
-				qid := qidOf(info.FileAttributes, uint64(info.FileID)) //nolint:gosec // a file id is a 64-bit number
+				// the EA size holds the tag of a reparse point in a listing
+				qid := qidOf(info.FileAttributes, info.EaSize, uint64(info.FileID)) //nolint:gosec // a file id is a 64-bit number
 				entries = append(entries, p9.Dirent{
 					QID:    qid,
 					Offset: uint64(len(entries) + 1),
@@ -541,8 +564,6 @@ func list(h windows.Handle) (p9.Dirents, error) {
 		}
 	}
 }
-
-func (f *file) Readlink() (string, error) { return "", linux.ENOSYS }
 
 func (f *file) StatFS() (p9.FSStat, error) {
 	return p9.FSStat{Type: v9fsMagic, BlockSize: 4096, NameLength: 255}, nil
@@ -618,8 +639,9 @@ func openAttrs(parent windows.Handle, name string) (windows.Handle, error) {
 
 // mode is the type and the mode of the file with the attributes: the mode
 // the guest set, or the default where it set none or it can't be read.
-func (f *file) mode(attributes uint32) p9.FileMode {
-	t := modeOf(attributes).FileType()
+func (f *file) mode(info fileInfo) p9.FileMode {
+	attributes := info.FileAttributes
+	t := modeOf(attributes, info.tag).FileType()
 	if t == p9.ModeSymlink {
 		return t | 0o777
 	}

@@ -292,13 +292,18 @@ type file struct {
 const v9fsMagic = 0x01021997
 
 func (f *file) info() (p9.QID, fileInfo, error) {
+	return infoOf(f.h)
+}
+
+// infoOf reads what the guest sees of the open file.
+func infoOf(h windows.Handle) (p9.QID, fileInfo, error) {
 	var info fileInfo
-	if err := windows.GetFileInformationByHandle(f.h, &info.ByHandleFileInformation); err != nil {
+	if err := windows.GetFileInformationByHandle(h, &info.ByHandleFileInformation); err != nil {
 		return p9.QID{}, info, errno(err)
 	}
 
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		tag, err := reparseTag(f.h)
+		tag, err := reparseTag(h)
 		if err != nil {
 			return p9.QID{}, info, err
 		}

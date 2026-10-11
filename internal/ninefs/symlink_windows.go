@@ -91,8 +91,7 @@ func (f *file) Symlink(target, name string, _ p9.UID, _ p9.GID) (p9.QID, error) 
 		return p9.QID{}, err
 	}
 
-	made := &file{fs: f.fs, h: h, share: f.share}
-	defer func() { _ = made.Close() }()
+	defer func() { _ = windows.CloseHandle(h) }()
 
 	rp := winio.EncodeReparsePoint(&winio.ReparsePoint{Target: target, IsLxSymlink: true})
 
@@ -109,7 +108,7 @@ func (f *file) Symlink(target, name string, _ p9.UID, _ p9.GID) (p9.QID, error) 
 		return p9.QID{}, errno(err)
 	}
 
-	qid, _, err := made.info()
+	qid, _, err := infoOf(h)
 
 	return qid, err
 }
@@ -122,12 +121,10 @@ const pathMax = 4096
 // volume can delete with POSIX semantics and when the handle closes
 // where it can't, such as on FAT.
 func discard(h windows.Handle) {
-	disposition := uint32(windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_POSIX_SEMANTICS)
-	if windows.SetFileInformationByHandle(h, windows.FileDispositionInfoEx,
-		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))) == nil { //nolint:gosec // the call reads the flags, as the ABI asks
+	if dispose(h, 0) == nil {
 		return
 	}
 
 	deleteFile := byte(1)
-	_ = windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, &deleteFile, 1)
+	_ = setInfo(h, windows.FileDispositionInfo, &deleteFile)
 }

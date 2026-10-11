@@ -142,78 +142,41 @@ func (f *file) Mkdir(name string, perm p9.FileMode, _ p9.UID, _ p9.GID) (p9.QID,
 		return p9.QID{}, err
 	}
 
-	made := &file{fs: f.fs, h: h, share: f.share}
-	defer func() { _ = made.Close() }()
+	defer func() { _ = windows.CloseHandle(h) }()
 
-	qid, _, err := made.info()
+	qid, _, err := infoOf(h)
 
 	return qid, err
 }
 
 func (f *file) UnlinkAt(name string, flags uint32) error {
-	if err := f.child(name); err != nil {
-		return err
-	}
+	return f.with(name, windows.DELETE|windows.FILE_READ_ATTRIBUTES, func(h windows.Handle) error {
+		_, info, err := infoOf(h)
+		if err != nil {
+			return err
+		}
 
-	h, err := openAt(f.h, name, windows.DELETE|windows.FILE_READ_ATTRIBUTES)
-	if err != nil {
-		return err
-	}
+		switch dir := info.isDir(); {
+		case dir && flags&atRemoveDir == 0:
+			return linux.EISDIR
+		case !dir && flags&atRemoveDir != 0:
+			return linux.ENOTDIR
+		}
 
-	gone := &file{fs: f.fs, h: h, share: f.share}
-	defer func() { _ = gone.Close() }()
-
-	_, info, err := gone.info()
-	if err != nil {
-		return err
-	}
-
-	dir := info.isDir()
-
-	switch {
-	case dir && flags&atRemoveDir == 0:
-		return linux.EISDIR
-	case !dir && flags&atRemoveDir != 0:
-		return linux.ENOTDIR
-	}
-
-	// POSIX semantics: the name goes at once even while the file is open
-	// elsewhere, as git and build tools expect
-	disposition := uint32(windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_POSIX_SEMANTICS |
-		windows.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
-
-	return errno(windows.SetFileInformationByHandle(h, windows.FileDispositionInfoEx,
-		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition)))) //nolint:gosec // the call reads the flags, as the ABI asks
+		return dispose(h, windows.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
+	})
 }
 
 func (f *file) RenameAt(oldName string, newDir p9.File, newName string) error {
-	if err := f.child(oldName); err != nil {
-		return err
-	}
-
-	h, err := openAt(f.h, oldName, windows.DELETE|windows.FILE_READ_ATTRIBUTES)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = windows.CloseHandle(h) }()
-
-	return renameTo(h, f.share, newDir, newName)
+	return f.with(oldName, windows.DELETE|windows.FILE_READ_ATTRIBUTES, func(h windows.Handle) error {
+		return renameTo(h, f.share, newDir, newName)
+	})
 }
 
 func (f *file) Rename(newDir p9.File, newName string) error {
-	if f.share.readOnly {
-		return linux.EROFS
-	}
-
-	h, err := openAt(f.h, "", windows.DELETE|windows.FILE_READ_ATTRIBUTES)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = windows.CloseHandle(h) }()
-
-	return renameTo(h, f.share, newDir, newName)
+	return f.with("", windows.DELETE|windows.FILE_READ_ATTRIBUTES, func(h windows.Handle) error {
+		return renameTo(h, f.share, newDir, newName)
+	})
 }
 
 // renameTo gives the open file of the share the name in the folder,
@@ -313,27 +276,14 @@ func (f *file) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 }
 
 func (f *file) truncate(size uint64) error {
-	h, err := openAt(f.h, "", windows.FILE_WRITE_DATA)
-	if err != nil {
-		return err
-	}
+	return f.with("", windows.FILE_WRITE_DATA, func(h windows.Handle) error {
+		end := int64(size) //nolint:gosec // a size beyond int64 turns negative, which NTFS refuses
 
-	defer func() { _ = windows.CloseHandle(h) }()
-
-	end := int64(size) //nolint:gosec // a size beyond int64 turns negative, which NTFS refuses
-
-	return errno(windows.SetFileInformationByHandle(h, windows.FileEndOfFileInfo,
-		(*byte)(unsafe.Pointer(&end)), uint32(unsafe.Sizeof(end)))) //nolint:gosec // the call reads the size, as the ABI asks
+		return setInfo(h, windows.FileEndOfFileInfo, &end)
+	})
 }
 
 func (f *file) setTimes(valid p9.SetAttrMask, attr p9.SetAttr) error {
-	h, err := openAt(f.h, "", windows.FILE_WRITE_ATTRIBUTES)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = windows.CloseHandle(h) }()
-
 	// zero leaves a time as it is
 	var basic basicInfo
 
@@ -353,8 +303,9 @@ func (f *file) setTimes(valid p9.SetAttrMask, attr p9.SetAttr) error {
 		}
 	}
 
-	return errno(windows.SetFileInformationByHandle(h, windows.FileBasicInfo,
-		(*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic)))) //nolint:gosec // the call reads the times, as the ABI asks
+	return f.with("", windows.FILE_WRITE_ATTRIBUTES, func(h windows.Handle) error {
+		return setInfo(h, windows.FileBasicInfo, &basic)
+	})
 }
 
 // filetime is the time in nanoseconds since 1970 as NTFS keeps it.
@@ -374,12 +325,7 @@ func (f *file) chmod(perm p9.FileMode) error {
 		return err
 	}
 
-	h, err := openAt(f.h, "", windows.FILE_WRITE_EA)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = windows.CloseHandle(h) }()
-
-	return writeMode(h, modeOf(info.FileAttributes, info.tag).FileType(), perm)
+	return f.with("", windows.FILE_WRITE_EA, func(h windows.Handle) error {
+		return writeMode(h, modeOf(info.FileAttributes, info.tag).FileType(), perm)
+	})
 }

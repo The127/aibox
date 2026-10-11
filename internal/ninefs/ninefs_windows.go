@@ -363,7 +363,7 @@ func (f *file) GetAttr(p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
 	}
 
 	var basic basicInfo
-	if err := windows.GetFileInformationByHandleEx(f.h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic))); err != nil {
+	if err := windows.GetFileInformationByHandleEx(f.h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic))); err != nil { //nolint:gosec // the call fills the struct, as the ABI asks
 		return p9.QID{}, p9.AttrMask{}, p9.Attr{}, errno(err)
 	}
 
@@ -496,7 +496,7 @@ func list(h windows.Handle) (p9.Dirents, error) {
 	class := uint32(fileIDBothDirectoryRestartInfo)
 
 	for {
-		err := windows.GetFileInformationByHandleEx(h, class, &buf[0], uint32(len(buf)))
+		err := windows.GetFileInformationByHandleEx(h, class, &buf[0], uint32(len(buf))) //nolint:gosec // the buffer is 64 KiB
 		if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
 			return entries, nil
 		}
@@ -508,9 +508,9 @@ func list(h windows.Handle) (p9.Dirents, error) {
 		class = fileIDBothDirectoryInfo
 
 		for off := 0; ; {
-			info := (*dirInfo)(unsafe.Pointer(&buf[off]))
+			info := (*dirInfo)(unsafe.Pointer(&buf[off])) //nolint:gosec // the call wrote an entry at off, NextEntryOffset said so
 			nameAt := off + int(unsafe.Offsetof(info.FileID)) + 8
-			name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[nameAt])), info.FileNameLength/2))
+			name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[nameAt])), info.FileNameLength/2)) //nolint:gosec // the name follows the entry, FileNameLength bytes long
 
 			if name != "." && name != ".." {
 				qid := qidOf(info.FileAttributes, uint64(info.FileID)) //nolint:gosec // a file id is a 64-bit number

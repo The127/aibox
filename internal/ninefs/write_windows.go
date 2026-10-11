@@ -165,7 +165,7 @@ func (f *file) UnlinkAt(name string, flags uint32) error {
 		windows.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
 
 	return errno(windows.SetFileInformationByHandle(h, windows.FileDispositionInfoEx,
-		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))))
+		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition)))) //nolint:gosec // the call reads the flags, as the ABI asks
 }
 
 func (f *file) RenameAt(oldName string, newDir p9.File, newName string) error {
@@ -248,12 +248,12 @@ func setName(h windows.Handle, class, flags uint32, dir windows.Handle, name str
 	nameAt := unsafe.Offsetof(header{}.FileNameLength) + unsafe.Sizeof(uint32(0))
 	buf := make([]byte, nameAt+uintptr(len(u))*2)
 
-	hdr := (*header)(unsafe.Pointer(&buf[0]))
+	hdr := (*header)(unsafe.Pointer(&buf[0])) //nolint:gosec // the buffer starts with the header
 	hdr.Flags = flags
 	hdr.RootDirectory = dir
 	hdr.FileNameLength = uint32(len(u) * 2) //nolint:gosec // a name is at most 255 UTF-16 units
 
-	copy(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[nameAt])), len(u)), u)
+	copy(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[nameAt])), len(u)), u) //nolint:gosec // the buffer has room for the name after the header
 
 	var iosb windows.IO_STATUS_BLOCK
 
@@ -298,7 +298,7 @@ func (f *file) truncate(size uint64) error {
 	end := int64(size) //nolint:gosec // the guest's size, which NTFS refuses beyond what it holds
 
 	return errno(windows.SetFileInformationByHandle(h, windows.FileEndOfFileInfo,
-		(*byte)(unsafe.Pointer(&end)), uint32(unsafe.Sizeof(end))))
+		(*byte)(unsafe.Pointer(&end)), uint32(unsafe.Sizeof(end)))) //nolint:gosec // the call reads the size, as the ABI asks
 }
 
 func (f *file) setTimes(valid p9.SetAttrMask, attr p9.SetAttr) error {
@@ -329,7 +329,7 @@ func (f *file) setTimes(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	}
 
 	return errno(windows.SetFileInformationByHandle(h, windows.FileBasicInfo,
-		(*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic))))
+		(*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic)))) //nolint:gosec // the call reads the times, as the ABI asks
 }
 
 // filetime is the time in nanoseconds since 1970 as NTFS keeps it.

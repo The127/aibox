@@ -34,7 +34,7 @@ func TestAFileTheGuestCreatesAndWritesIsOnTheHost(t *testing.T) {
 	require.NoError(t, f.FSync())
 
 	// assert
-	b, err := os.ReadFile(filepath.Join(dir, "src", "new.go"))
+	b, err := os.ReadFile(filepath.Join(dir, "src", "new.go")) //nolint:gosec // the test's own folder
 	require.NoError(t, err)
 	assert.Equal(t, "package new\n", string(b))
 }
@@ -94,7 +94,7 @@ func TestAnUnlinkIsBusyWhileAProgramOfTheHostHoldsTheFile(t *testing.T) {
 	// arrange: Windows programs open files without letting others delete
 	// them, Go's os.Open among them
 	dir := tree(t)
-	held, err := os.Open(filepath.Join(dir, "src", "main.go"))
+	held, err := os.Open(filepath.Join(dir, "src", "main.go")) //nolint:gosec // the test's own folder
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = held.Close() })
 
@@ -153,7 +153,7 @@ func TestARenameReplacesTheFileOfTheNewNameWhileTheGuestHasItOpen(t *testing.T) 
 	// assert
 	require.NoError(t, err)
 
-	b, err := os.ReadFile(filepath.Join(dir, "src", "main.go"))
+	b, err := os.ReadFile(filepath.Join(dir, "src", "main.go")) //nolint:gosec // the test's own folder
 	require.NoError(t, err)
 	assert.Equal(t, "new", string(b))
 	assert.NoFileExists(t, filepath.Join(dir, "src", "main.go.lock"))
@@ -186,8 +186,8 @@ func TestSetAttrTruncatesAndSetsTheTimeOfModification(t *testing.T) {
 	// act
 	err := f.SetAttr(p9.SetAttrMask{Size: true, MTime: true, MTimeNotSystemTime: true}, p9.SetAttr{
 		Size:             4,
-		MTimeSeconds:     uint64(when.Unix()),
-		MTimeNanoSeconds: uint64(when.Nanosecond()),
+		MTimeSeconds:     uint64(when.Unix()),       //nolint:gosec // a date of 2020
+		MTimeNanoSeconds: uint64(when.Nanosecond()), //nolint:gosec // nanoseconds below a second
 	})
 
 	// assert

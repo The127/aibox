@@ -4,3 +4,10 @@
 # or a ~/.gitconfig of the user wins over this, PAGER does not.
 [core]
 	pager = less -FR~
+
+# Hyper-V shows files Windows made as root's, and git refuses a repository
+# that isn't the user's own. Only the project is trusted, so git run as root
+# still refuses repositories the user made elsewhere.
+[safe]
+	directory = /project
+	directory = /project/*

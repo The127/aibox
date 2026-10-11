@@ -35,6 +35,13 @@ type Owner struct {
 type FS struct {
 	shares map[string]*share
 	owner  Owner
+	locks  lockTable[fileKey]
+}
+
+// fileKey names a file on the host, whichever name the guest reached it by.
+type fileKey struct {
+	volume uint32
+	id     uint64
 }
 
 // share is the open folder of a share.
@@ -266,7 +273,6 @@ func (r *root) StatFS() (p9.FSStat, error) {
 type file struct {
 	p9.DefaultWalkGetAttr
 	templatefs.NoopRenamed
-	templatefs.NotLockable
 	templatefs.NilSyncer
 	templatefs.XattrUnimplemented
 

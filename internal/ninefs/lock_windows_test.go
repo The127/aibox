@@ -1,0 +1,103 @@
+package ninefs_test
+
+import (
+	"testing"
+
+	"github.com/hugelgupf/p9/p9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/the127/aibox/internal/ninefs"
+)
+
+// direct is the root of a share of the folder without the wire between:
+// the client of the p9 library sends Tlock without the fid, which the
+// guest's kernel does send.
+func direct(t *testing.T, dir string) p9.File {
+	t.Helper()
+
+	fs, err := ninefs.New([]ninefs.Share{{Name: "project", Dir: dir}}, owner)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = fs.Close() })
+
+	root, err := fs.Attach()
+	require.NoError(t, err)
+
+	return walk(t, root, "project")
+}
+
+// opened walks to the names and opens the file, as a process of the guest
+// does before it locks.
+func opened(t *testing.T, root p9.File, names ...string) p9.File {
+	t.Helper()
+
+	f := walk(t, root, names...)
+
+	_, _, err := f.Open(p9.ReadWrite)
+	require.NoError(t, err)
+
+	return f
+}
+
+func TestAWriteLockOfOneProcessBlocksAnother(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := direct(t, tree(t))
+	first := opened(t, root, "src", "main.go")
+	second := opened(t, root, "src", "main.go")
+
+	status, err := first.Lock(1, p9.WriteLock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+	require.Equal(t, p9.LockStatusOK, status)
+
+	// act
+	blocked, err := second.Lock(2, p9.WriteLock, 0, 0, 0, "guest")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, p9.LockStatusBlocked, blocked)
+}
+
+func TestAnUnlockLetsTheOtherProcessIn(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := direct(t, tree(t))
+	first := opened(t, root, "src", "main.go")
+	second := opened(t, root, "src", "main.go")
+
+	_, err := first.Lock(1, p9.WriteLock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	_, err = first.Lock(1, p9.Unlock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	// act
+	status, err := second.Lock(2, p9.WriteLock, 0, 0, 0, "guest")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, p9.LockStatusOK, status)
+}
+
+func TestALockHoldsForEveryNameOfTheFile(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := direct(t, tree(t))
+	require.NoError(t, root.Link(walk(t, root, "src", "main.go"), "linked.go"))
+
+	first := opened(t, root, "src", "main.go")
+	second := opened(t, root, "linked.go")
+
+	_, err := first.Lock(1, p9.WriteLock, 0, 10, 0, "guest")
+	require.NoError(t, err)
+
+	// act
+	status, err := second.Lock(2, p9.ReadLock, 0, 15, 1, "guest")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, p9.LockStatusBlocked, status)
+}

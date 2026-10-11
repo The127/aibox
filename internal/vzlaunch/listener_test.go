@@ -4,7 +4,6 @@ package vzlaunch
 
 import (
 	"errors"
-	"io"
 	"net"
 	"testing"
 	"time"
@@ -118,77 +117,6 @@ func TestAcceptAfterCloseEndsWithErrClosed(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, net.ErrClosed)
-}
-
-func TestAWatchedTerminalSaysWhenItConnectedAndWhenItEnded(t *testing.T) {
-	// arrange
-	inner := newVZLike()
-	w := watch(newListener(inner))
-	hostSide, guestSide := net.Pipe()
-
-	defer func() { _ = guestSide.Close() }()
-
-	go func() { inner.accepted <- hostSide }()
-
-	// act
-	conn, err := w.Accept()
-	require.NoError(t, err)
-	within(t, w.connected, "the connection was not reported")
-
-	select {
-	case <-w.ended:
-		t.Fatal("the session was reported over while it runs")
-	default:
-	}
-
-	require.NoError(t, conn.Close())
-
-	// assert
-	within(t, w.ended, "the end of the session was not reported")
-}
-
-func TestATerminalThatConnectsAgainIsReportedAndEachExtraConnectionClosed(t *testing.T) {
-	// arrange
-	inner := newVZLike()
-	w := watch(newListener(inner))
-	first, firstGuest := net.Pipe()
-
-	defer func() { _ = firstGuest.Close() }()
-
-	go func() { inner.accepted <- first }()
-
-	conn, err := w.Accept()
-	require.NoError(t, err)
-
-	defer func() { _ = conn.Close() }()
-
-	// act
-	var extras []net.Conn
-
-	for range 3 {
-		host, guest := net.Pipe()
-		extras = append(extras, guest)
-		inner.accepted <- host
-	}
-
-	// assert
-	within(t, w.again, "a second connection was not reported")
-
-	for _, guest := range extras {
-		read := make(chan error, 1)
-
-		go func() {
-			_, err := guest.Read(make([]byte, 1))
-			read <- err
-		}()
-
-		select {
-		case err := <-read:
-			assert.ErrorIs(t, err, io.EOF)
-		case <-time.After(3 * time.Second):
-			t.Fatal("an extra connection was left open")
-		}
-	}
 }
 
 // valueConn is a connection that is not a pointer.

@@ -36,8 +36,6 @@ const (
 	// how Run learns that it started over and stops it.
 	baseCmdline = vm.RootCmdline + " panic=1"
 
-	defaultBootTimeout  = time.Minute
-	defaultPowerOffWait = 10 * time.Second
 	// stopTimeout is how long a VM may take to stop once told to.
 	stopTimeout = 10 * time.Second
 	// consoleDrainTimeout is how long the console log waits for the end
@@ -70,9 +68,9 @@ var _ backend.Backend = Backend{}
 // NewBackend returns the Backend with its default timeouts.
 func NewBackend() Backend {
 	return Backend{
-		BootTimeout:     defaultBootTimeout,
+		BootTimeout:     host.DefaultBootTimeout,
 		SessionEndDelay: host.DefaultSessionEndDelay,
-		PowerOffWait:    defaultPowerOffWait,
+		PowerOffWait:    host.DefaultPowerOffWait,
 		Confine:         seatbelt.Apply,
 	}
 }
@@ -150,7 +148,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	stopProxy := host.ServeProxy(ctx, newListener(proxyListener), spec.Proxy, spec.Stderr)
 	defer stopProxy()
 
-	terminal := watch(newListener(terminalListener))
+	terminal := host.Watch(newListener(terminalListener))
 	stopTerminal := host.ServeTerminal(ctx, terminal, host.Session{
 		Stdin:    spec.Stdin,
 		Stdout:   spec.Stdout,
@@ -225,13 +223,13 @@ type runningVM interface {
 // wait waits for the VM to stop by itself, and stops it when the context
 // ends, the guest does not connect in time or the VM stays up after the
 // session.
-func (b Backend) wait(ctx context.Context, v runningVM, terminal *watched) error {
+func (b Backend) wait(ctx context.Context, v runningVM, terminal *host.Watched) error {
 	states := v.StateChangedNotify()
 	boot := time.NewTimer(b.BootTimeout)
 
 	defer boot.Stop()
 
-	connected, ended := terminal.connected, terminal.ended
+	connected, ended := terminal.Connected, terminal.Ended
 
 	var afterSession <-chan time.Time
 
@@ -253,7 +251,7 @@ func (b Backend) wait(ctx context.Context, v runningVM, terminal *watched) error
 			ended = nil
 		case <-afterSession:
 			return stop(v, states)
-		case <-terminal.again:
+		case <-terminal.Again:
 			return errors.Join(ErrStartedOver, stop(v, states))
 		case <-boot.C:
 			return errors.Join(fmt.Errorf("%w in %v", ErrNoBoot, b.BootTimeout), stop(v, states))

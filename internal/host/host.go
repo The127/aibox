@@ -22,6 +22,15 @@ import (
 // stopped, to show its last output, unless a backend says otherwise.
 const DefaultSessionEndDelay = 3 * time.Second
 
+// DefaultBootTimeout is how long the guest of a VM the backend owns may
+// take to connect, and DefaultPowerOffWait how long such a VM may take to
+// power off after its session, before the backend stops it, unless the
+// backend says otherwise.
+const (
+	DefaultBootTimeout  = time.Minute
+	DefaultPowerOffWait = 10 * time.Second
+)
+
 // ErrNoTerminal is a VM that ended before the command in it connected,
 // which the console log usually explains.
 var ErrNoTerminal = errors.New("the VM ended before its terminal came up")

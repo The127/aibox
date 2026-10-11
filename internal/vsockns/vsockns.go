@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -27,7 +28,9 @@ import (
 const Command = "vsock-namespace"
 
 const (
-	childMode   = "/proc/sys/net/vsock/child_ns_mode"
+	vsockSysctl = "/proc/sys/net/vsock"
+	childMode   = vsockSysctl + "/child_ns_mode"
+	modulesDir  = "/lib/modules"
 	mode        = "/proc/sys/net/vsock/ns_mode"
 	vhostDevice = "/dev/vhost-vsock"
 	self        = "/proc/self/exe"
@@ -67,6 +70,12 @@ func Open(command ...string) (*Vsock, error) {
 
 	theirs, ours := os.NewFile(uintptr(pair[0]), "helper"), os.NewFile(uintptr(pair[1]), "helper")
 	defer func() { _ = ours.Close() }()
+
+	// opening the device makes the kernel load vsock when it comes as a
+	// module, without root. The helper then finds it loaded.
+	if device, err := os.OpenFile(vhostDevice, os.O_RDWR, 0); err == nil {
+		_ = device.Close()
+	}
 
 	var stderr bytes.Buffer
 
@@ -153,7 +162,7 @@ func Serve() error {
 
 	if err := os.WriteFile(childMode, []byte("local"), 0); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%w: %s is missing", ErrNoNamespaces, childMode)
+			return kernel{sysctl: vsockSysctl, modules: modulesDir, release: release()}.noNamespaces()
 		}
 
 		return fmt.Errorf("make the vsock namespace local: %w", err)
@@ -304,4 +313,56 @@ func receivedFiles(oob []byte) ([]*os.File, error) {
 	}
 
 	return files, nil
+}
+
+// kernel is where the kernel tells what it has, and its release.
+type kernel struct {
+	sysctl  string
+	modules string
+	release string
+}
+
+// noNamespaces tells why the kernel has no vsock namespaces and what
+// helps: a newer kernel, loading vsock, or a kernel built with it.
+func (k kernel) noNamespaces() error {
+	if _, err := os.Stat(k.sysctl); err == nil {
+		return fmt.Errorf("%w: they came with Linux 7.0, and this kernel is %s", ErrNoNamespaces, k.release)
+	}
+
+	switch has, known := k.hasModule("vhost_vsock"); {
+	case !known:
+		return fmt.Errorf("%w: vsock is not loaded. If the kernel has it as a module, load it with: sudo modprobe vhost_vsock. Otherwise the kernel needs CONFIG_VSOCKETS and CONFIG_VHOST_VSOCK", ErrNoNamespaces)
+	case has:
+		return fmt.Errorf("%w: vsock is not loaded. Load it with: sudo modprobe vhost_vsock", ErrNoNamespaces)
+	default:
+		return fmt.Errorf("%w: the kernel was built without vsock. It needs CONFIG_VSOCKETS and CONFIG_VHOST_VSOCK", ErrNoNamespaces)
+	}
+}
+
+// hasModule tells whether the kernel has the module, from the list of its
+// modules, and whether that list could be read at all.
+func (k kernel) hasModule(name string) (has, known bool) {
+	list, err := os.ReadFile(filepath.Join(k.modules, k.release, "modules.dep"))
+	if err != nil {
+		return false, false
+	}
+
+	for line := range strings.Lines(string(list)) {
+		module, _, _ := strings.Cut(line, ":")
+		if strings.HasPrefix(filepath.Base(module), name+".ko") {
+			return true, true
+		}
+	}
+
+	return false, true
+}
+
+// release is the release of the running kernel, like 6.12.1.
+func release() string {
+	var name unix.Utsname
+	if err := unix.Uname(&name); err != nil {
+		return "unknown"
+	}
+
+	return unix.ByteSliceToString(name.Release[:])
 }

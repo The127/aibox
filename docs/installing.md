@@ -16,7 +16,10 @@ Each [release](https://github.com/The127/aibox/releases) has a `deb` and an
 
 aibox needs:
 
-- Linux 6.7 or newer
+- Linux 7.0 or newer, built with vsock (`CONFIG_VSOCKETS` and
+  `CONFIG_VHOST_VSOCK`). Most distributions have it as a module. aibox
+  opens `/dev/vhost-vsock` to make the kernel load it. If that doesn't
+  work, load it with `sudo modprobe vhost_vsock`.
 - access to `/dev/kvm`
 - virtiofsd on your `PATH` or at `/usr/libexec/virtiofsd`, which is where
   Debian 13, Ubuntu 24.04 and Fedora put it

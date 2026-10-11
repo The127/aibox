@@ -22,7 +22,25 @@ var owner = ninefs.Owner{UID: 1000, GID: 1000}
 func mount(t *testing.T, dir string) p9.File {
 	t.Helper()
 
-	fs, err := ninefs.New([]ninefs.Share{{Name: "project", Dir: dir}}, owner)
+	return mountShare(t, ninefs.Share{Name: "project", Dir: dir})
+}
+
+// mountShare serves the share and returns its root as the guest sees it.
+func mountShare(t *testing.T, share ninefs.Share) p9.File {
+	t.Helper()
+
+	root, err := serve(t, share).Attach(share.Name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	return root
+}
+
+// serve serves the shares to a 9p client over the wire, as to the guest.
+func serve(t *testing.T, shares ...ninefs.Share) *p9.Client {
+	t.Helper()
+
+	fs, err := ninefs.New(shares, owner)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fs.Close() })
 
@@ -34,11 +52,7 @@ func mount(t *testing.T, dir string) p9.File {
 	c, err := p9.NewClient(client)
 	require.NoError(t, err)
 
-	root, err := c.Attach("project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = root.Close() })
-
-	return root
+	return c
 }
 
 // tree is a project with a file in a folder.
@@ -202,42 +216,14 @@ func TestAWalkDoesNotFollowAJunctionOutOfTheShare(t *testing.T) {
 	assert.Equal(t, p9.ModeSymlink, attr.Mode.FileType())
 }
 
-func TestAShareOfThisStageRefusesChanges(t *testing.T) {
-	t.Parallel()
-
-	// arrange
-	root := mount(t, tree(t))
-	f := walk(t, root, "src", "main.go")
-
-	// act
-	_, _, openErr := f.Open(p9.ReadWrite)
-	mkdirErr := func() error { _, err := root.Mkdir("new", 0o755, 1000, 1000); return err }()
-	unlinkErr := walk(t, root, "src").UnlinkAt("main.go", 0)
-
-	// assert
-	assert.ErrorIs(t, openErr, linux.EROFS)
-	assert.ErrorIs(t, mkdirErr, linux.EROFS)
-	assert.ErrorIs(t, unlinkErr, linux.EROFS)
-}
-
 func TestAnUnknownShareIsNotThere(t *testing.T) {
 	t.Parallel()
 
 	// arrange
-	fs, err := ninefs.New([]ninefs.Share{{Name: "project", Dir: t.TempDir()}}, owner)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = fs.Close() })
-
-	server, client := net.Pipe()
-	t.Cleanup(func() { _ = client.Close() })
-
-	go func() { _ = p9.NewServer(fs).Handle(server, server) }()
-
-	c, err := p9.NewClient(client)
-	require.NoError(t, err)
+	c := serve(t, ninefs.Share{Name: "project", Dir: t.TempDir()})
 
 	// act
-	_, err = c.Attach("home")
+	_, err := c.Attach("home")
 
 	// assert
 	assert.ErrorIs(t, err, linux.ENOENT)

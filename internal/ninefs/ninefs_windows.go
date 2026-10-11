@@ -19,6 +19,8 @@ import (
 type Share struct {
 	Name string
 	Dir  string
+	// ReadOnly refuses every change to the share.
+	ReadOnly bool
 }
 
 // Owner is who the guest sees as the owner of every file: NTFS keeps no
@@ -31,29 +33,35 @@ type Owner struct {
 // FS serves shares. It holds each share's folder open from New until
 // Close, so the folder can't be swapped for another while it serves.
 type FS struct {
-	shares map[string]windows.Handle
+	shares map[string]share
 	owner  Owner
+}
+
+// share is the open folder of a share.
+type share struct {
+	h        windows.Handle
+	readOnly bool
 }
 
 // New opens the folders of the shares as the calling user.
 func New(shares []Share, owner Owner) (*FS, error) {
-	fs := &FS{shares: make(map[string]windows.Handle, len(shares)), owner: owner}
+	fs := &FS{shares: make(map[string]share, len(shares)), owner: owner}
 
-	for _, share := range shares {
-		if err := checkName(share.Name); err != nil {
+	for _, s := range shares {
+		if err := checkName(s.Name); err != nil {
 			_ = fs.Close()
 
-			return nil, fmt.Errorf("the share %q: %w", share.Name, err)
+			return nil, fmt.Errorf("the share %q: %w", s.Name, err)
 		}
 
-		h, err := openDir(share.Dir)
+		h, err := openDir(s.Dir)
 		if err != nil {
 			_ = fs.Close()
 
-			return nil, fmt.Errorf("the share %s: %w", share.Name, err)
+			return nil, fmt.Errorf("the share %s: %w", s.Name, err)
 		}
 
-		fs.shares[share.Name] = h
+		fs.shares[s.Name] = share{h: h, readOnly: s.ReadOnly}
 	}
 
 	return fs, nil
@@ -63,8 +71,8 @@ func New(shares []Share, owner Owner) (*FS, error) {
 // stay open.
 func (fs *FS) Close() error {
 	var errs []error
-	for _, h := range fs.shares {
-		errs = append(errs, windows.CloseHandle(h))
+	for _, s := range fs.shares {
+		errs = append(errs, windows.CloseHandle(s.h))
 	}
 
 	fs.shares = nil
@@ -120,9 +128,15 @@ func checkName(name string) error {
 }
 
 // openAt opens the name in the folder of parent, or parent itself again for
-// an empty name. It does not follow a reparse point: a link or junction is
-// opened as itself, so a walk can't leave the share.
+// an empty name.
 func openAt(parent windows.Handle, name string, access uint32) (windows.Handle, error) {
+	return ntCreate(parent, name, access, windows.FILE_OPEN, 0)
+}
+
+// ntCreate opens or creates the name in the folder of parent as the
+// disposition says. It does not follow a reparse point: a link or junction
+// is opened as itself, so nothing can lead out of the share.
+func ntCreate(parent windows.Handle, name string, access, disposition, options uint32) (windows.Handle, error) {
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return 0, linux.EINVAL
@@ -141,8 +155,8 @@ func openAt(parent windows.Handle, name string, access uint32) (windows.Handle, 
 	)
 
 	err = windows.NtCreateFile(&h, access|windows.SYNCHRONIZE, &oa, &iosb, nil, 0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN,
-		windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, disposition,
+		options|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
 	if err != nil {
 		return 0, errno(err)
 	}
@@ -159,7 +173,7 @@ type root struct {
 	templatefs.NilSyncer
 	templatefs.NilCloser
 	templatefs.XattrUnimplemented
-	readOnly
+	unchangeable
 
 	fs *FS
 }
@@ -169,17 +183,17 @@ func (r *root) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, &root{fs: r.fs}, nil
 	}
 
-	h, ok := r.fs.shares[names[0]]
+	s, ok := r.fs.shares[names[0]]
 	if !ok {
 		return nil, nil, linux.ENOENT
 	}
 
-	share, err := openAt(h, "", windows.FILE_READ_ATTRIBUTES)
+	h, err := openAt(s.h, "", windows.FILE_READ_ATTRIBUTES)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	start := &file{fs: r.fs, h: share}
+	start := &file{fs: r.fs, h: h, readOnly: s.readOnly}
 
 	qid, _, err := start.info()
 	if err != nil {
@@ -236,11 +250,13 @@ type file struct {
 	templatefs.NotLockable
 	templatefs.NilSyncer
 	templatefs.XattrUnimplemented
-	readOnly
+	unchangeable
 
-	fs   *FS
-	h    windows.Handle
-	open *os.File
+	fs *FS
+	h  windows.Handle
+	// readOnly is the share's, which refuses every change
+	readOnly bool
+	open     *os.File
 	// entries is the listing of the folder, taken when the guest starts
 	// reading it, so that offsets stay where they were
 	entries p9.Dirents
@@ -283,7 +299,7 @@ func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, nil, err
 	}
 
-	cur := &file{fs: f.fs, h: h}
+	cur := &file{fs: f.fs, h: h, readOnly: f.readOnly}
 	qids := make([]p9.QID, 0, len(names))
 
 	for _, name := range names {
@@ -312,7 +328,7 @@ func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
 			return nil, nil, err
 		}
 
-		cur = &file{fs: f.fs, h: next}
+		cur = &file{fs: f.fs, h: next, readOnly: f.readOnly}
 
 		qid, _, err := cur.info()
 		if err != nil {
@@ -369,10 +385,6 @@ func split(t int64) (uint64, uint64) {
 }
 
 func (f *file) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
-	if mode.Mode() != p9.ReadOnly {
-		return p9.QID{}, 0, linux.EROFS
-	}
-
 	qid, info, err := f.info()
 	if err != nil {
 		return p9.QID{}, 0, err
@@ -380,6 +392,10 @@ func (f *file) Open(mode p9.OpenFlags) (p9.QID, uint32, error) {
 
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return p9.QID{}, 0, linux.ELOOP
+	}
+
+	if mode.Mode() != p9.ReadOnly {
+		return p9.QID{}, 0, linux.EROFS
 	}
 
 	access := uint32(windows.FILE_GENERIC_READ)
@@ -527,36 +543,37 @@ func (f *file) Close() error {
 	return errors.Join(errs...)
 }
 
-// readOnly refuses every change: this stage of the server only reads.
-type readOnly struct{}
+// unchangeable refuses every change: the folder that holds the shares is
+// the server's, not the host's.
+type unchangeable struct{}
 
-func (readOnly) SetAttr(p9.SetAttrMask, p9.SetAttr) error { return linux.EROFS }
+func (unchangeable) SetAttr(p9.SetAttrMask, p9.SetAttr) error { return linux.EROFS }
 
-func (readOnly) WriteAt([]byte, int64) (int, error) { return 0, linux.EROFS }
+func (unchangeable) WriteAt([]byte, int64) (int, error) { return 0, linux.EROFS }
 
-func (readOnly) Create(string, p9.OpenFlags, p9.FileMode, p9.UID, p9.GID) (p9.File, p9.QID, uint32, error) {
+func (unchangeable) Create(string, p9.OpenFlags, p9.FileMode, p9.UID, p9.GID) (p9.File, p9.QID, uint32, error) {
 	return nil, p9.QID{}, 0, linux.EROFS
 }
 
-func (readOnly) Mkdir(string, p9.FileMode, p9.UID, p9.GID) (p9.QID, error) {
+func (unchangeable) Mkdir(string, p9.FileMode, p9.UID, p9.GID) (p9.QID, error) {
 	return p9.QID{}, linux.EROFS
 }
 
-func (readOnly) Symlink(string, string, p9.UID, p9.GID) (p9.QID, error) {
+func (unchangeable) Symlink(string, string, p9.UID, p9.GID) (p9.QID, error) {
 	return p9.QID{}, linux.EROFS
 }
 
-func (readOnly) Link(p9.File, string) error { return linux.EROFS }
+func (unchangeable) Link(p9.File, string) error { return linux.EROFS }
 
-func (readOnly) Mknod(string, p9.FileMode, uint32, uint32, p9.UID, p9.GID) (p9.QID, error) {
+func (unchangeable) Mknod(string, p9.FileMode, uint32, uint32, p9.UID, p9.GID) (p9.QID, error) {
 	return p9.QID{}, linux.EROFS
 }
 
-func (readOnly) Rename(p9.File, string) error { return linux.EROFS }
+func (unchangeable) Rename(p9.File, string) error { return linux.EROFS }
 
-func (readOnly) RenameAt(string, p9.File, string) error { return linux.EROFS }
+func (unchangeable) RenameAt(string, p9.File, string) error { return linux.EROFS }
 
-func (readOnly) UnlinkAt(string, uint32) error { return linux.EROFS }
+func (unchangeable) UnlinkAt(string, uint32) error { return linux.EROFS }
 
 // basicInfo is FILE_BASIC_INFO, which x/sys/windows lacks.
 type basicInfo struct {

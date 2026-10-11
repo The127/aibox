@@ -2,7 +2,6 @@ package hvserver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 
@@ -46,22 +45,23 @@ func listen(path, sddl string) (net.Listener, error) {
 }
 
 // pipePeer is the client of a connection on the pipe, which the pipe's
-// handle tells the service about.
+// handle tells the service about, and whose state disk disks take.
 type pipePeer struct {
-	pipe windows.Handle
+	pipe  windows.Handle
+	disks stateDisks
 	// err is why the connection is no pipe, which every question about
 	// the client answers with
 	err error
 }
 
 // peerOf is the peer of a connection on the pipe.
-func peerOf(conn net.Conn) peer {
+func peerOf(conn net.Conn, disks stateDisks) peer {
 	pipe, ok := conn.(interface{ Fd() uintptr })
 	if !ok {
 		return pipePeer{err: fmt.Errorf("a connection that is no pipe: %T", conn)}
 	}
 
-	return pipePeer{pipe: windows.Handle(pipe.Fd())}
+	return pipePeer{pipe: windows.Handle(pipe.Fd()), disks: disks}
 }
 
 func (p pipePeer) client() (hvservice.Client, error) {
@@ -72,14 +72,10 @@ func (p pipePeer) client() (hvservice.Client, error) {
 	return hvservice.ClientOf(p.pipe)
 }
 
-func (p pipePeer) stateDisk(context.Context, string, uint64) (stateDisk, error) {
+func (p pipePeer) stateDisk(ctx context.Context, id string, handle uint64) (stateDisk, error) {
 	if p.err != nil {
 		return stateDisk{}, p.err
 	}
 
-	return stateDisk{}, errStateByHandle
+	return p.disks.take(ctx, p.pipe, id, handle)
 }
-
-// errStateByHandle is a state disk by handle, which the service can't
-// take yet.
-var errStateByHandle = errors.New("the state disk by handle is not taken yet")

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 
+	"github.com/the127/aibox/internal/hcs"
 	"github.com/the127/aibox/internal/hvservice"
 )
 
@@ -93,7 +95,11 @@ func serve(ctx context.Context, ready func(), logf func(format string, args ...a
 	ready()
 	logf("the service runs, on %s", hvservice.PipeName)
 
-	err = srv.run(ctx, l, peerOf)
+	// the VMs get at state disks through the Host Compute Service, which
+	// keeps the entries for their accounts
+	disks := stateDisks{grant: hcs.GrantVMAccess, revoke: hcs.RevokeVMAccess}
+
+	err = srv.run(ctx, l, func(conn net.Conn) peer { return peerOf(conn, disks) })
 	logf("the service stopped, every VM of it ended")
 
 	return err

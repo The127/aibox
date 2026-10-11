@@ -93,7 +93,7 @@ func serve(ctx context.Context, ready func(), logf func(format string, args ...a
 	ready()
 	logf("the service runs, on %s", hvservice.PipeName)
 
-	err = srv.run(ctx, l, clientOf)
+	err = srv.run(ctx, l, peerOf)
 	logf("the service stopped, every VM of it ended")
 
 	return err

@@ -101,7 +101,7 @@ func TestTheServiceTellsWhoIsOnTheOtherEndOfItsPipe(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	client, err := clientOf(conn)
+	client, err := peerOf(conn).client()
 
 	// assert
 	require.NoError(t, err)

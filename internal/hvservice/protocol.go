@@ -2,7 +2,7 @@
 // aibox talks to it in. The Host Compute Service serves only
 // Administrators, so the service, which runs as SYSTEM, makes the VMs for
 // the person who runs aibox. It boots a kernel and a root disk of its own
-// and touches no path of that person: aibox serves the folders and builds
+// and takes no path from that person: aibox serves the folders and builds
 // the kernel command line itself.
 package hvservice
 
@@ -34,6 +34,7 @@ var maxMessage = func() int {
 		MemoryMiB: math.MinInt,
 		CPUs:      math.MinInt,
 		Cmdline:   strings.Repeat("\x00", MaxCmdline),
+		State:     math.MaxUint64,
 	}})
 	if err != nil {
 		panic(err)
@@ -76,6 +77,13 @@ type Create struct {
 	// Cmdline is the kernel command line, which tells the guest where to
 	// find what aibox serves it over Hyper-V sockets.
 	Cmdline string `json:"cmdline"`
+	// State is the handle of the state disk, open in aibox, as its number.
+	// The service copies the handle out of aibox's process rather than
+	// take a path: a handle is a file aibox could open, whatever a path
+	// might name by the time the service looked. aibox opens the file for
+	// its attributes and its security, which the service's checks read,
+	// and not for its data, which Hyper-V opens it for, and shares all.
+	State uint64 `json:"state"`
 }
 
 // Reply is the answer of the service to a request.

@@ -55,7 +55,7 @@ var host = hvservice.Host{MemoryMiB: 16384, CPUs: 8}
 
 // vm is a VM the host can take, changed by change.
 func vm(change func(*hvservice.Create)) hvservice.Create {
-	c := hvservice.Create{MemoryMiB: 2048, CPUs: 2, Cmdline: "console=ttyS0 aibox.hyperv"}
+	c := hvservice.Create{MemoryMiB: 2048, CPUs: 2, Cmdline: "console=ttyS0 aibox.hyperv", State: 0x1a4}
 	change(&c)
 
 	return c
@@ -99,6 +99,7 @@ func TestCheckRefusesAVMTheHostOrTheKernelCantTake(t *testing.T) {
 			c.Cmdline = strings.Repeat("x", hvservice.MaxCmdline+1)
 		}),
 		"a kernel command line with a NUL": vm(func(c *hvservice.Create) { c.Cmdline = "console=ttyS0\x00aibox.hyperv" }),
+		"no state disk":                    vm(func(c *hvservice.Create) { c.State = 0 }),
 	}
 
 	for name, c := range tests {

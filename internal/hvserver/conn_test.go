@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -77,12 +78,13 @@ func (v *fakeVM) Close() error {
 // fixture is a server with a fake Host Compute Service on a host of 16
 // GiB and 8 processors, and the client end of one connection to it.
 type fixture struct {
-	srv    *server
-	calls  *calls
-	docs   []hcs.Document
-	client net.Conn
-	r      *bufio.Reader
-	done   chan struct{}
+	srv     *server
+	calls   *calls
+	docs    []hcs.Document
+	diskErr error
+	client  net.Conn
+	r       *bufio.Reader
+	done    chan struct{}
 }
 
 func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, error)) *fixture {
@@ -108,6 +110,39 @@ func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, 
 	return f
 }
 
+// aStateDisk is the path the fake peer reads from a state disk handle.
+const aStateDisk = `C:\Users\me\.aibox\projects\x\state.ext4`
+
+// fakePeer is the client of a connection, who hands over a state disk
+// under a handle; diskErr refuses it.
+type fakePeer struct {
+	f       *fixture
+	diskErr error
+}
+
+func (p fakePeer) client() (hvservice.Client, error) {
+	return hvservice.Client{User: "S-1-5-21-1-2-3-1001"}, nil
+}
+
+func (p fakePeer) stateDisk(_ context.Context, id string, handle uint64) (stateDisk, error) {
+	if p.diskErr != nil {
+		return stateDisk{}, p.diskErr
+	}
+
+	p.f.calls.add(fmt.Sprintf("grant handle %d to %s", handle, id))
+
+	return stateDisk{path: aStateDisk, revoke: func() error {
+		p.f.calls.add("revoke")
+
+		return nil
+	}}, nil
+}
+
+// peer is the fake peer of the fixture's connection.
+func (f *fixture) peer() fakePeer {
+	return fakePeer{f: f, diskErr: f.diskErr}
+}
+
 // serve serves the connection with ctx until it ends.
 func (f *fixture) serve(ctx context.Context, t *testing.T) {
 	t.Helper()
@@ -120,9 +155,7 @@ func (f *fixture) serve(ctx context.Context, t *testing.T) {
 		defer close(f.done)
 		defer func() { _ = server.Close() }()
 
-		f.srv.serve(ctx, server, func() (hvservice.Client, error) {
-			return hvservice.Client{User: "S-1-5-21-1-2-3-1001"}, nil
-		})
+		f.srv.serve(ctx, server, f.peer())
 	}()
 
 	t.Cleanup(func() {
@@ -159,7 +192,7 @@ func (f *fixture) hangUp() {
 	<-f.done
 }
 
-const createLine = `{"op":"create","create":{"memoryMiB":2048,"cpus":2,"cmdline":"console=ttyS0"}}`
+const createLine = `{"op":"create","create":{"memoryMiB":2048,"cpus":2,"cmdline":"console=ttyS0","state":420}}`
 
 func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	t.Parallel()
@@ -178,12 +211,16 @@ func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	assert.Equal(t, aRuntimeID.String(), created.RuntimeID)
 	assert.True(t, strings.HasPrefix(created.ConsolePipe, `\\.\pipe\aibox-console-`))
 	assert.Equal(t, hvservice.Reply{}, started)
-	assert.Equal(t, []string{"create", "start", "terminate", "close"}, f.calls.all())
+	calls := f.calls.all()
+	require.NotEmpty(t, calls)
+	assert.True(t, strings.HasPrefix(calls[0], "grant handle 420 to "), calls[0])
+	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, calls[1:])
 	assert.Zero(t, f.srv.ledger.used, "the memory of the VM is free again")
 
 	require.Len(t, f.docs, 1)
 	assert.Equal(t, "console=ttyS0", f.docs[0].VirtualMachine.Chipset.LinuxKernelDirect.KernelCmdLine)
 	assert.Equal(t, created.ConsolePipe, f.docs[0].VirtualMachine.Devices.ComPorts["0"].NamedPipe)
+	assert.Equal(t, aStateDisk, f.docs[0].VirtualMachine.Devices.Scsi["0"].Attachments["1"].Path, "the state disk the peer read from the handle")
 }
 
 func TestAConnectionRefusesARequestOutOfTurn(t *testing.T) {
@@ -283,6 +320,7 @@ func TestAVMThatFailsToBeMadeTakesNoMemory(t *testing.T) {
 	// assert
 	assert.Contains(t, reply.Error, "HRESULT 0x80070005")
 	assert.Zero(t, f.srv.ledger.used)
+	assert.Equal(t, []string{"create", "revoke"}, f.calls.all()[1:], "the VM's access to the state disk is gone with it")
 }
 
 func TestAVMEndsThoughTheServicesContextHas(t *testing.T) {
@@ -299,7 +337,7 @@ func TestAVMEndsThoughTheServicesContextHas(t *testing.T) {
 	f.hangUp()
 
 	// assert
-	assert.Equal(t, []string{"create", "terminate", "close"}, f.calls.all(), "the VM ended though the service's context had")
+	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all()[1:], "the VM ended though the service's context had")
 }
 
 func TestStoppingTheServiceStopsAVMBeingMade(t *testing.T) {
@@ -351,12 +389,12 @@ func TestAVMThatFailsHalfwayEndsAndLetsTheClientMakeAnother(t *testing.T) {
 		"its runtime id unread": {
 			vm:    fakeVM{runtimeIDErr: errors.New("no properties")},
 			lines: []string{createLine},
-			want:  []string{"create", "terminate", "close"},
+			want:  []string{"create", "terminate", "close", "revoke"},
 		},
 		"not started": {
 			vm:    fakeVM{startErr: &hcs.Error{Op: "HcsStartComputeSystem", HRESULT: 0x80070005}},
 			lines: []string{createLine, `{"op":"start"}`},
-			want:  []string{"create", "start", "terminate", "close"},
+			want:  []string{"create", "start", "terminate", "close", "revoke"},
 		},
 	}
 
@@ -388,9 +426,42 @@ func TestAVMThatFailsHalfwayEndsAndLetsTheClientMakeAnother(t *testing.T) {
 
 			// assert
 			assert.NotEmpty(t, failed.Error)
-			assert.Equal(t, tt.want, f.calls.all(), "the VM ended")
+			assert.Equal(t, tt.want, f.calls.all()[1:], "the VM ended")
 			assert.Zero(t, f.srv.ledger.used, "and gave its memory back")
 			assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
 		})
 	}
+}
+
+func TestAConnectionRefusesAStateDiskThePeerWontHandOver(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.diskErr = fmt.Errorf("%w: not an open file of aibox", hvservice.ErrBadRequest)
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, createLine)
+
+	// assert
+	assert.Contains(t, reply.Error, "not an open file of aibox")
+	assert.Empty(t, f.calls.all(), "no VM was made")
+	assert.Zero(t, f.srv.ledger.used)
+}
+
+func TestAVMTheHostHasNoMemoryLeftForTakesNoStateDisk(t *testing.T) {
+	t.Parallel()
+
+	// arrange: VMs that run hold all the host has
+	f := newFixture(t, nil)
+	f.srv.ledger.used = 16384
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, createLine)
+
+	// assert
+	assert.Contains(t, reply.Error, "too little memory")
+	assert.Equal(t, []string{"revoke"}, f.calls.all()[1:], "the VM's access to the state disk is taken away again")
 }

@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"net"
 	"sync"
-
-	"github.com/the127/aibox/internal/hvservice"
 )
 
 // run serves the connections of l until ctx ends, and returns once every
-// VM of them has ended. who tells the client of a connection. If l fails,
+// VM of them has ended. peerOf tells the peer of a connection. If l fails,
 // run ends the VMs as well: a service that takes no connections can't
 // serve, and would only keep VMs whose clients could not reach it again.
-func (s *server) run(ctx context.Context, l net.Listener, who func(net.Conn) (hvservice.Client, error)) error {
+func (s *server) run(ctx context.Context, l net.Listener, peerOf func(net.Conn) peer) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
@@ -42,7 +40,7 @@ func (s *server) run(ctx context.Context, l net.Listener, who func(net.Conn) (hv
 			stopConn := context.AfterFunc(ctx, func() { _ = conn.Close() })
 			defer stopConn()
 
-			s.serve(ctx, conn, func() (hvservice.Client, error) { return who(conn) })
+			s.serve(ctx, conn, peerOf(conn))
 		})
 	}
 }

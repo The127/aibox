@@ -167,7 +167,7 @@ does that work in a helper, a short-lived copy of itself that the kernel
 lets create, change and delete files in one folder only. On Linux that's
 Landlock, on macOS Seatbelt. The kernel checks where a path really leads, so
 a symlink out of the folder can't be written through, by the helper or by a
-program it starts. When git reads `.git` it may write nowhere. For the
+program it starts. When git reads `.git` it may write no file. For the
 bundle of a task it may write only in the task's folder in `~/.aibox`. The
 lock file goes into the VM's home. The helper can still read any file you
 can and reach the network. On Linux it can also still change the

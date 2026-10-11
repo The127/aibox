@@ -140,13 +140,13 @@ func checkName(name string) error {
 // openAt opens the name in the folder of parent, or parent itself again for
 // an empty name.
 func openAt(parent windows.Handle, name string, access uint32) (windows.Handle, error) {
-	return ntCreate(parent, name, access, windows.FILE_OPEN, 0)
+	return ntCreate(parent, name, access, windows.FILE_OPEN, 0, nil)
 }
 
 // ntCreate opens or creates the name in the folder of parent as the
 // disposition says. It does not follow a reparse point: a link or junction
 // is opened as itself, so nothing can lead out of the share.
-func ntCreate(parent windows.Handle, name string, access, disposition, options uint32) (windows.Handle, error) {
+func ntCreate(parent windows.Handle, name string, access, disposition, options uint32, ea []byte) (windows.Handle, error) {
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return 0, linux.EINVAL
@@ -164,9 +164,11 @@ func ntCreate(parent windows.Handle, name string, access, disposition, options u
 		iosb windows.IO_STATUS_BLOCK
 	)
 
+	eaPtr, eaLen := eaBuffer(ea)
+
 	err = windows.NtCreateFile(&h, access|windows.SYNCHRONIZE, &oa, &iosb, nil, 0,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, disposition,
-		options|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+		options|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, eaPtr, eaLen)
 	if err != nil {
 		return 0, errno(err)
 	}
@@ -198,7 +200,7 @@ func (r *root) Walk(names []string) ([]p9.QID, p9.File, error) {
 		return nil, nil, linux.ENOENT
 	}
 
-	h, err := openAt(s.h, "", windows.FILE_READ_ATTRIBUTES)
+	h, err := openAttrs(s.h, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -309,7 +311,7 @@ func modeOf(attributes uint32) p9.FileMode {
 }
 
 func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
-	h, err := openAt(f.h, "", windows.FILE_READ_ATTRIBUTES)
+	h, err := openAttrs(f.h, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -335,7 +337,7 @@ func (f *file) Walk(names []string) ([]p9.QID, p9.File, error) {
 			return nil, nil, linux.ENOTDIR
 		}
 
-		next, err := openAt(cur.h, name, windows.FILE_READ_ATTRIBUTES)
+		next, err := openAttrs(cur.h, name)
 
 		_ = cur.Close()
 
@@ -371,7 +373,7 @@ func (f *file) GetAttr(p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
 
 	size := uint64(info.FileSizeHigh)<<32 | uint64(info.FileSizeLow)
 	attr := p9.Attr{
-		Mode:      modeOf(info.FileAttributes),
+		Mode:      f.mode(info.FileAttributes),
 		UID:       p9.UID(f.fs.owner.UID),
 		GID:       p9.GID(f.fs.owner.GID),
 		NLink:     p9.NLink(info.NumberOfLinks),
@@ -594,4 +596,31 @@ type basicInfo struct {
 	LastWriteTime  int64
 	ChangeTime     int64
 	FileAttributes uint32
+}
+
+// openAttrs opens the name to walk from and to read the attributes and the
+// mode of. A file that lets the user read its attributes but not its
+// extended ones still opens, and shows the default mode.
+func openAttrs(parent windows.Handle, name string) (windows.Handle, error) {
+	h, err := openAt(parent, name, windows.FILE_READ_ATTRIBUTES|windows.FILE_READ_EA)
+	if errors.Is(err, linux.EACCES) {
+		return openAt(parent, name, windows.FILE_READ_ATTRIBUTES)
+	}
+
+	return h, err
+}
+
+// mode is the type and the mode of the file with the attributes: the mode
+// the guest set, or the default where it set none or it can't be read.
+func (f *file) mode(attributes uint32) p9.FileMode {
+	t := modeOf(attributes).FileType()
+	if t == p9.ModeSymlink {
+		return t | 0o777
+	}
+
+	if perm, ok, err := readMode(f.h); err == nil && ok {
+		return t | perm
+	}
+
+	return t | defaultMode(attributes)
 }

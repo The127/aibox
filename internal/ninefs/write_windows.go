@@ -83,7 +83,7 @@ func (f *file) child(name string) error {
 	return checkName(name)
 }
 
-func (f *file) Create(name string, mode p9.OpenFlags, _ p9.FileMode, _ p9.UID, _ p9.GID) (p9.File, p9.QID, uint32, error) {
+func (f *file) Create(name string, mode p9.OpenFlags, perm p9.FileMode, _ p9.UID, _ p9.GID) (p9.File, p9.QID, uint32, error) {
 	if err := f.child(name); err != nil {
 		return nil, p9.QID{}, 0, err
 	}
@@ -93,7 +93,12 @@ func (f *file) Create(name string, mode p9.OpenFlags, _ p9.FileMode, _ p9.UID, _
 		return nil, p9.QID{}, 0, err
 	}
 
-	h, err := ntCreate(f.h, name, access, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE)
+	ea, err := modeEA(p9.ModeRegular, perm)
+	if err != nil {
+		return nil, p9.QID{}, 0, errno(err)
+	}
+
+	h, err := ntCreate(f.h, name, access, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE, ea)
 	if errors.Is(err, linux.EISDIR) {
 		// the name is taken, by a folder
 		return nil, p9.QID{}, 0, linux.EEXIST
@@ -103,7 +108,7 @@ func (f *file) Create(name string, mode p9.OpenFlags, _ p9.FileMode, _ p9.UID, _
 		return nil, p9.QID{}, 0, err
 	}
 
-	attrs, err := openAt(h, "", windows.FILE_READ_ATTRIBUTES)
+	attrs, err := openAttrs(h, "")
 	if err != nil {
 		_ = windows.CloseHandle(h)
 
@@ -122,12 +127,17 @@ func (f *file) Create(name string, mode p9.OpenFlags, _ p9.FileMode, _ p9.UID, _
 	return created, qid, 0, nil
 }
 
-func (f *file) Mkdir(name string, _ p9.FileMode, _ p9.UID, _ p9.GID) (p9.QID, error) {
+func (f *file) Mkdir(name string, perm p9.FileMode, _ p9.UID, _ p9.GID) (p9.QID, error) {
 	if err := f.child(name); err != nil {
 		return p9.QID{}, err
 	}
 
-	h, err := ntCreate(f.h, name, windows.FILE_READ_ATTRIBUTES, windows.FILE_CREATE, windows.FILE_DIRECTORY_FILE)
+	ea, err := modeEA(p9.ModeDirectory, perm)
+	if err != nil {
+		return p9.QID{}, errno(err)
+	}
+
+	h, err := ntCreate(f.h, name, windows.FILE_READ_ATTRIBUTES, windows.FILE_CREATE, windows.FILE_DIRECTORY_FILE, ea)
 	if err != nil {
 		return p9.QID{}, err
 	}
@@ -279,8 +289,9 @@ func (f *file) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 	}
 
 	if valid.Permissions {
-		// modes come with the next stage of the server
-		return linux.EPERM
+		if err := f.chmod(attr.Permissions); err != nil {
+			return err
+		}
 	}
 
 	if (valid.UID && uint32(attr.UID) != f.fs.owner.UID) || (valid.GID && uint32(attr.GID) != f.fs.owner.GID) {
@@ -359,4 +370,20 @@ func (f *file) Symlink(string, string, p9.UID, p9.GID) (p9.QID, error) {
 
 func (f *file) Mknod(string, p9.FileMode, uint32, uint32, p9.UID, p9.GID) (p9.QID, error) {
 	return p9.QID{}, linux.EPERM
+}
+
+func (f *file) chmod(perm p9.FileMode) error {
+	_, info, err := f.info()
+	if err != nil {
+		return err
+	}
+
+	h, err := openAt(f.h, "", windows.FILE_WRITE_EA)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = windows.CloseHandle(h) }()
+
+	return writeMode(h, modeOf(info.FileAttributes).FileType(), perm)
 }

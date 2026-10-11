@@ -18,7 +18,7 @@ func TestCleanLeavesATaskWhoseLockItCannotTake(t *testing.T) {
 	f := newTasksFixture(t)
 	f.ended(t, "ended")
 	f.write(t, filepath.Join("fifo", "share", task.InputBundle))
-	require.NoError(t, syscall.Mkfifo(filepath.Join(f.tasks, "fifo", lockFile), 0o600))
+	require.NoError(t, syscall.Mkfifo(filepath.Join(f.tasks, "fifo"+lockSuffix), 0o600))
 
 	// act
 	err := f.clean()

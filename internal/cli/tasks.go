@@ -94,10 +94,12 @@ type cleaned struct {
 // cleanTasks removes the bundle of the input, or with all the whole folder,
 // of every task in the folder of the tasks that ended and started before
 // before. A task that runs holds its lock, and its folder stays. A folder
-// without a lock file counts as one of a task that ended. cleanTasks also
-// removes what is left of folders of tasks that ended over a minute ago,
-// before they got their name. It returns an error for every folder it
-// could not check or clean.
+// without a lock file counts as one of a task that ended: a task locks
+// its lock before it makes its folder. cleanTasks also removes what is
+// left of tasks that failed to start over a minute ago: a lock without
+// its folder, and a folder an aibox from before the lock was beside the
+// folder had not yet named. It returns an error for every folder it could
+// not check or clean.
 func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 	var result cleaned
 
@@ -121,6 +123,10 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			if err := removeStrayLock(tasks, entry); err != nil {
+				errs = append(errs, err)
+			}
+
 			continue
 		}
 
@@ -141,10 +147,7 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 			continue
 		}
 
-		lock, err := taskRoot.OpenFile(lockFile, lockFlags, 0)
-		if err == nil {
-			lock, err = lockOpened(lock, false)
-		}
+		lock, err := lockOf(tasks, taskRoot, name)
 
 		switch {
 		case errors.Is(err, filelock.ErrLocked):
@@ -159,9 +162,12 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 			continue
 		}
 
+		removedLock := false
+
 		switch {
-		// another aibox may have made the folder a moment ago and not yet
-		// its lock, or not yet its lock file
+		// an aibox from before the lock was beside the folder may have
+		// made the folder a moment ago and not yet its lock, or not yet its
+		// lock file
 		case strings.HasPrefix(name, newTaskPrefix):
 			if startedBefore(entry, time.Now().Add(-newTaskGrace)) {
 				if err := root.RemoveAll(name); err != nil {
@@ -174,6 +180,7 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 				errs = append(errs, fmt.Errorf("remove the task %s: %w", name, err))
 			} else {
 				result.cleaned++
+				removedLock = true
 			}
 		default:
 			removed, err := removeInput(taskRoot)
@@ -188,10 +195,97 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 			_ = lock.Close()
 		}
 
+		// once it is closed, as Windows removes no file that is open
+		if removedLock {
+			if err := root.Remove(name + lockSuffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("remove the lock of the task %s: %w", name, err))
+			}
+		}
+
 		_ = taskRoot.Close()
 	}
 
 	return result, errors.Join(errs...)
+}
+
+// lockOf locks the task of the folder name in the folder of the tasks.
+// It takes the lock in the folder, of a task of an aibox from before the
+// lock was beside it, when there is none beside it, and returns
+// fs.ErrNotExist when there is neither. The lock beside is opened as
+// lockTask does, with every kind of sharing, so that another aibox can
+// remove it on Windows while this one has it open.
+func lockOf(tasks string, taskRoot *os.Root, name string) (*os.File, error) {
+	lock, err := lockTask(filepath.Join(tasks, name), 0)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return lock, err
+	}
+
+	if lock, err = taskRoot.OpenFile(lockFile, lockFlags, 0); err != nil {
+		return nil, err
+	}
+
+	return lockOpened(lock)
+}
+
+// removeStrayLock removes the lock file of a task whose folder is not
+// there, which a task that failed to make its folder leaves, once no one
+// holds it and it is older than a task takes to make its folder. It goes
+// by the age of the file, not of the ID, as a task may draw its ID a while
+// before it makes the file. It leaves files whose names are of no task.
+func removeStrayLock(tasks string, entry fs.DirEntry) error {
+	name, ok := strings.CutSuffix(entry.Name(), lockSuffix)
+	if !ok || !isTaskID(name) {
+		return nil
+	}
+
+	info, err := entry.Info()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("check the lock %s: %w", entry.Name(), err)
+	}
+
+	if !info.ModTime().Before(time.Now().Add(-newTaskGrace)) {
+		return nil
+	}
+
+	dir := filepath.Join(tasks, name)
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	lock, err := lockTask(dir, 0)
+
+	switch {
+	case errors.Is(err, filelock.ErrLocked), errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("check the lock %s: %w", entry.Name(), err)
+	}
+
+	_ = lock.Close()
+
+	if err := os.Remove(lockPath(dir)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove the lock %s: %w", entry.Name(), err)
+	}
+
+	return nil
+}
+
+// isTaskID tells whether the name is the ID of a task, by the time it
+// starts with.
+func isTaskID(name string) bool {
+	_, err := taskStart(name)
+
+	return err == nil
+}
+
+// taskStart is the time the task of the ID started, which the ID starts
+// with.
+func taskStart(id string) (time.Time, error) {
+	return time.ParseInLocation(taskIDTime, id[:min(len(id), len(taskIDTime))], time.Local)
 }
 
 // removeInput removes the bundle of the input of the task in the folder,
@@ -210,7 +304,7 @@ func removeInput(dir *os.Root) (bool, error) {
 // startedBefore tells whether the task of the entry started before t: by
 // the time in its name, or else by when its folder changed.
 func startedBefore(entry fs.DirEntry, t time.Time) bool {
-	if started, err := time.ParseInLocation(taskIDTime, entry.Name()[:min(len(entry.Name()), len(taskIDTime))], time.Local); err == nil {
+	if started, err := taskStart(entry.Name()); err == nil {
 		return started.Before(t)
 	}
 

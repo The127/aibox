@@ -488,38 +488,40 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 		return nil, fmt.Errorf("make the folder of the tasks: %w", err)
 	}
 
-	// the folder gets its name only once it holds its lock, so that no
-	// other task takes it for the folder of a task that ended
-	newDir, err := os.MkdirTemp(tasks, newTaskPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("make the folder of the task: %w", err)
-	}
+	t := &taskRun{dir: filepath.Join(tasks, id), base: base, results: map[string]*os.File{}}
+	t.share = filepath.Join(t.dir, "share")
 
-	t := &taskRun{dir: newDir, base: base, results: map[string]*os.File{}}
-
-	// a task that cannot start leaves neither its lock nor its folder
-	started := false
+	// a task that cannot start leaves neither its lock nor its folder, and
+	// removes only what it made: another task may have drawn the same ID
+	started, madeDir := false, false
 
 	defer func() {
-		if !started {
-			t.close()
+		if started {
+			return
+		}
 
+		t.close()
+
+		if madeDir {
 			_ = os.RemoveAll(t.dir)
+		}
+
+		if t.lock != nil {
+			_ = os.Remove(lockPath(t.dir))
 		}
 	}()
 
-	// another aibox may hold the lock for a moment, as it looks for tasks
-	// that ended
-	if t.lock, err = lockTask(newDir, os.O_CREATE, true); err != nil {
+	// the lock comes before the folder, so that no other task takes the
+	// folder for one of a task that ended
+	if t.lock, err = newLock(t.dir); err != nil {
 		return nil, fmt.Errorf("lock the task: %w", err)
 	}
 
-	if err := os.Rename(newDir, filepath.Join(tasks, id)); err != nil {
-		return nil, fmt.Errorf("name the folder of the task: %w", err)
+	if err := os.Mkdir(t.dir, 0o700); err != nil {
+		return nil, fmt.Errorf("make the folder of the task: %w", err)
 	}
 
-	t.dir = filepath.Join(tasks, id)
-	t.share = filepath.Join(t.dir, "share")
+	madeDir = true
 
 	// the VM user stands for the person in the share, but on macOS it sees
 	// the modes of the files as they are
@@ -579,7 +581,7 @@ func newTaskRun(projectDir, cwd, base, prompt string, settings task.Settings) (*
 func bundleCommit(cwd, commit, dir, bundle, tmp string) error {
 	gitDir, err := gitOutput(cwd, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
-		return err
+		return fmt.Errorf("make a repository for the bundle: %w", err)
 	}
 
 	defer func() { _ = os.RemoveAll(tmp) }()
@@ -608,39 +610,95 @@ func bundleCommit(cwd, commit, dir, bundle, tmp string) error {
 }
 
 const (
+	// lockSuffix ends the name of the file beside the folder of a task
+	// that the task holds a lock on while it runs. It is beside the folder,
+	// not in it, as Windows renames and removes no folder that holds an
+	// open file.
+	lockSuffix = ".lock"
 	// lockFile is the file in the folder of a task that the task holds a
-	// lock on while it runs
+	// lock on while it runs, of an aibox from before the lock was beside
+	// the folder
 	lockFile = "lock"
-	// newTaskPrefix starts the name of the folder of a task until it holds
-	// its lock
+	// newTaskPrefix starts the name of the folder of a task until the
+	// folder holds its lock, of an aibox from before the lock was beside
+	// the folder
 	newTaskPrefix = ".new-"
 )
+
+// lockPath is the path of the lock file of the task in the folder.
+func lockPath(dir string) string {
+	return dir + lockSuffix
+}
 
 // lockFlags open a lock file without following a link, without waiting
 // for a FIFO and without making a terminal the controlling one.
 const lockFlags = os.O_RDONLY | noFollowFlags
 
-// lockTask opens the lock file in the folder of a task and locks it. Unless
-// it waits, it fails with filelock.ErrLocked while the task runs.
-func lockTask(dir string, flag int, wait bool) (*os.File, error) {
-	file, err := openNoFollow(filepath.Join(dir, lockFile), flag|os.O_RDONLY, 0o600)
+// errLockTaken is a lock file of a new task that aibox tasks clean took for
+// a stray one and removed, between its making and its locking.
+var errLockTaken = errors.New("the lock file was removed before it was locked")
+
+// newLock makes the lock file of the new task in the folder, and locks it.
+// It fails if the file is there already, which is another task's of the
+// same ID.
+func newLock(dir string) (*os.File, error) {
+	lock, err := lockTask(dir, os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return nil, err
 	}
 
-	return lockOpened(file, wait)
+	// on Unix the lock holds the file, not its name: a lock of a file that
+	// is gone guards nothing
+	if err := stillNamed(lock, lockPath(dir)); err != nil {
+		_ = lock.Close()
+
+		return nil, err
+	}
+
+	return lock, nil
+}
+
+// stillNamed fails with errLockTaken unless the open file is the one at
+// path.
+func stillNamed(file *os.File, path string) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	named, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	if !os.SameFile(opened, named) {
+		return errLockTaken
+	}
+
+	return nil
+}
+
+// lockTask opens the lock file of the task in the folder and locks it.
+// It fails with filelock.ErrLocked while the task runs.
+func lockTask(dir string, flag int) (*os.File, error) {
+	file, err := openNoFollow(lockPath(dir), flag|os.O_RDONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+
+	return lockOpened(file)
 }
 
 // lockOpened locks the opened lock file, which must be a plain file, or
-// closes it.
-func lockOpened(file *os.File, wait bool) (*os.File, error) {
+// closes it. It does not wait for one who holds it.
+func lockOpened(file *os.File) (*os.File, error) {
 	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
 		_ = file.Close()
 
 		return nil, errors.Join(errNoLockFile, err)
 	}
 
-	if err := filelock.Lock(file, wait); err != nil {
+	if err := filelock.Lock(file, false); err != nil {
 		_ = file.Close()
 
 		return nil, err

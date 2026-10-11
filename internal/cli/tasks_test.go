@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +42,7 @@ func (f *tasksFixture) write(t *testing.T, name string) {
 func (f *tasksFixture) ended(t *testing.T, name string) {
 	t.Helper()
 
-	f.write(t, filepath.Join(name, lockFile))
+	f.write(t, name+lockSuffix)
 	f.write(t, filepath.Join(name, "share", task.InputBundle))
 	f.write(t, filepath.Join(name, "share", task.PromptFile))
 }
@@ -52,7 +53,23 @@ func (f *tasksFixture) running(t *testing.T, name string) {
 
 	f.ended(t, name)
 
-	lock, err := lockTask(filepath.Join(f.tasks, name), 0, false)
+	lock, err := lockTask(filepath.Join(f.tasks, name), 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Close() })
+}
+
+// runningOfAnOldAibox makes the folder of a task that runs, until the test
+// ends, as an aibox from before the lock was beside the folder made it: with its lock inside.
+func (f *tasksFixture) runningOfAnOldAibox(t *testing.T, name string) {
+	t.Helper()
+
+	f.write(t, filepath.Join(name, lockFile))
+	f.write(t, filepath.Join(name, "share", task.InputBundle))
+
+	file, err := openNoFollow(filepath.Join(f.tasks, name, lockFile), os.O_RDONLY, 0)
+	require.NoError(t, err)
+
+	lock, err := lockOpened(file)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = lock.Close() })
 }
@@ -86,6 +103,7 @@ func TestCleanRemovesTheInputsOfTasksThatEnded(t *testing.T) {
 	require.ErrorContains(t, err, "remove the input of the task linked")
 	assert.NoFileExists(t, filepath.Join(f.tasks, "ended", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "ended", "share", task.PromptFile))
+	assert.FileExists(t, filepath.Join(f.tasks, "ended"+lockSuffix), "the lock stays with its folder")
 	assert.NoFileExists(t, filepath.Join(f.tasks, "older", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "running", "share", task.InputBundle))
 	assert.FileExists(t, filepath.Join(f.tasks, "elsewhere", task.InputBundle))
@@ -106,9 +124,69 @@ func TestCleanAllRemovesTheFoldersOfTasksThatEnded(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.NoDirExists(t, filepath.Join(f.tasks, "20200101-000000-aaaaaa"))
+	assert.NoFileExists(t, filepath.Join(f.tasks, "20200101-000000-aaaaaa"+lockSuffix), "the lock goes with its folder")
 	assert.DirExists(t, filepath.Join(f.tasks, time.Now().Format(taskIDTime)+"-bbbbbb"))
 	assert.DirExists(t, filepath.Join(f.tasks, "20200101-000000-cccccc"))
+	assert.FileExists(t, filepath.Join(f.tasks, "20200101-000000-cccccc"+lockSuffix))
 	assert.Contains(t, f.stderr.String(), "aibox: removed the folders of 1 task that ended\n")
+}
+
+func TestCleanLeavesATaskOfAnOldAiboxThatRuns(t *testing.T) {
+	// arrange
+	f := newTasksFixture(t)
+	f.runningOfAnOldAibox(t, "20200101-000000-aaaaaa")
+
+	// act
+	err := f.clean("--all")
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(f.tasks, "20200101-000000-aaaaaa", "share", task.InputBundle))
+	assert.Contains(t, f.stderr.String(), "aibox: 1 task still runs")
+}
+
+func TestCleanRemovesALockWithoutItsFolderOnlyWhenNoOneHoldsItAndItIsOld(t *testing.T) {
+	// arrange: tasks of IDs, which may be new by their files though old by
+	// their IDs, and a file of the same form that is no task's
+	f := newTasksFixture(t)
+	stale, fresh, held := "20200101-000000-aaaaaa", "20200101-000000-bbbbbb", "20200101-000000-cccccc"
+
+	for _, name := range []string{stale, fresh, held, "notes"} {
+		f.write(t, name+lockSuffix)
+	}
+
+	for _, name := range []string{stale, held, "notes"} {
+		f.age(t, name+lockSuffix, time.Hour)
+	}
+
+	lock, err := lockTask(filepath.Join(f.tasks, held), 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Close() })
+
+	// act
+	err = f.clean()
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(f.tasks, stale+lockSuffix))
+	assert.FileExists(t, filepath.Join(f.tasks, fresh+lockSuffix), "a task may be about to make its folder")
+	assert.FileExists(t, filepath.Join(f.tasks, held+lockSuffix))
+	assert.FileExists(t, filepath.Join(f.tasks, "notes"+lockSuffix), "a file of no task")
+}
+
+func TestANewTaskTakesNoLockOfAnotherOfTheSameID(t *testing.T) {
+	// arrange
+	dir := filepath.Join(t.TempDir(), "20200101-000000-aaaaaa")
+	other, err := newLock(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = other.Close() })
+
+	// act
+	_, err = newLock(dir)
+
+	// assert
+	require.ErrorIs(t, err, fs.ErrExist)
+	assert.FileExists(t, lockPath(dir))
 }
 
 func TestCleanRemovesFoldersOfNewTasksOnlyWhenTheyAreOld(t *testing.T) {
@@ -118,7 +196,7 @@ func TestCleanRemovesFoldersOfNewTasksOnlyWhenTheyAreOld(t *testing.T) {
 	f.write(t, filepath.Join(".new-fresh", "share", task.PromptFile))
 	f.write(t, filepath.Join(".new-unlocked", lockFile))
 	f.write(t, filepath.Join(".new-fresh-unlocked", lockFile))
-	f.running(t, ".new-locked")
+	f.runningOfAnOldAibox(t, ".new-locked")
 
 	for _, name := range []string{".new-stale", ".new-unlocked", ".new-locked"} {
 		f.age(t, name, time.Hour)

@@ -16,8 +16,8 @@ var errLink = errors.New("the path ends in a link")
 // openNoFollow opens the file at the path with the flags, and refuses a
 // link at the end of the path as O_NOFOLLOW does on Unix: it opens the link
 // itself, not what it points to, and then sees that it is one. The file is
-// opened with every kind of sharing, so that its folder can still be
-// renamed and it can be removed, as on Unix.
+// opened with every kind of sharing, so that it can be removed while open,
+// as on Unix. Its folder still can't be renamed or removed meanwhile.
 func openNoFollow(path string, flag int, _ os.FileMode) (*os.File, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -36,7 +36,11 @@ func openNoFollow(path string, flag int, _ os.FileMode) (*os.File, error) {
 	}
 
 	var disposition uint32 = windows.OPEN_EXISTING
-	if flag&os.O_CREATE != 0 {
+
+	switch {
+	case flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0:
+		disposition = windows.CREATE_NEW
+	case flag&os.O_CREATE != 0:
 		disposition = windows.OPEN_ALWAYS
 	}
 

@@ -169,6 +169,12 @@ func ntCreate(parent windows.Handle, name string, access, disposition, options u
 	err = windows.NtCreateFile(&h, access|windows.SYNCHRONIZE, &oa, &iosb, nil, 0,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, disposition,
 		options|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, eaPtr, eaLen)
+	if errors.Is(err, windows.STATUS_EAS_NOT_SUPPORTED) && len(ea) > 0 {
+		// a volume without extended attributes, such as FAT, keeps no mode;
+		// the file shows the default one
+		return ntCreate(parent, name, access, disposition, options, nil)
+	}
+
 	if err != nil {
 		return 0, errno(err)
 	}

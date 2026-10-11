@@ -37,6 +37,7 @@ var errnos = map[windows.Errno]linux.Errno{
 	windows.ERROR_FILE_TOO_LARGE:        linux.EFBIG,
 	windows.ERROR_BUSY:                  linux.EBUSY,
 	windows.ERROR_USER_MAPPED_FILE:      linux.EBUSY,
+	windows.ERROR_EAS_NOT_SUPPORTED:     linux.EOPNOTSUPP,
 }
 
 // statuses are the NT errors whose meaning the Win32 error they turn into

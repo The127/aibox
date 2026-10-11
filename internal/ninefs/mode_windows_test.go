@@ -112,3 +112,17 @@ func TestAChmodOnAReadOnlyShareIsRefused(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, linux.EROFS)
 }
+
+func TestASetAttrThatGivesTheFileAnotherOwnerChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := walk(t, mount(t, tree(t)), "src", "main.go")
+
+	// act
+	err := f.SetAttr(p9.SetAttrMask{Permissions: true, UID: true}, p9.SetAttr{Permissions: 0o700, UID: 0})
+
+	// assert
+	require.ErrorIs(t, err, linux.EPERM)
+	assert.Equal(t, p9.ModeRegular|0o644, modeOf(t, f))
+}

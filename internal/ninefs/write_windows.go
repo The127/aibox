@@ -288,14 +288,15 @@ func (f *file) SetAttr(valid p9.SetAttrMask, attr p9.SetAttr) error {
 		return linux.EROFS
 	}
 
+	// refused before anything changes, so a refused setattr changes nothing
+	if (valid.UID && uint32(attr.UID) != f.fs.owner.UID) || (valid.GID && uint32(attr.GID) != f.fs.owner.GID) {
+		return linux.EPERM
+	}
+
 	if valid.Permissions {
 		if err := f.chmod(attr.Permissions); err != nil {
 			return err
 		}
-	}
-
-	if (valid.UID && uint32(attr.UID) != f.fs.owner.UID) || (valid.GID && uint32(attr.GID) != f.fs.owner.GID) {
-		return linux.EPERM
 	}
 
 	if valid.Size {

@@ -90,7 +90,7 @@ func Printed(err error) bool {
 // NewRootCommand returns the top-level aibox command.
 func NewRootCommand() *cli.Command {
 	return newRootCommand(dependencies{
-		getwd:           os.Getwd,
+		getwd:           getwd,
 		aiboxDir:        aiboxDir,
 		homeDir:         os.UserHomeDir,
 		uid:             os.Getuid,

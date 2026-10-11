@@ -118,12 +118,12 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	}
 
 	if ok {
-		env, bridge, err := linkIDE(found, r.project.Home)
+		env, bridge, err := linkIDE(found, r.project.Home, r.log)
 		if err != nil {
 			return err
 		}
 
-		r.env, r.ide = append(r.env, env...), bridge
+		r.env, r.ide, r.ideHostPort = append(r.env, env...), bridge, found.Port
 	}
 
 	spec := r.spec(cmd)
@@ -180,8 +180,9 @@ type projectRun struct {
 	// or are nil
 	sshKeys sshKeys
 	// ide serves the link to the IDE of the host, or is nil when the VM
-	// gets none
-	ide http.Handler
+	// gets none, and ideHostPort is the port the IDE listens on
+	ide         http.Handler
+	ideHostPort uint16
 }
 
 func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
@@ -319,6 +320,11 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 
 	if r.ide != nil {
 		spec.Loopback = append(spec.Loopback, idePort)
+
+		// aibox itself connects to the IDE
+		if !slices.Contains(spec.Ports, r.ideHostPort) {
+			spec.Ports = append(spec.Ports, r.ideHostPort)
+		}
 	}
 
 	// aibox itself connects to the Claude API and to the git servers

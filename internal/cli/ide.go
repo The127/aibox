@@ -2,10 +2,10 @@ package cli
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -41,9 +41,6 @@ func checkIDE(loopback []uint16, env []string) error {
 
 	return nil
 }
-
-// ideAuthHeader is where Claude Code shows the token of the lock file.
-const ideAuthHeader = "X-Claude-Code-Ide-Authorization"
 
 // findIDE returns the IDE that has the project open, from the lock files
 // in the folders where Claude Code looks for them, or false when there is
@@ -83,7 +80,7 @@ func findIDE(deps dependencies, cwd string) (ide.IDE, bool, error) {
 // makes Claude Code connect by itself. The lock file names no process,
 // since Claude Code would look for it in the VM. Without one it checks
 // that the port answers. It returns the handler that serves the link.
-func linkIDE(found ide.IDE, home string) ([]string, http.Handler, error) {
+func linkIDE(found ide.IDE, home string, log io.Writer) ([]string, http.Handler, error) {
 	token := rand.Text()
 
 	lock, err := json.Marshal(map[string]any{
@@ -102,7 +99,7 @@ func linkIDE(found ide.IDE, home string) ([]string, http.Handler, error) {
 
 	env := []string{"CLAUDE_CODE_SSE_PORT=" + strconv.Itoa(idePort)}
 
-	return env, ideBridge(token), nil
+	return env, ide.Bridge{IDE: found, Token: token, Log: log}, nil
 }
 
 // writeInHome writes a new file into the home of the VM. The VM can change
@@ -137,18 +134,4 @@ func writeInHome(home, name string, data []byte) error {
 	}
 
 	return f.Close()
-}
-
-// ideBridge serves the link to the IDE for the VM that shows the token.
-// It refuses everything else for now.
-func ideBridge(token string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get(ideAuthHeader)), []byte(token)) != 1 {
-			http.Error(w, "wrong token for the IDE", http.StatusUnauthorized)
-
-			return
-		}
-
-		http.Error(w, "the link to the IDE is not built yet", http.StatusNotImplemented)
-	})
 }

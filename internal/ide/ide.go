@@ -1,5 +1,6 @@
 // Package ide finds the IDEs that Claude Code can connect to, from the lock
-// files that their Claude Code plugins write.
+// files that their Claude Code plugins write, and links Claude Code in the
+// VM to one of them.
 package ide
 
 import (

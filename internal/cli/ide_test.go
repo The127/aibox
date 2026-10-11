@@ -2,8 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -66,6 +64,7 @@ func TestRunLinksTheIDEThatHasTheProjectOpen(t *testing.T) {
 	spec := f.launch.spec
 	assert.Contains(t, spec.Env, "CLAUDE_CODE_SSE_PORT=3131")
 	assert.Equal(t, []uint16{3131}, spec.Loopback)
+	assert.Contains(t, spec.Ports, uint16(23214))
 	require.NotNil(t, spec.Proxy.Local)
 	assert.NotNil(t, spec.Proxy.Local("localhost", "3131"))
 }
@@ -149,35 +148,5 @@ func TestRunReplacesTheLockFileOfAnEarlierRun(t *testing.T) {
 
 	if runtime.GOOS != "windows" {
 		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	}
-}
-
-func TestTheIDEBridgeChecksTheTokenOfTheVM(t *testing.T) {
-	// arrange
-	bridge := ideBridge("token-of-the-vm")
-	tests := map[string]struct {
-		token string
-		want  int
-	}{
-		"no token":       {"", http.StatusUnauthorized},
-		"a wrong token":  {"token-of-the-ide", http.StatusUnauthorized},
-		"the VM's token": {"token-of-the-vm", http.StatusNotImplemented},
-	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/", nil)
-			if test.token != "" {
-				request.Header.Set(ideAuthHeader, test.token)
-			}
-
-			response := httptest.NewRecorder()
-
-			// act
-			bridge.ServeHTTP(response, request)
-
-			// assert
-			assert.Equal(t, test.want, response.Code)
-		})
 	}
 }

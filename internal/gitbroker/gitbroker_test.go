@@ -216,6 +216,9 @@ func gitIn(ctx context.Context, home, dir string, args ...string) (string, error
 		"SSH_ASKPASS=",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		// maintenance in the background would make and remove files in a
+		// repository while a test copies it
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false",
 	)
 
 	out, err := cmd.CombinedOutput()

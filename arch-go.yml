@@ -145,6 +145,15 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the IDEs are read from the lock files of Claude Code, and nothing else
+  # of aibox is needed for that
+  - package: '**.internal.ide$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # the tunnel accepts and joins connections and knows nothing else
   - package: '**.internal.tunnel$'
     shouldNotDependsOn:

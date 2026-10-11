@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.6.0](https://github.com/The127/aibox/compare/v1.5.0...v1.6.0) (2026-10-11)
+
+
+### Features
+
+* install aibox with Homebrew on Linux ([#117](https://github.com/The127/aibox/issues/117)) ([338965d](https://github.com/The127/aibox/commit/338965dcb500f549d42bfbe65668de114e0e3a35)), closes [#104](https://github.com/The127/aibox/issues/104)
+* paste images from the host clipboard with Ctrl+V ([#100](https://github.com/The127/aibox/issues/100)) ([d83ae7b](https://github.com/The127/aibox/commit/d83ae7b701f3cabbe584ec1cc043f3fb606e1627)), closes [#97](https://github.com/The127/aibox/issues/97)
+* run the VM on Windows, on Hyper-V, through the service ([6d97aa0](https://github.com/The127/aibox/commit/6d97aa039d0756831a3d8c69ce8401528e4f5e9c))
+
+
+### Bug Fixes
+
+* confine the host's work in folders the VM can write ([#123](https://github.com/The127/aibox/issues/123)) ([b95ba87](https://github.com/The127/aibox/commit/b95ba87fd0b21b4ad222bf29456d181c562ac00d))
+* forget the tabs of the VM when all diff tabs close ([#103](https://github.com/The127/aibox/issues/103)) ([7119705](https://github.com/The127/aibox/commit/7119705febad35cbe6d094ee02ae5a9f2a724818))
+* keep the SSH sessions of a stalled connection and fit long report lines ([#98](https://github.com/The127/aibox/issues/98)) ([f696eb8](https://github.com/The127/aibox/commit/f696eb8343dc08fd5f1ac7221ffe16a3060152b3))
+* refuse a mount of the home folder or ~/.aibox ([#115](https://github.com/The127/aibox/issues/115)) ([57e04ac](https://github.com/The127/aibox/commit/57e04acc3fe505a6ab4364b174403e8ccb352330)), closes [#109](https://github.com/The127/aibox/issues/109)
+
 ## [1.5.0](https://github.com/The127/aibox/compare/v1.4.1...v1.5.0) (2026-10-11)
 
 

@@ -213,8 +213,9 @@ type System struct {
 
 // Create creates the compute system of the document under the id, which is
 // a GUID the caller chooses, and opens it. The VM is not started yet. If
-// Create fails, the service may have made the system all the same; only
-// ShouldTerminateOnLastHandleClosed ends it then.
+// Create fails, the service may have made the system all the same, so the
+// caller ends it by the id, with Open and Terminate, unless its Document
+// says ShouldTerminateOnLastHandleClosed.
 func Create(ctx context.Context, id string, doc Document) (*System, error) {
 	if err := load(); err != nil {
 		return nil, err

@@ -552,7 +552,9 @@ func list(h windows.Handle) (p9.Dirents, error) {
 			name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[nameAt])), info.FileNameLength/2)) //nolint:gosec // the name follows the entry, FileNameLength bytes long
 
 			if name != "." && name != ".." {
-				// the EA size holds the tag of a reparse point in a listing
+				// on NTFS and ReFS the EA size holds the tag of a reparse
+				// point in a listing; elsewhere a link may list as a file,
+				// which its attributes and Open still treat as a link
 				qid := qidOf(info.FileAttributes, info.EaSize, uint64(info.FileID)) //nolint:gosec // a file id is a 64-bit number
 				entries = append(entries, p9.Dirent{
 					QID:    qid,

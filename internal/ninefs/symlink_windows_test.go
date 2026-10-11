@@ -4,6 +4,7 @@ import (
 	"net"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hugelgupf/p9/linux"
@@ -131,4 +132,37 @@ func TestReadlinkOfAFileThatIsNoLinkFails(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, linux.EINVAL)
+}
+
+func TestALinkTheKernelCouldNotFollowIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		target string
+		want   linux.Errno
+	}{
+		"empty":                {"", linux.ENOENT},
+		"with a NUL":           {"a\x00b", linux.EINVAL},
+		"longer than PATH_MAX": {strings.Repeat("a/", 2049), linux.ENAMETOOLONG},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			// act
+			_, err := direct(t, tree(t)).Symlink(c.target, "link", 1000, 1000)
+
+			// assert
+			assert.ErrorIs(t, err, c.want)
+		})
+	}
+}
+
+func TestALinkCannotTakeANameThatIsThere(t *testing.T) {
+	t.Parallel()
+
+	// act
+	_, err := walk(t, mount(t, tree(t)), "src").Symlink("x", "main.go", 1000, 1000)
+
+	// assert
+	assert.ErrorIs(t, err, linux.EEXIST)
 }

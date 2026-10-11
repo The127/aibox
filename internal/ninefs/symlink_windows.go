@@ -40,9 +40,8 @@ func reparseTag(h windows.Handle) (uint32, error) {
 	return info.ReparseTag, nil
 }
 
-// Readlink is where the link points. A Windows link points to a Windows
-// path, which the guest gets with its separators turned; the guest
-// resolves every link in its own file system, never on the host.
+// Readlink is where the link points, which the guest resolves in its own
+// file system, never on the host.
 func (f *file) Readlink() (string, error) {
 	_, info, err := f.info()
 	if err != nil {
@@ -60,24 +59,13 @@ func (f *file) Readlink() (string, error) {
 		return "", errno(err)
 	}
 
-	rp, err := winio.DecodeReparsePoint(buf[:n])
-
-	var unsupported *winio.UnsupportedReparsePointError
-	if errors.As(err, &unsupported) {
-		// a mount point of a volume or another name surrogate: a link
-		// that leads nowhere the guest knows
+	target, ok := linkTarget(buf[:n])
+	if !ok {
+		// another kind of name surrogate, or a link that names nothing
 		return "", linux.EINVAL
 	}
 
-	if err != nil {
-		return "", errno(err)
-	}
-
-	if rp.IsLxSymlink {
-		return rp.Target, nil
-	}
-
-	return strings.ReplaceAll(rp.Target, `\`, "/"), nil
+	return target, nil
 }
 
 // Symlink makes a link as WSL does, which needs no privilege, unlike a
@@ -88,8 +76,13 @@ func (f *file) Symlink(target, name string, _ p9.UID, _ p9.GID) (p9.QID, error) 
 		return p9.QID{}, err
 	}
 
-	if target == "" || strings.ContainsRune(target, 0) {
+	switch {
+	case target == "":
 		return p9.QID{}, linux.ENOENT
+	case strings.ContainsRune(target, 0):
+		return p9.QID{}, linux.EINVAL
+	case len(target) >= pathMax:
+		return p9.QID{}, linux.ENAMETOOLONG
 	}
 
 	h, err := ntCreate(f.h, name, windows.FILE_WRITE_DATA|windows.FILE_READ_ATTRIBUTES|windows.DELETE,
@@ -105,9 +98,13 @@ func (f *file) Symlink(target, name string, _ p9.UID, _ p9.GID) (p9.QID, error) 
 
 	if err := windows.DeviceIoControl(h, windows.FSCTL_SET_REPARSE_POINT, &rp[0], uint32(len(rp)), nil, 0, nil, nil); err != nil { //nolint:gosec // a target of the guest, at most what a reparse point holds
 		// the empty file is no link, so it goes again
-		disposition := uint32(windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_POSIX_SEMANTICS)
-		_ = windows.SetFileInformationByHandle(h, windows.FileDispositionInfoEx,
-			(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))) //nolint:gosec // the call reads the flags, as the ABI asks
+		discard(h)
+
+		if errors.Is(err, windows.ERROR_INVALID_FUNCTION) {
+			// a file system without reparse points, as Linux answers for
+			// one without symlinks
+			return p9.QID{}, linux.EPERM
+		}
 
 		return p9.QID{}, errno(err)
 	}
@@ -115,4 +112,22 @@ func (f *file) Symlink(target, name string, _ p9.UID, _ p9.GID) (p9.QID, error) 
 	qid, _, err := made.info()
 
 	return qid, err
+}
+
+// pathMax is Linux's PATH_MAX, which a target of a link of the guest
+// must stay below with its NUL; a reparse point could hold more.
+const pathMax = 4096
+
+// discard deletes the file the handle is open on, at once where the
+// volume can delete with POSIX semantics and when the handle closes
+// where it can't, such as on FAT.
+func discard(h windows.Handle) {
+	disposition := uint32(windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_POSIX_SEMANTICS)
+	if windows.SetFileInformationByHandle(h, windows.FileDispositionInfoEx,
+		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))) == nil { //nolint:gosec // the call reads the flags, as the ABI asks
+		return
+	}
+
+	deleteFile := byte(1)
+	_ = windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, &deleteFile, 1)
 }

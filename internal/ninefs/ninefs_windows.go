@@ -519,11 +519,6 @@ type dirInfo struct {
 	FileID          int64
 }
 
-const (
-	fileIDBothDirectoryInfo        = 10
-	fileIDBothDirectoryRestartInfo = 11
-)
-
 // list reads the whole folder, without . and .., each entry with the
 // offset of the one after it, as a 9p offset is where to go on from.
 func list(h windows.Handle) (p9.Dirents, error) {
@@ -532,7 +527,7 @@ func list(h windows.Handle) (p9.Dirents, error) {
 	// any size works: each call fills the buffer and the next goes on
 	// where it stopped
 	buf := make([]byte, 64<<10)
-	class := uint32(fileIDBothDirectoryRestartInfo)
+	class := uint32(windows.FileIdBothDirectoryRestartInfo)
 
 	for {
 		err := windows.GetFileInformationByHandleEx(h, class, &buf[0], uint32(len(buf))) //nolint:gosec // the buffer is 64 KiB
@@ -544,7 +539,7 @@ func list(h windows.Handle) (p9.Dirents, error) {
 			return nil, errno(err)
 		}
 
-		class = fileIDBothDirectoryInfo
+		class = windows.FileIdBothDirectoryInfo
 
 		for off := 0; ; {
 			info := (*dirInfo)(unsafe.Pointer(&buf[off])) //nolint:gosec // the call wrote an entry at off, NextEntryOffset said so

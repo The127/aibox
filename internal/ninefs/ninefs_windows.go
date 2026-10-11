@@ -334,19 +334,19 @@ func (i fileInfo) isDir() bool {
 // is unique on a volume, and a guest mounts one share per attach, whose
 // walks never cross to another volume.
 func qidOf(attributes, tag uint32, id uint64) p9.QID {
-	return p9.QID{Type: modeOf(attributes, tag).QIDType(), Path: id}
+	return p9.QID{Type: typeOf(attributes, tag).QIDType(), Path: id}
 }
 
-// modeOf is the type and the default mode the guest sees of a file with
-// the attributes and, for a reparse point, the tag.
-func modeOf(attributes, tag uint32) p9.FileMode {
+// typeOf is the type the guest sees of a file with the attributes and,
+// for a reparse point, the tag.
+func typeOf(attributes, tag uint32) p9.FileMode {
 	switch {
 	case isLink(attributes, tag):
-		return p9.ModeSymlink | 0o777
+		return p9.ModeSymlink
 	case attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0:
-		return p9.ModeDirectory | 0o755
+		return p9.ModeDirectory
 	default:
-		return p9.ModeRegular | 0o644
+		return p9.ModeRegular
 	}
 }
 
@@ -649,7 +649,7 @@ func openAttrs(parent windows.Handle, name string) (windows.Handle, error) {
 // the guest set, or the default where it set none or it can't be read.
 func (f *file) mode(info fileInfo) p9.FileMode {
 	attributes := info.FileAttributes
-	t := modeOf(attributes, info.tag).FileType()
+	t := typeOf(attributes, info.tag)
 	if t == p9.ModeSymlink {
 		return t | 0o777
 	}

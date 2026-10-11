@@ -326,6 +326,6 @@ func (f *file) chmod(perm p9.FileMode) error {
 	}
 
 	return f.with("", windows.FILE_WRITE_EA, func(h windows.Handle) error {
-		return writeMode(h, modeOf(info.FileAttributes, info.tag).FileType(), perm)
+		return writeMode(h, typeOf(info.FileAttributes, info.tag), perm)
 	})
 }

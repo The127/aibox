@@ -51,7 +51,7 @@ On Linux, download a package from the
 [releases](https://github.com/The127/aibox/releases). There is a `deb` and an
 `rpm` for amd64, which pull in QEMU, virtiofsd and bubblewrap. There is also
 a `tar.gz` with just the binary, and then you install those three yourself.
-aibox needs Linux 6.7 or newer and access to `/dev/kvm`.
+aibox needs Linux 7.0 or newer with vsock, and access to `/dev/kvm`.
 
 With [Nix](https://nixos.org), on Linux on amd64 or macOS on Apple silicon:
 

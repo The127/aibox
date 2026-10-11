@@ -17,7 +17,7 @@ func newBackend() backend.Backend { return vzlaunch.NewBackend() }
 
 // platformCommands are the commands only this kind of host has, and macOS
 // has none.
-func platformCommands() []*cli.Command { return nil }
+func platformCommands(dependencies) []*cli.Command { return nil }
 
 // systemRoots are the root certificates of macOS and those an admin added
 // to the system keychain, such as the root of a company proxy. The sandbox

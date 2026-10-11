@@ -18,5 +18,5 @@ func TestMacOSRunsTheVMWithVirtualizationFramework(t *testing.T) {
 	vz, ok := b.(vzlaunch.Backend)
 	assert.True(t, ok)
 	assert.NotNil(t, vz.Confine, "aibox would run unconfined")
-	assert.Empty(t, platformCommands())
+	assert.Empty(t, platformCommands(dependencies{}))
 }

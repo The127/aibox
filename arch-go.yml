@@ -97,6 +97,14 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # vhd makes a raw image a VHD and knows nothing of aibox
+  - package: '**.internal.vhd$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # hvservice runs as SYSTEM, so it takes in no more of aibox than it
   # needs to describe a VM
   - package: '**.internal.hvservice$'
@@ -106,6 +114,27 @@ dependenciesRules:
     shouldNotDependsOn:
       internal:
         - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvserver runs as SYSTEM, so it takes in no more of aibox than it needs
+  # to make VMs
+  - package: '**.internal.hvserver$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.hcs$'
+        - '**.internal.hvservice$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvinstall puts the service in place, as an Administrator, and knows
+  # nothing of aibox but the service
+  - package: '**.internal.hvinstall$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.hvserver$'
+        - '**.internal.hvservice$'
+        - '**.internal.vhd$'
+    shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
   # the project only manages folders on the host
@@ -275,6 +304,8 @@ dependenciesRules:
         - '**.internal.ide$'
         - '**.internal.clipboard$'
         - '**.internal.vm$'
+        - '**.internal.hvinstall$'
+        - '**.internal.hvserver$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

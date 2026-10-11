@@ -20,7 +20,7 @@ func systemRoots() (*x509.CertPool, error) { return x509.SystemCertPool() }
 // platformCommands are the commands only this kind of host has. The helper
 // aibox run starts to make the vsock namespace of a VM is not for people to
 // call.
-func platformCommands() []*cli.Command {
+func platformCommands(dependencies) []*cli.Command {
 	return []*cli.Command{{
 		Name:   vsockns.Command,
 		Hidden: true,

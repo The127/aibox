@@ -7,8 +7,6 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/urfave/cli/v3"
-
 	"github.com/the127/aibox/internal/backend"
 )
 
@@ -21,5 +19,3 @@ func (noBackend) Run(context.Context, backend.Spec) error { return errNoBackend 
 func newBackend() backend.Backend { return noBackend{} }
 
 func systemRoots() (*x509.CertPool, error) { return x509.SystemCertPool() }
-
-func platformCommands() []*cli.Command { return nil }

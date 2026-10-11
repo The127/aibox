@@ -1,0 +1,214 @@
+package hvserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/Microsoft/go-winio/pkg/guid"
+
+	"github.com/the127/aibox/internal/hcs"
+	"github.com/the127/aibox/internal/hvservice"
+)
+
+// vm is a VM the service made, as the Host Compute Service has it.
+type vm interface {
+	runtimeID(ctx context.Context) (guid.GUID, error)
+	Start(ctx context.Context) error
+	Terminate(ctx context.Context) error
+	Close() error
+}
+
+// server is what the service needs to make VMs, which the tests fake.
+type server struct {
+	install hvservice.Install
+	ledger  ledger
+	host    func() (hvservice.Host, error)
+	create  func(ctx context.Context, id string, doc hcs.Document) (vm, error)
+	logf    func(format string, args ...any)
+}
+
+// errOutOfTurn is a request that comes when the VM of the connection
+// can't do it: a second create, or a start before a create or after one.
+var errOutOfTurn = fmt.Errorf("%w: out of turn", hvservice.ErrBadRequest)
+
+// session is the VM of one connection, from its create to its end.
+type session struct {
+	vm      vm
+	release func()
+	started bool
+}
+
+// serve answers the requests of one connection, whose client who tells,
+// and ends its VM when the connection ends: a client that is gone can't
+// stop its VM itself. It waits for a request as long as the client's VM
+// runs, so that the service stops it by closing conn.
+func (s *server) serve(ctx context.Context, conn io.ReadWriter, who func() (hvservice.Client, error)) {
+	r := hvservice.NewReader(conn)
+
+	var sess session
+	defer s.end(ctx, &sess)
+
+	for {
+		// a new value, so that nothing of one request is taken for the next
+		var request hvservice.Request
+
+		err := hvservice.Read(r, &request)
+
+		var reply hvservice.Reply
+
+		switch {
+		case err == nil:
+			reply = s.answer(ctx, &sess, request, who)
+		case errors.Is(err, hvservice.ErrBadMessage):
+			reply = hvservice.Refusal(err)
+		case errors.Is(err, hvservice.ErrMessageTooLong):
+			// the rest of the line is still to come, so nothing after it
+			// can be told from it
+			s.send(conn, hvservice.Refusal(err))
+
+			return
+		default:
+			// a client that hangs up, or the service that stops, ends a
+			// read as it should
+			if !errors.Is(err, io.EOF) && ctx.Err() == nil {
+				s.logf("read from a client: %v", err)
+			}
+
+			return
+		}
+
+		if !s.send(conn, reply) {
+			return
+		}
+	}
+}
+
+// answer does what the request asks of the VM of the connection, sess.
+func (s *server) answer(ctx context.Context, sess *session, request hvservice.Request, who func() (hvservice.Client, error)) hvservice.Reply {
+	if err := request.Check(); err != nil {
+		return hvservice.Refusal(err)
+	}
+
+	switch request.Op {
+	case hvservice.OpCreate:
+		if sess.vm != nil {
+			return hvservice.Refusal(fmt.Errorf("%w: create of a second VM", errOutOfTurn))
+		}
+
+		reply, err := s.createVM(ctx, sess, *request.Create, who)
+		if err != nil {
+			s.logf("create a VM: %v", err)
+
+			return refusal("create", err)
+		}
+
+		return reply
+	case hvservice.OpStart:
+		if sess.vm == nil || sess.started {
+			return hvservice.Refusal(fmt.Errorf("%w: start of no VM or one that runs", errOutOfTurn))
+		}
+
+		if err := sess.vm.Start(ctx); err != nil {
+			s.logf("start a VM: %v", err)
+
+			// a VM that didn't start is of no further use; the client may
+			// create another
+			s.end(ctx, sess)
+
+			return refusal("start", err)
+		}
+
+		sess.started = true
+	}
+
+	return hvservice.Reply{}
+}
+
+// createVM makes the VM the client asked for, within what the host has
+// left, and keeps it in sess.
+func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create, who func() (hvservice.Client, error)) (hvservice.Reply, error) {
+	client, err := who()
+	if err != nil {
+		return hvservice.Reply{}, err
+	}
+
+	host, err := s.host()
+	if err != nil {
+		return hvservice.Reply{}, err
+	}
+
+	id, err := guid.NewV4()
+	if err != nil {
+		return hvservice.Reply{}, fmt.Errorf("make the id of the VM: %w", err)
+	}
+
+	console := hvservice.ConsolePipe(id)
+
+	doc, err := c.Document(host, s.install, console, client.SIDs())
+	if err != nil {
+		return hvservice.Reply{}, err
+	}
+
+	release, err := s.ledger.reserve(c.MemoryMiB, host.MemoryMiB)
+	if err != nil {
+		return hvservice.Reply{}, err
+	}
+
+	v, err := s.create(ctx, id.String(), doc)
+	if err != nil {
+		release()
+
+		return hvservice.Reply{}, err
+	}
+
+	*sess = session{vm: v, release: release}
+
+	// without its runtime id the client can't reach the VM
+	runtimeID, err := v.runtimeID(ctx)
+	if err != nil {
+		s.end(ctx, sess)
+
+		return hvservice.Reply{}, err
+	}
+
+	s.logf("created VM %s for %s", id, client.User)
+
+	return hvservice.Reply{RuntimeID: runtimeID.String(), ConsolePipe: console}, nil
+}
+
+// end ends the VM of the connection, if it made one, gives its memory
+// back once it is gone, and leaves sess without a VM. It ends the VM also
+// when ctx has ended, as the service stops.
+func (s *server) end(ctx context.Context, sess *session) {
+	if sess.vm == nil {
+		return
+	}
+
+	ctx = context.WithoutCancel(ctx)
+
+	if err := sess.vm.Terminate(ctx); err != nil {
+		s.logf("end a VM: %v", err)
+	}
+
+	// the service's handle is the VM's only one, and its Document ends it
+	// with its last handle, so the VM is gone whatever Terminate said
+	if err := sess.vm.Close(); err != nil {
+		s.logf("let go of a VM: %v", err)
+	}
+
+	sess.release()
+	*sess = session{}
+}
+
+// send writes the reply, and tells whether the connection can go on.
+func (s *server) send(conn io.Writer, reply hvservice.Reply) bool {
+	if err := hvservice.Write(conn, reply); err != nil {
+		s.logf("answer a client: %v", err)
+
+		return false
+	}
+
+	return true
+}

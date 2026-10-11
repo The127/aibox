@@ -122,6 +122,23 @@ func TestReadFailsOnALineCutShortByTheEndOfTheStream(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
+func TestReadTellsALineThatIsNoMessageAndGoesOn(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	r := hvservice.NewReader(strings.NewReader("{\"op\":\n{\"op\":\"start\"}\n"))
+
+	// act
+	var bad, next hvservice.Request
+	badErr := hvservice.Read(r, &bad)
+	nextErr := hvservice.Read(r, &next)
+
+	// assert
+	assert.ErrorIs(t, badErr, hvservice.ErrBadMessage)
+	require.NoError(t, nextErr)
+	assert.Equal(t, hvservice.OpStart, next.Op)
+}
+
 func TestReadFailsAtTheEndOfTheStream(t *testing.T) {
 	t.Parallel()
 

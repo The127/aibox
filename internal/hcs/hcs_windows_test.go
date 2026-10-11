@@ -34,6 +34,32 @@ func TestTimeoutOfWaitsNotAtAllPastTheDeadline(t *testing.T) {
 	assert.Equal(t, uint32(0), timeout)
 }
 
+// deadlineIn is a context whose deadline is always the same time away from
+// the moment it is asked for, so that a test of the rounding does not
+// depend on how fast it runs.
+type deadlineIn struct {
+	context.Context
+
+	d time.Duration
+}
+
+func (c deadlineIn) Deadline() (time.Time, bool) {
+	return time.Now().Add(c.d), true
+}
+
+func TestTimeoutOfRoundsUpToTheNextMillisecond(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	ctx := deadlineIn{t.Context(), time.Millisecond + 500*time.Microsecond}
+
+	// act
+	timeout := hcs.TimeoutOf(ctx)
+
+	// assert
+	assert.Equal(t, uint32(2), timeout)
+}
+
 func TestTimeoutOfStopsShortOfTheValueForNoLimit(t *testing.T) {
 	t.Parallel()
 

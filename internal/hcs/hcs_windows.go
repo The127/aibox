@@ -127,15 +127,18 @@ func (op operation) wait(ctx context.Context, what string) (string, error) {
 
 // timeoutOf is how long a wait may take in the context, in the
 // milliseconds the service counts in: until its deadline, or the default
-// without one. The largest value stands for no limit, so the wait stops
-// one short of it.
+// without one. It rounds up, so that a wait does not give up before the
+// context has ended. The largest value stands for no limit, so the wait
+// stops one short of it.
 func timeoutOf(ctx context.Context) uint32 {
 	timeout := defaultTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		timeout = max(time.Until(deadline), 0)
 	}
 
-	return uint32(min(timeout.Milliseconds(), math.MaxUint32-1)) //nolint:gosec // the value is at least 0 and one short of the largest, by the clamps
+	ms := (timeout + time.Millisecond - 1) / time.Millisecond
+
+	return uint32(min(int64(ms), math.MaxUint32-1)) //nolint:gosec // the value is at least 0 and one short of the largest, by the clamps
 }
 
 // run makes an operation, starts a call of the service in it and waits for
@@ -157,12 +160,15 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 		return "", err
 	}
 
-	var doc string
+	var (
+		doc     string
+		waitErr error
+	)
 
 	done := make(chan struct{})
 
 	go func() {
-		doc, err = op.wait(ctx, what)
+		doc, waitErr = op.wait(ctx, what)
 		close(done)
 	}()
 
@@ -170,7 +176,12 @@ func run(ctx context.Context, what string, start func(op operation) uintptr) (st
 	case <-done:
 		op.close()
 
-		return doc, err
+		// a wait that ran out with the deadline is the deadline's doing
+		if waitErr != nil && ctx.Err() != nil {
+			return "", fmt.Errorf("%w: %w", waitErr, context.Cause(ctx))
+		}
+
+		return doc, waitErr
 	case <-ctx.Done():
 		// The wait can't be interrupted, and the operation may only be
 		// closed once it has returned.

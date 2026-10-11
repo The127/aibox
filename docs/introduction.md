@@ -22,6 +22,40 @@ You can use aibox in two ways:
 
 You can also mount other folders into the VM, read-only.
 
+With `aibox run`, the VM connects to your machine like this:
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 60}}}%%
+flowchart LR
+  subgraph vm["VM"]
+    claude["<br><br>Claude Code<br><br>"]
+  end
+  subgraph machine["Your machine"]
+    terminal["Your terminal"]
+    project["Project folder"]
+    mounts["Mounts and skills"]
+    subgraph aibox["aibox"]
+      proxy["Proxy"]
+      broker["Git broker"]
+    end
+  end
+  hosts["Hosts on the allow list"]
+  repos["Repositories on the git list"]
+
+  claude <-->|"SSH over vsock"| terminal
+  claude <-->|"virtio-fs"| project
+  claude ---|"virtio-fs, read-only"| mounts
+  claude <-->|"vsock"| proxy
+  proxy ---> hosts
+  proxy --> broker
+  broker -->|"your git login"| repos
+```
+
+The VM has no network card. vsock connects it to your terminal and to a
+proxy in aibox. Apart from that, it only shares folders with your machine.
+With [git](git.md) in the config, a broker adds your git login to the VM's
+git requests, so the login never enters the VM.
+
 aibox runs on Linux with QEMU and on macOS with Virtualization.framework. The
 VM boots in about a second.
 

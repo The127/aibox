@@ -17,3 +17,7 @@ coverage.out
 /images/
 # the link nix build leaves
 /result
+
+# mdbook-mermaid install writes these
+/docs/mermaid.min.js
+/docs/mermaid-init.js

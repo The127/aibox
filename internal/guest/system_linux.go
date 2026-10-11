@@ -273,9 +273,11 @@ func (l Linux) MountPlan9(share, target string, flags uintptr) error {
 }
 
 // plan9Options hands the connection to the kernel as both ends of the
-// transport, and names the share, since one server serves them all.
+// transport, and names the share, since one server serves them all. Without
+// cache=mmap the kernel refuses to map a file shared and writable, which
+// SQLite does with its -shm file.
 func plan9Options(fd int, share string) string {
-	return fmt.Sprintf("trans=fd,rfdno=%d,wfdno=%d,msize=%d,aname=%s", fd, fd, plan9MessageSize, share)
+	return fmt.Sprintf("trans=fd,rfdno=%d,wfdno=%d,msize=%d,aname=%s,cache=mmap", fd, fd, plan9MessageSize, share)
 }
 
 // Sethostname sets the hostname of the VM.

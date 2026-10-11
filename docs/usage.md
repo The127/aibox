@@ -158,9 +158,9 @@ the VM, which runs amd64 Linux.
 You can only run one `aibox run` per project at a time on Windows too.
 Hyper-V keeps the state disk open while the VM runs.
 
-The state disk, `state.ext4`, ends in the footer of a VHD on Windows,
-which is the kind of disk Hyper-V attaches. The VM sees the same disk as
-on Linux.
+The state disk, `state.ext4`, is a dynamic VHD on Windows, the kind of
+disk Hyper-V attaches, which takes up space as the VM fills it. The VM
+sees the same disk as on Linux.
 
 ### How it works
 

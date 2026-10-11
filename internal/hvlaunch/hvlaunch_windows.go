@@ -89,6 +89,17 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return err
 	}
 
+	// before the machine is prepared, which would make the disk a sparse
+	// raw file, which Hyper-V refuses; and after the image is checked, as
+	// Prepare makes the disk, so that a run with no image leaves none
+	if _, _, err := machine.Image(spec.Image); err != nil {
+		return err
+	}
+
+	if err := prepareState(spec.State, spec.StateBytes); err != nil {
+		return err
+	}
+
 	m, err := machine.Prepare(spec)
 	if err != nil {
 		return err
@@ -101,10 +112,6 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	cmdline := m.Cmdline(baseCmdline)
 	if len(cmdline) > hvservice.MaxCmdline {
 		return fmt.Errorf("the kernel command line is %d bytes, more than the %d the kernel takes: fewer mounts would make it shorter", len(cmdline), hvservice.MaxCmdline)
-	}
-
-	if err := ensureVHD(m.State); err != nil {
-		return err
 	}
 
 	fs, err := ninefs.New(sharesOf(m.Shares), ninefs.Owner{UID: vm.GuestUID, GID: vm.GuestGID})

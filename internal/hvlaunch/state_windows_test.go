@@ -39,23 +39,65 @@ func hyperVOpen(t *testing.T, path string) windows.Handle {
 	return h
 }
 
-func TestEnsureVHDAppendsTheFooterOnce(t *testing.T) {
+func TestPrepareStateMakesADynamicVHDOnceAndKeepsIt(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(t *testing.T, path string){
+		"no disk yet": func(*testing.T, string) {},
+		"an empty disk": func(t *testing.T, path string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(path, nil, 0o600))
+		},
+	}
+
+	for name, before := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			// arrange
+			path := filepath.Join(t.TempDir(), "state.ext4")
+			before(t, path)
+
+			// act
+			first := prepareState(path, 8<<20)
+
+			made, err := os.Stat(path)
+			require.NoError(t, err)
+
+			second := prepareState(path, 16<<20)
+
+			// assert
+			require.NoError(t, first)
+			require.NoError(t, second)
+
+			is, err := vhd.IsDynamic(path)
+			require.NoError(t, err)
+			assert.True(t, is)
+
+			kept, err := os.Stat(path)
+			require.NoError(t, err)
+			assert.Equal(t, made.Size(), kept.Size(), "the disk that is there stays as it is, whatever size is asked")
+			assert.Less(t, kept.Size(), int64(8<<20), "and takes up space only as it fills")
+		})
+	}
+}
+
+func TestPrepareStateRefusesARawDiskAndLeavesIt(t *testing.T) {
 	t.Parallel()
 
 	// arrange
 	path := aState(t)
 
 	// act
-	first := ensureVHD(path)
-	second := ensureVHD(path)
+	err := prepareState(path, 1<<20)
 
 	// assert
-	require.NoError(t, first)
-	require.NoError(t, second)
+	assert.ErrorIs(t, err, ErrNotDynamic)
+	assert.ErrorContains(t, err, path)
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1<<20+vhd.FooterSize), info.Size())
+	info, statErr := os.Stat(path)
+	require.NoError(t, statErr)
+	assert.Equal(t, int64(1<<20), info.Size())
 }
 
 func TestCheckNotBusyTellsADiskAVMHasOpen(t *testing.T) {

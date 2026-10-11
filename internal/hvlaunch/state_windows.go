@@ -3,6 +3,7 @@ package hvlaunch
 import (
 	"errors"
 	"fmt"
+	"os"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -11,12 +12,36 @@ import (
 	"github.com/the127/aibox/internal/vhd"
 )
 
-// ensureVHD gives the state disk the footer of a fixed VHD, which is what
-// Hyper-V attaches, unless it has one. The guest sees the bytes before the
-// footer, as it sees the disk on Linux.
-func ensureVHD(path string) error {
-	if err := vhd.Append(path); err != nil && !errors.Is(err, vhd.ErrAlreadyVHD) {
-		return fmt.Errorf("make the state disk a VHD: %w", err)
+// ErrNotDynamic is a state disk that is not a dynamic VHD, which only one
+// aibox didn't make on Windows can be.
+var ErrNotDynamic = errors.New("not a dynamic VHD, which the state disk is on Windows: remove it, and aibox makes a new one")
+
+// prepareState makes the state disk at path, of size bytes, as a dynamic
+// VHD, unless it is there already: Hyper-V attaches VHDs, not raw images,
+// and refuses a sparse file, which is how the disk takes up space as it
+// fills elsewhere; a dynamic VHD takes up space as it fills by itself. A
+// disk that is there is kept whatever its size, as on Linux.
+func prepareState(path string, size int64) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) || err == nil && info.Size() == 0 {
+		if err := vhd.Dynamic(path, size); err != nil {
+			return fmt.Errorf("make the state disk: %w", err)
+		}
+
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("look at the state disk: %w", err)
+	}
+
+	is, err := vhd.IsDynamic(path)
+	if err != nil {
+		return err
+	}
+
+	if !is {
+		return fmt.Errorf("%s is %w", path, ErrNotDynamic)
 	}
 
 	return nil

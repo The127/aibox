@@ -20,6 +20,7 @@ import (
 	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/hvservice"
 	"github.com/the127/aibox/internal/machine"
+	"github.com/the127/aibox/internal/vhd"
 )
 
 // fakeService answers as the service does, over a pipe in memory, and
@@ -180,9 +181,9 @@ func TestRunStopsAVMWhoseGuestNeverConnects(t *testing.T) {
 	assert.True(t, strings.HasPrefix(made.Cmdline, baseCmdline+" "), made.Cmdline)
 	assert.Contains(t, made.Cmdline, " aibox.hyperv aibox.proxy=1025 aibox.terminal=1024")
 
-	info, err := os.Stat(f.spec.State)
+	is, err := vhd.IsDynamic(f.spec.State)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1<<20+512), info.Size(), "the state disk is a VHD")
+	assert.True(t, is, "the state disk is a dynamic VHD")
 }
 
 func TestRunEndsWhenTheVMIsGone(t *testing.T) {

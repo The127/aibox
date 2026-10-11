@@ -16,11 +16,7 @@ import (
 func direct(t *testing.T, dir string) p9.File {
 	t.Helper()
 
-	fs, err := ninefs.New([]ninefs.Share{{Name: "project", Dir: dir}}, owner)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = fs.Close() })
-
-	root, err := fs.Attach()
+	root, err := newFS(t, ninefs.Share{Name: "project", Dir: dir}).Attach()
 	require.NoError(t, err)
 
 	return walk(t, root, "project")

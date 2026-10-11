@@ -250,15 +250,7 @@ func twoShares(t *testing.T) (writable, readOnly p9.File) {
 
 	c := serve(t, ninefs.Share{Name: "project", Dir: tree(t)}, ninefs.Share{Name: "tools", Dir: tree(t), ReadOnly: true})
 
-	w, err := c.Attach("project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = w.Close() })
-
-	r, err := c.Attach("tools")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = r.Close() })
-
-	return w, r
+	return attach(t, c, "project"), attach(t, c, "tools")
 }
 
 func TestALinkCannotMakeAFileOfAReadOnlyShareWritable(t *testing.T) {
@@ -281,16 +273,11 @@ func TestARenameCannotMoveAFileToAnotherShare(t *testing.T) {
 	// arrange: two writable shares of one guest
 	c := serve(t, ninefs.Share{Name: "project", Dir: tree(t)}, ninefs.Share{Name: "home", Dir: tree(t)})
 
-	project, err := c.Attach("project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = project.Close() })
-
-	home, err := c.Attach("home")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = home.Close() })
+	project := attach(t, c, "project")
+	home := attach(t, c, "home")
 
 	// act
-	err = walk(t, project, "src").RenameAt("main.go", home, "main.go")
+	err := walk(t, project, "src").RenameAt("main.go", home, "main.go")
 
 	// assert
 	assert.ErrorIs(t, err, linux.EXDEV)

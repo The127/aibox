@@ -29,20 +29,14 @@ func mount(t *testing.T, dir string) p9.File {
 func mountShare(t *testing.T, share ninefs.Share) p9.File {
 	t.Helper()
 
-	root, err := serve(t, share).Attach(share.Name)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = root.Close() })
-
-	return root
+	return attach(t, serve(t, share), share.Name)
 }
 
 // serve serves the shares to a 9p client over the wire, as to the guest.
 func serve(t *testing.T, shares ...ninefs.Share) *p9.Client {
 	t.Helper()
 
-	fs, err := ninefs.New(shares, owner)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = fs.Close() })
+	fs := newFS(t, shares...)
 
 	server, client := net.Pipe()
 	t.Cleanup(func() { _ = client.Close() })
@@ -53,6 +47,29 @@ func serve(t *testing.T, shares ...ninefs.Share) *p9.Client {
 	require.NoError(t, err)
 
 	return c
+}
+
+// newFS serves the shares until the test ends.
+func newFS(t *testing.T, shares ...ninefs.Share) *ninefs.FS {
+	t.Helper()
+
+	fs, err := ninefs.New(shares, owner)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = fs.Close() })
+
+	return fs
+}
+
+// attach is the root of the share of the client's server, as the guest
+// mounts it.
+func attach(t *testing.T, c *p9.Client, name string) p9.File {
+	t.Helper()
+
+	root, err := c.Attach(name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	return root
 }
 
 // tree is a project with a file in a folder.

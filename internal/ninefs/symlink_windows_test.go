@@ -36,7 +36,7 @@ func TestALinkTheGuestMakesReadsBackAsItsTarget(t *testing.T) {
 			// assert
 			require.NoError(t, err)
 			assert.Equal(t, target, got)
-			assert.Equal(t, p9.ModeSymlink, modeOf(t, link).FileType())
+			assert.Equal(t, p9.ModeSymlink, guestMode(t, link).FileType())
 		})
 	}
 }
@@ -105,7 +105,7 @@ func TestAReparsePointThatIsNoLinkIsAFile(t *testing.T) {
 	t.Cleanup(func() { _ = l.Close() })
 
 	// act
-	mode := modeOf(t, walk(t, mount(t, dir), "sock"))
+	mode := guestMode(t, walk(t, mount(t, dir), "sock"))
 
 	// assert
 	assert.Equal(t, p9.ModeRegular, mode.FileType())

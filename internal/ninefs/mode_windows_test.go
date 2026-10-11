@@ -14,8 +14,8 @@ import (
 	"github.com/the127/aibox/internal/ninefs"
 )
 
-// modeOf is the mode the guest sees of the file.
-func modeOf(t *testing.T, f p9.File) p9.FileMode {
+// guestMode is the mode the guest sees of the file.
+func guestMode(t *testing.T, f p9.File) p9.FileMode {
 	t.Helper()
 
 	_, _, attr, err := f.GetAttr(p9.AttrMaskAll)
@@ -36,7 +36,7 @@ func TestAFileKeepsTheModeTheGuestCreatesItWith(t *testing.T) {
 	t.Cleanup(func() { _ = f.Close() })
 
 	// act
-	mode := modeOf(t, walk(t, root, "run.sh"))
+	mode := guestMode(t, walk(t, root, "run.sh"))
 
 	// assert
 	assert.Equal(t, p9.ModeRegular|0o755, mode)
@@ -52,7 +52,7 @@ func TestAFolderKeepsTheModeTheGuestMakesItWith(t *testing.T) {
 	require.NoError(t, err)
 
 	// act
-	mode := modeOf(t, walk(t, root, "private"))
+	mode := guestMode(t, walk(t, root, "private"))
 
 	// assert
 	assert.Equal(t, p9.ModeDirectory|0o700, mode)
@@ -68,7 +68,7 @@ func TestAChmodStaysAfterTheServerIsGone(t *testing.T) {
 	require.NoError(t, f.SetAttr(p9.SetAttrMask{Permissions: true}, p9.SetAttr{Permissions: 0o1750}))
 
 	// act: a server of its own, as for the next run of the VM
-	mode := modeOf(t, walk(t, mount(t, dir), "src", "main.go"))
+	mode := guestMode(t, walk(t, mount(t, dir), "src", "main.go"))
 
 	// assert
 	assert.Equal(t, p9.ModeRegular|0o1750, mode)
@@ -90,9 +90,9 @@ func TestAFileTheGuestNeverSetAModeOnHasTheDefault(t *testing.T) {
 	root := mount(t, dir)
 
 	// act
-	file := modeOf(t, walk(t, root, "src", "main.go"))
-	folder := modeOf(t, walk(t, root, "src"))
-	readOnly := modeOf(t, walk(t, root, "locked.txt"))
+	file := guestMode(t, walk(t, root, "src", "main.go"))
+	folder := guestMode(t, walk(t, root, "src"))
+	readOnly := guestMode(t, walk(t, root, "locked.txt"))
 
 	// assert
 	assert.Equal(t, p9.ModeRegular|0o644, file)
@@ -124,5 +124,5 @@ func TestASetAttrThatGivesTheFileAnotherOwnerChangesNothing(t *testing.T) {
 
 	// assert
 	require.ErrorIs(t, err, linux.EPERM)
-	assert.Equal(t, p9.ModeRegular|0o644, modeOf(t, f))
+	assert.Equal(t, p9.ModeRegular|0o644, guestMode(t, f))
 }

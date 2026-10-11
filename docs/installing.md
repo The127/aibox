@@ -46,6 +46,26 @@ aibox needs:
 QEMU and virtiofsd from Nix work too. When QEMU is in `/nix/store`, its
 sandbox binds the store in place of `/usr/lib64`.
 
+## Windows
+
+aibox runs on Windows 11 on amd64 with Hyper-V, which Windows 11 Pro,
+Enterprise and Education have. Download `aibox.exe` from the
+[releases](https://github.com/The127/aibox/releases).
+
+Hyper-V only lets administrators start VMs, so aibox comes with a Windows
+service that starts them for you. Install it once, from a terminal you
+opened as administrator:
+
+```
+aibox service install
+```
+
+That downloads the VM image, puts the service under `C:\Program Files\aibox`
+and its kernel and root disk under `C:\ProgramData\aibox`, and starts it.
+From then on you run `aibox run` and `aibox task` as yourself, without
+administrator rights. Run `aibox service install` again after you update
+aibox, and `aibox service uninstall` to remove it all.
+
 ## Nix
 
 The flake in this repository has a package of the latest release, for Linux

@@ -20,6 +20,34 @@ type vm interface {
 	Close() error
 }
 
+// peer is the client on the other end of a connection, as the pipe tells
+// it: who they are, the state disk they hand over by its handle, and the
+// console pipe the service hands them.
+type peer interface {
+	client() (hvservice.Client, error)
+	// stateDisk takes the state disk the client holds open under the
+	// handle, lets the VM of the id at it, and tells its path.
+	stateDisk(id string, handle uint64) (stateDisk, error)
+	// console makes the pipe at name for the console of the client's VM.
+	console(name string) (console, error)
+}
+
+// stateDisk is the state disk of a client as the VM gets it, and how to
+// take the VM's access to it away again.
+type stateDisk struct {
+	path   string
+	revoke func() error
+}
+
+// console is the pipe the service made for the console of a VM: give
+// hands it to the client, and tells the handle in the client's process,
+// and close lets go of the service's own handle, which the client's
+// outlives.
+type console struct {
+	give  func() (uint64, error)
+	close func() error
+}
+
 // server is what the service needs to make VMs, which the tests fake.
 type server struct {
 	install hvservice.Install
@@ -36,15 +64,16 @@ var errOutOfTurn = fmt.Errorf("%w: out of turn", hvservice.ErrBadRequest)
 // session is the VM of one connection, from its create to its end.
 type session struct {
 	vm      vm
+	disk    stateDisk
 	release func()
 	started bool
 }
 
-// serve answers the requests of one connection, whose client who tells,
-// and ends its VM when the connection ends: a client that is gone can't
-// stop its VM itself. It waits for a request as long as the client's VM
-// runs, so that the service stops it by closing conn.
-func (s *server) serve(ctx context.Context, conn io.ReadWriter, who func() (hvservice.Client, error)) {
+// serve answers the requests of one connection, from the peer p, and
+// ends its VM when the connection ends: a client that is gone can't stop
+// its VM itself. It waits for a request as long as the client's VM runs,
+// so that the service stops it by closing conn.
+func (s *server) serve(ctx context.Context, conn io.ReadWriter, p peer) {
 	r := hvservice.NewReader(conn)
 
 	var sess session
@@ -60,7 +89,7 @@ func (s *server) serve(ctx context.Context, conn io.ReadWriter, who func() (hvse
 
 		switch {
 		case err == nil:
-			reply = s.answer(ctx, &sess, request, who)
+			reply = s.answer(ctx, &sess, request, p)
 		case errors.Is(err, hvservice.ErrBadMessage):
 			reply = hvservice.Refusal(err)
 		case errors.Is(err, hvservice.ErrMessageTooLong):
@@ -86,7 +115,7 @@ func (s *server) serve(ctx context.Context, conn io.ReadWriter, who func() (hvse
 }
 
 // answer does what the request asks of the VM of the connection, sess.
-func (s *server) answer(ctx context.Context, sess *session, request hvservice.Request, who func() (hvservice.Client, error)) hvservice.Reply {
+func (s *server) answer(ctx context.Context, sess *session, request hvservice.Request, p peer) hvservice.Reply {
 	if err := request.Check(); err != nil {
 		return hvservice.Refusal(err)
 	}
@@ -97,7 +126,7 @@ func (s *server) answer(ctx context.Context, sess *session, request hvservice.Re
 			return hvservice.Refusal(fmt.Errorf("%w: create of a second VM", errOutOfTurn))
 		}
 
-		reply, err := s.createVM(ctx, sess, *request.Create, who)
+		reply, err := s.createVM(ctx, sess, *request.Create, p)
 		if err != nil {
 			s.logf("create a VM: %v", err)
 
@@ -121,15 +150,22 @@ func (s *server) answer(ctx context.Context, sess *session, request hvservice.Re
 		}
 
 		sess.started = true
+	case hvservice.OpStop:
+		if sess.vm == nil {
+			return hvservice.Refusal(fmt.Errorf("%w: stop of no VM", errOutOfTurn))
+		}
+
+		// answered once the VM is gone, which is what the client waits for
+		s.end(ctx, sess)
 	}
 
 	return hvservice.Reply{}
 }
 
 // createVM makes the VM the client asked for, within what the host has
-// left, and keeps it in sess.
-func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create, who func() (hvservice.Client, error)) (hvservice.Reply, error) {
-	client, err := who()
+// left, with the state disk the peer hands over, and keeps it in sess.
+func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create, p peer) (hvservice.Reply, error) {
+	client, err := p.client()
 	if err != nil {
 		return hvservice.Reply{}, err
 	}
@@ -144,28 +180,55 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 		return hvservice.Reply{}, fmt.Errorf("make the id of the VM: %w", err)
 	}
 
-	console := hvservice.ConsolePipe(id)
+	// before the state disk, so that a VM the host can't take has no
+	// access to grant and take away again
+	if err := c.Check(host); err != nil {
+		return hvservice.Reply{}, err
+	}
 
-	doc, err := c.Document(host, s.install, console, client.SIDs())
+	disk, err := p.stateDisk(id.String(), c.State)
 	if err != nil {
+		return hvservice.Reply{}, err
+	}
+
+	// before the VM, which Hyper-V would make a pipe of its own for; the
+	// service's handle goes once the client has one, or the VM failed
+	pipe := hvservice.ConsolePipe(id)
+
+	con, err := p.console(pipe)
+	if err != nil {
+		s.revoke(disk)
+
+		return hvservice.Reply{}, err
+	}
+
+	defer s.closeConsole(con)
+
+	doc, err := c.Document(host, s.install, pipe, disk.path, client.SIDs())
+	if err != nil {
+		s.revoke(disk)
+
 		return hvservice.Reply{}, err
 	}
 
 	release, err := s.ledger.reserve(c.MemoryMiB, host.MemoryMiB)
 	if err != nil {
+		s.revoke(disk)
+
 		return hvservice.Reply{}, err
 	}
 
 	v, err := s.create(ctx, id.String(), doc)
 	if err != nil {
+		s.revoke(disk)
 		release()
 
 		return hvservice.Reply{}, err
 	}
 
-	*sess = session{vm: v, release: release}
+	*sess = session{vm: v, disk: disk, release: release}
 
-	// without its runtime id the client can't reach the VM
+	// without its runtime id and its console the client can't reach the VM
 	runtimeID, err := v.runtimeID(ctx)
 	if err != nil {
 		s.end(ctx, sess)
@@ -173,9 +236,23 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 		return hvservice.Reply{}, err
 	}
 
-	s.logf("created VM %s for %s", id, client.User)
+	handle, err := con.give()
+	if err != nil {
+		s.end(ctx, sess)
 
-	return hvservice.Reply{RuntimeID: runtimeID.String(), ConsolePipe: console}, nil
+		return hvservice.Reply{}, err
+	}
+
+	s.logf("created VM %s for %s, with the state disk %s", id, client.User, disk.path)
+
+	return hvservice.Reply{RuntimeID: runtimeID.String(), Console: handle}, nil
+}
+
+// closeConsole lets go of the service's handle of a console pipe.
+func (s *server) closeConsole(con console) {
+	if err := con.close(); err != nil {
+		s.logf("let go of a console pipe: %v", err)
+	}
 }
 
 // end ends the VM of the connection, if it made one, gives its memory
@@ -198,8 +275,17 @@ func (s *server) end(ctx context.Context, sess *session) {
 		s.logf("let go of a VM: %v", err)
 	}
 
+	s.revoke(sess.disk)
 	sess.release()
 	*sess = session{}
+}
+
+// revoke takes the VM's access to the state disk away, once the VM is
+// gone or was never made.
+func (s *server) revoke(disk stateDisk) {
+	if err := disk.revoke(); err != nil {
+		s.logf("take the VM's access to %s away: %v", disk.path, err)
+	}
 }
 
 // send writes the reply, and tells whether the connection can go on.

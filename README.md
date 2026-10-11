@@ -21,8 +21,8 @@ You can use aibox in two ways:
   of the last commit and you get its commits back to review. The VM is
   deleted afterwards.
 
-aibox runs on Linux with QEMU and on macOS with Virtualization.framework. The
-VM boots in about a second.
+aibox runs on Linux with QEMU, on macOS with Virtualization.framework and on
+Windows with Hyper-V. The VM boots in about a second.
 
 Note that with `aibox run` the VM can change anything in your project folder,
 `.git` included. Treat those changes like a pull request from a stranger.
@@ -56,6 +56,10 @@ You can also download a package from the
 `rpm` for amd64, which pull in QEMU, virtiofsd and bubblewrap. There is also
 a `tar.gz` with just the binary, and then you install those three yourself.
 aibox needs Linux 7.0 or newer with vsock, and access to `/dev/kvm`.
+
+On Windows 11 with Hyper-V, download `aibox.exe` from the releases and, as
+administrator, run `aibox service install` once. See
+[Installing](https://the127.github.io/aibox/installing.html#windows).
 
 With [Nix](https://nixos.org), on Linux on amd64 or macOS on Apple silicon:
 

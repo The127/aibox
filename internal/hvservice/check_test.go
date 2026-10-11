@@ -15,6 +15,7 @@ func TestCheckTakesACreateWithItsVMAndABareStart(t *testing.T) {
 	for _, request := range []hvservice.Request{
 		{Op: hvservice.OpCreate, Create: &hvservice.Create{}},
 		{Op: hvservice.OpStart},
+		{Op: hvservice.OpStop},
 	} {
 		t.Run(string(request.Op), func(t *testing.T) {
 			t.Parallel()
@@ -36,6 +37,7 @@ func TestCheckRefusesARequestTheServiceWouldNotDoAsMeant(t *testing.T) {
 		"an unknown op":         {Op: "delete"},
 		"create without its VM": {Op: hvservice.OpCreate},
 		"start with a VM":       {Op: hvservice.OpStart, Create: &hvservice.Create{}},
+		"stop with a VM":        {Op: hvservice.OpStop, Create: &hvservice.Create{}},
 	}
 
 	for name, request := range tests {
@@ -55,7 +57,7 @@ var host = hvservice.Host{MemoryMiB: 16384, CPUs: 8}
 
 // vm is a VM the host can take, changed by change.
 func vm(change func(*hvservice.Create)) hvservice.Create {
-	c := hvservice.Create{MemoryMiB: 2048, CPUs: 2, Cmdline: "console=ttyS0 aibox.hyperv"}
+	c := hvservice.Create{MemoryMiB: 2048, CPUs: 2, Cmdline: "console=ttyS0 aibox.hyperv", State: 0x1a4}
 	change(&c)
 
 	return c
@@ -99,6 +101,7 @@ func TestCheckRefusesAVMTheHostOrTheKernelCantTake(t *testing.T) {
 			c.Cmdline = strings.Repeat("x", hvservice.MaxCmdline+1)
 		}),
 		"a kernel command line with a NUL": vm(func(c *hvservice.Create) { c.Cmdline = "console=ttyS0\x00aibox.hyperv" }),
+		"no state disk":                    vm(func(c *hvservice.Create) { c.State = 0 }),
 	}
 
 	for name, c := range tests {

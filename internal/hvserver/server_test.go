@@ -24,16 +24,14 @@ func TestTheServiceEndsTheVMsOfItsConnectionsWhenItStops(t *testing.T) {
 	ran := make(chan error, 1)
 
 	go func() {
-		ran <- f.srv.run(ctx, l, func(net.Conn) (hvservice.Client, error) {
-			return hvservice.Client{User: "S-1-5-21-1-2-3-1001"}, nil
-		})
+		ran <- f.srv.run(ctx, l, func(net.Conn) peer { return f.peer() })
 	}()
 
 	conn, err := net.Dial("tcp", l.Addr().String())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	require.NoError(t, hvservice.Write(conn, hvservice.Request{Op: hvservice.OpCreate, Create: &hvservice.Create{MemoryMiB: 2048, CPUs: 2}}))
+	require.NoError(t, hvservice.Write(conn, hvservice.Request{Op: hvservice.OpCreate, Create: &hvservice.Create{MemoryMiB: 2048, CPUs: 2, State: 420}}))
 
 	var reply hvservice.Reply
 	require.NoError(t, hvservice.Read(hvservice.NewReader(conn), &reply))
@@ -44,6 +42,6 @@ func TestTheServiceEndsTheVMsOfItsConnectionsWhenItStops(t *testing.T) {
 
 	// assert
 	require.NoError(t, <-ran)
-	assert.Equal(t, []string{"create", "terminate", "close"}, f.calls.all(), "run returned once the VM had ended")
+	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all(), "run returned once the VM had ended")
 	assert.Zero(t, f.srv.ledger.used)
 }

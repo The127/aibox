@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -77,18 +78,21 @@ func (v *fakeVM) Close() error {
 // fixture is a server with a fake Host Compute Service on a host of 16
 // GiB and 8 processors, and the client end of one connection to it.
 type fixture struct {
-	srv    *server
-	calls  *calls
-	docs   []hcs.Document
-	client net.Conn
-	r      *bufio.Reader
-	done   chan struct{}
+	srv     *server
+	calls   *calls
+	pipes   *calls
+	docs    []hcs.Document
+	diskErr error
+	granted []string
+	client  net.Conn
+	r       *bufio.Reader
+	done    chan struct{}
 }
 
 func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, error)) *fixture {
 	t.Helper()
 
-	f := &fixture{calls: &calls{}, done: make(chan struct{})}
+	f := &fixture{calls: &calls{}, pipes: &calls{}, done: make(chan struct{})}
 	f.srv = &server{
 		install: hvservice.Install{Kernel: `C:\aibox\vmlinuz`, Rootfs: `C:\aibox\os.vhd`},
 		host:    func() (hvservice.Host, error) { return hvservice.Host{MemoryMiB: 16384, CPUs: 8}, nil },
@@ -108,6 +112,57 @@ func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, 
 	return f
 }
 
+// aStateDisk is the path the fake peer reads from a state disk handle.
+const aStateDisk = `C:\Users\me\.aibox\projects\x\state.ext4`
+
+// fakePeer is the client of a connection, who hands over a state disk
+// under a handle; diskErr refuses it.
+type fakePeer struct{ f *fixture }
+
+func (p fakePeer) client() (hvservice.Client, error) {
+	return hvservice.Client{User: "S-1-5-21-1-2-3-1001"}, nil
+}
+
+func (p fakePeer) stateDisk(id string, handle uint64) (stateDisk, error) {
+	if p.f.diskErr != nil {
+		return stateDisk{}, p.f.diskErr
+	}
+
+	p.f.granted = append(p.f.granted, fmt.Sprintf("grant handle %d to %s", handle, id))
+
+	return stateDisk{path: aStateDisk, revoke: func() error {
+		p.f.calls.add("revoke")
+
+		return nil
+	}}, nil
+}
+
+// aConsoleHandle is the handle the fake peer puts the console pipe under
+// in the client's process.
+const aConsoleHandle = 7
+
+func (p fakePeer) console(name string) (console, error) {
+	p.f.pipes.add("make " + name)
+
+	return console{
+		give: func() (uint64, error) {
+			p.f.pipes.add("give")
+
+			return aConsoleHandle, nil
+		},
+		close: func() error {
+			p.f.pipes.add("close")
+
+			return nil
+		},
+	}, nil
+}
+
+// peer is the fake peer of the fixture's connection.
+func (f *fixture) peer() fakePeer {
+	return fakePeer{f: f}
+}
+
 // serve serves the connection with ctx until it ends.
 func (f *fixture) serve(ctx context.Context, t *testing.T) {
 	t.Helper()
@@ -120,9 +175,7 @@ func (f *fixture) serve(ctx context.Context, t *testing.T) {
 		defer close(f.done)
 		defer func() { _ = server.Close() }()
 
-		f.srv.serve(ctx, server, func() (hvservice.Client, error) {
-			return hvservice.Client{User: "S-1-5-21-1-2-3-1001"}, nil
-		})
+		f.srv.serve(ctx, server, f.peer())
 	}()
 
 	t.Cleanup(func() {
@@ -159,7 +212,7 @@ func (f *fixture) hangUp() {
 	<-f.done
 }
 
-const createLine = `{"op":"create","create":{"memoryMiB":2048,"cpus":2,"cmdline":"console=ttyS0"}}`
+const createLine = `{"op":"create","create":{"memoryMiB":2048,"cpus":2,"cmdline":"console=ttyS0","state":420}}`
 
 func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	t.Parallel()
@@ -176,14 +229,37 @@ func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	// assert
 	assert.Empty(t, created.Error)
 	assert.Equal(t, aRuntimeID.String(), created.RuntimeID)
-	assert.True(t, strings.HasPrefix(created.ConsolePipe, `\\.\pipe\aibox-console-`))
+	assert.Equal(t, uint64(aConsoleHandle), created.Console, "the console pipe, in the client's hands")
 	assert.Equal(t, hvservice.Reply{}, started)
-	assert.Equal(t, []string{"create", "start", "terminate", "close"}, f.calls.all())
+	require.Len(t, f.granted, 1)
+	assert.True(t, strings.HasPrefix(f.granted[0], "grant handle 420 to "), f.granted[0])
+	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all())
 	assert.Zero(t, f.srv.ledger.used, "the memory of the VM is free again")
 
 	require.Len(t, f.docs, 1)
 	assert.Equal(t, "console=ttyS0", f.docs[0].VirtualMachine.Chipset.LinuxKernelDirect.KernelCmdLine)
-	assert.Equal(t, created.ConsolePipe, f.docs[0].VirtualMachine.Devices.ComPorts["0"].NamedPipe)
+	assert.Equal(t, aStateDisk, f.docs[0].VirtualMachine.Devices.Scsi["0"].Attachments["1"].Path, "the state disk the peer read from the handle")
+
+	pipe := f.docs[0].VirtualMachine.Devices.ComPorts["0"].NamedPipe
+	assert.True(t, strings.HasPrefix(pipe, `\\.\pipe\aibox-console-`), pipe)
+	assert.Equal(t, []string{"make " + pipe, "give", "close"}, f.pipes.all(), "the pipe of the document was made before the VM and handed over after")
+}
+
+func TestAVMThatFailsToBeMadeHandsOverNoConsolePipe(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, func(context.Context, *fixture) (vm, error) { return nil, errors.New("HCS said no") })
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, createLine)
+
+	// assert
+	assert.NotEmpty(t, reply.Error)
+	assert.Zero(t, reply.Console)
+	require.Len(t, f.pipes.all(), 2)
+	assert.Equal(t, "close", f.pipes.all()[1], "the pipe went with the VM")
 }
 
 func TestAConnectionRefusesARequestOutOfTurn(t *testing.T) {
@@ -283,6 +359,7 @@ func TestAVMThatFailsToBeMadeTakesNoMemory(t *testing.T) {
 	// assert
 	assert.Contains(t, reply.Error, "HRESULT 0x80070005")
 	assert.Zero(t, f.srv.ledger.used)
+	assert.Equal(t, []string{"create", "revoke"}, f.calls.all(), "the VM's access to the state disk is gone with it")
 }
 
 func TestAVMEndsThoughTheServicesContextHas(t *testing.T) {
@@ -299,7 +376,7 @@ func TestAVMEndsThoughTheServicesContextHas(t *testing.T) {
 	f.hangUp()
 
 	// assert
-	assert.Equal(t, []string{"create", "terminate", "close"}, f.calls.all(), "the VM ended though the service's context had")
+	assert.Equal(t, []string{"create", "terminate", "close", "revoke"}, f.calls.all(), "the VM ended though the service's context had")
 }
 
 func TestStoppingTheServiceStopsAVMBeingMade(t *testing.T) {
@@ -351,12 +428,12 @@ func TestAVMThatFailsHalfwayEndsAndLetsTheClientMakeAnother(t *testing.T) {
 		"its runtime id unread": {
 			vm:    fakeVM{runtimeIDErr: errors.New("no properties")},
 			lines: []string{createLine},
-			want:  []string{"create", "terminate", "close"},
+			want:  []string{"create", "terminate", "close", "revoke"},
 		},
 		"not started": {
 			vm:    fakeVM{startErr: &hcs.Error{Op: "HcsStartComputeSystem", HRESULT: 0x80070005}},
 			lines: []string{createLine, `{"op":"start"}`},
-			want:  []string{"create", "start", "terminate", "close"},
+			want:  []string{"create", "start", "terminate", "close", "revoke"},
 		},
 	}
 
@@ -393,4 +470,70 @@ func TestAVMThatFailsHalfwayEndsAndLetsTheClientMakeAnother(t *testing.T) {
 			assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
 		})
 	}
+}
+
+func TestAConnectionRefusesAStateDiskThePeerWontHandOver(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.diskErr = fmt.Errorf("%w: not an open file of aibox", hvservice.ErrBadRequest)
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, createLine)
+
+	// assert
+	assert.Contains(t, reply.Error, "not an open file of aibox")
+	assert.Empty(t, f.calls.all(), "no VM was made")
+	assert.Zero(t, f.srv.ledger.used)
+}
+
+func TestAVMTheHostHasNoMemoryLeftForTakesNoStateDisk(t *testing.T) {
+	t.Parallel()
+
+	// arrange: VMs that run hold all the host has
+	f := newFixture(t, nil)
+	f.srv.ledger.used = 16384
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, createLine)
+
+	// assert
+	assert.Contains(t, reply.Error, "too little memory")
+	assert.Equal(t, []string{"revoke"}, f.calls.all(), "the VM's access to the state disk is taken away again")
+}
+
+func TestAStopEndsTheVMBeforeItIsAnsweredAndLetsTheClientMakeAnother(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+	require.Empty(t, f.ask(t, createLine).Error)
+	require.Empty(t, f.ask(t, `{"op":"start"}`).Error)
+
+	// act
+	stopped := f.ask(t, `{"op":"stop"}`)
+
+	// assert
+	assert.Equal(t, hvservice.Reply{}, stopped)
+	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all(), "the VM was gone before the answer")
+	assert.Zero(t, f.srv.ledger.used)
+	assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
+}
+
+func TestAStopOfNoVMIsRefused(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, `{"op":"stop"}`)
+
+	// assert
+	assert.Contains(t, reply.Error, "out of turn")
 }

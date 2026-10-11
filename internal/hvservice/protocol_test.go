@@ -25,6 +25,7 @@ func TestMessagesGoOverAStreamOneLineEach(t *testing.T) {
 		MemoryMiB: 2048,
 		CPUs:      2,
 		Cmdline:   "console=ttyS0 aibox.hyperv",
+		State:     0x1a4,
 	}}
 	start := hvservice.Request{Op: hvservice.OpStart}
 
@@ -57,6 +58,7 @@ func TestTheLongestRequestGoesThroughWhole(t *testing.T) {
 		MemoryMiB: math.MinInt,
 		CPUs:      math.MinInt,
 		Cmdline:   strings.Repeat("\x01", hvservice.MaxCmdline),
+		State:     math.MaxUint64,
 	}}
 
 	// act

@@ -44,12 +44,47 @@ func listen(path, sddl string) (net.Listener, error) {
 	return l, nil
 }
 
-// clientOf tells who the client of a connection on the pipe is.
-func clientOf(conn net.Conn) (hvservice.Client, error) {
+// pipePeer is the client of a connection on the pipe, which the pipe's
+// handle tells the service about, and whose state disk disks take.
+type pipePeer struct {
+	pipe  windows.Handle
+	disks stateDisks
+}
+
+// peerOf is the peer of a connection on the pipe. A connection that is no
+// pipe tells nothing of its client, so every question about it fails.
+func peerOf(conn net.Conn, disks stateDisks) peer {
 	pipe, ok := conn.(interface{ Fd() uintptr })
 	if !ok {
-		return hvservice.Client{}, fmt.Errorf("a connection that is no pipe: %T", conn)
+		return noPeer{fmt.Errorf("a connection that is no pipe: %T", conn)}
 	}
 
-	return hvservice.ClientOf(windows.Handle(pipe.Fd()))
+	return pipePeer{pipe: windows.Handle(pipe.Fd()), disks: disks}
 }
+
+func (p pipePeer) client() (hvservice.Client, error) { return hvservice.ClientOf(p.pipe) }
+
+func (p pipePeer) stateDisk(id string, handle uint64) (stateDisk, error) {
+	return p.disks.take(p.pipe, id, handle)
+}
+
+func (p pipePeer) console(name string) (console, error) {
+	h, err := hvservice.MakeConsole(name, hvservice.ConsoleSDDL)
+	if err != nil {
+		return console{}, err
+	}
+
+	return console{
+		give:  func() (uint64, error) { return give(p.pipe, h) },
+		close: func() error { return windows.CloseHandle(h) },
+	}, nil
+}
+
+// noPeer is the peer of a connection that tells nothing of its client.
+type noPeer struct{ err error }
+
+func (p noPeer) client() (hvservice.Client, error) { return hvservice.Client{}, p.err }
+
+func (p noPeer) stateDisk(string, uint64) (stateDisk, error) { return stateDisk{}, p.err }
+
+func (p noPeer) console(string) (console, error) { return console{}, p.err }

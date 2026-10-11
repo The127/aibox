@@ -2,7 +2,7 @@
 // aibox talks to it in. The Host Compute Service serves only
 // Administrators, so the service, which runs as SYSTEM, makes the VMs for
 // the person who runs aibox. It boots a kernel and a root disk of its own
-// and touches no path of that person: aibox serves the folders and builds
+// and takes no path from that person: aibox serves the folders and builds
 // the kernel command line itself.
 package hvservice
 
@@ -34,6 +34,7 @@ var maxMessage = func() int {
 		MemoryMiB: math.MinInt,
 		CPUs:      math.MinInt,
 		Cmdline:   strings.Repeat("\x00", MaxCmdline),
+		State:     math.MaxUint64,
 	}})
 	if err != nil {
 		panic(err)
@@ -56,10 +57,14 @@ const (
 	OpCreate Op = "create"
 	// OpStart starts the VM of the connection.
 	OpStart Op = "start"
+	// OpStop ends the VM of the connection, and is answered once it is
+	// gone, which closing the connection, which ends it too, can't tell.
+	OpStop Op = "stop"
 )
 
 // Request is a message from aibox to the service. A connection is for one
-// VM: aibox creates it, starts it, and ends it by closing the connection.
+// VM: aibox creates it, starts it, and ends it with OpStop or by closing
+// the connection.
 type Request struct {
 	Op Op `json:"op"`
 	// Create is the VM to create, for OpCreate.
@@ -76,6 +81,13 @@ type Create struct {
 	// Cmdline is the kernel command line, which tells the guest where to
 	// find what aibox serves it over Hyper-V sockets.
 	Cmdline string `json:"cmdline"`
+	// State is the handle of the state disk, open in aibox, as its number.
+	// The service copies the handle out of aibox's process rather than
+	// take a path: a handle is a file aibox could open, whatever a path
+	// might name by the time the service looked. aibox opens the file for
+	// its attributes and its security, which the service's checks read,
+	// and not for its data, which Hyper-V opens it for, and shares all.
+	State uint64 `json:"state"`
 }
 
 // Reply is the answer of the service to a request.
@@ -83,11 +95,14 @@ type Reply struct {
 	// Error says why the service refused the request, or is empty. The
 	// service sets it with Refusal.
 	Error string `json:"error,omitempty"`
-	// RuntimeID and ConsolePipe answer OpCreate: the VM's address for
-	// Hyper-V sockets, and the pipe the service connects its console to,
-	// which aibox listens on before it starts the VM.
-	RuntimeID   string `json:"runtimeId,omitempty"`
-	ConsolePipe string `json:"consolePipe,omitempty"`
+	// RuntimeID and Console answer OpCreate: the VM's address for Hyper-V
+	// sockets, and the handle, in aibox's process, of the pipe the service
+	// made for the VM's console. Hyper-V connects the VM to the pipe as it
+	// starts, and aibox waits for that on the handle, which is its to
+	// close. No name of the pipe goes over the protocol: a name could be
+	// anyone's, a handle is the service's own.
+	RuntimeID string `json:"runtimeId,omitempty"`
+	Console   uint64 `json:"console,omitempty"`
 }
 
 // Refusal is the reply that says why the service refused a request, its

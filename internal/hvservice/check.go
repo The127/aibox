@@ -28,9 +28,9 @@ func (r Request) Check() error {
 		}
 
 		return nil
-	case OpStart:
+	case OpStart, OpStop:
 		if r.Create != nil {
-			return fmt.Errorf("%w: start with a VM to create", ErrBadRequest)
+			return fmt.Errorf("%w: %s with a VM to create", ErrBadRequest, r.Op)
 		}
 
 		return nil
@@ -58,6 +58,11 @@ func (c Create) Check(host Host) error {
 	// the kernel takes the command line as a C string
 	if strings.ContainsRune(c.Cmdline, 0) {
 		return fmt.Errorf("%w: a kernel command line with a NUL, where the kernel would end it", ErrBadRequest)
+	}
+
+	// the guest doesn't run without its state disk, and no handle is 0
+	if c.State == 0 {
+		return fmt.Errorf("%w: no state disk", ErrBadRequest)
 	}
 
 	return nil

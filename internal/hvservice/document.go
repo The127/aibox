@@ -34,15 +34,22 @@ var sidPattern = regexp.MustCompile(`^S-1-[0-9]+(-[0-9]+)+$`)
 
 // Document describes the VM to the Host Compute Service: booted from the
 // installation with the client's kernel command line, its console on the
-// pipe, and the client let listen on its Hyper-V sockets, over which it
-// serves the guest its folders. No path of the client is in it. Every
-// word of the command line is the client's to choose, as the guest is
-// the client's own, and the root disk is read-only. The service names
-// the console pipe itself, never after the request: HCS connects to it
-// as the VM. Document refuses a VM that doesn't pass Check.
-func (c Create) Document(host Host, install Install, consolePipe string, clientSIDs []string) (hcs.Document, error) {
+// pipe, its state disk at the path, and the client let listen on its
+// Hyper-V sockets, over which it serves the guest its folders. The state
+// path is the only one of the client's in it, and the service reads it
+// from the handle the client sent, never from the request. Every word of
+// the command line is the client's to choose, as the guest is the
+// client's own, and the root disk is read-only. The console pipe is one
+// the service named and made itself, never after the request: HCS
+// connects to it as the VM. Document refuses a VM that doesn't pass
+// Check.
+func (c Create) Document(host Host, install Install, consolePipe, state string, clientSIDs []string) (hcs.Document, error) {
 	if err := c.Check(host); err != nil {
 		return hcs.Document{}, err
+	}
+
+	if state == "" {
+		return hcs.Document{}, fmt.Errorf("%w: no state disk", ErrBadRequest)
 	}
 
 	bind, err := socketSDDL(clientSIDs)
@@ -68,8 +75,10 @@ func (c Create) Document(host Host, install Install, consolePipe string, clientS
 			},
 			Devices: hcs.Devices{
 				ComPorts: map[string]hcs.ComPort{"0": {NamedPipe: consolePipe}},
+				// the guest finds the state disk at LUN 1
 				Scsi: map[string]hcs.Scsi{"0": {Attachments: map[string]hcs.Attachment{
 					"0": {Type: hcs.AttachmentVirtualDisk, Path: install.Rootfs, ReadOnly: true},
+					"1": {Type: hcs.AttachmentVirtualDisk, Path: state},
 				}}},
 				HvSocket: &hcs.HvSocket{HvSocketConfig: hcs.HvSocketConfig{
 					DefaultBindSecurityDescriptor: bind,

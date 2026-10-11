@@ -2,9 +2,9 @@ package hvservice
 
 import "github.com/Microsoft/go-winio/pkg/guid"
 
-// ConsolePipe is the pipe the console of the VM of the id goes to. The
-// service picks the id, a new GUID for each VM, so that no one can name a
-// pipe of theirs for the VM to write its console to.
+// ConsolePipe is the pipe the console of the VM of the id goes to, which
+// the service makes before the VM, as MakeConsole does: Hyper-V makes a
+// pipe that isn't there itself, as its own, which aibox couldn't read.
 func ConsolePipe(id guid.GUID) string {
 	return `\\.\pipe\aibox-console-` + id.String()
 }

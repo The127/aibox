@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -67,8 +68,8 @@ func (v *fakeVM) stopCount() int {
 	return v.stops
 }
 
-func terminal() *watched {
-	return &watched{connected: make(chan struct{}), ended: make(chan struct{}), again: make(chan struct{})}
+func terminal() *host.Watched {
+	return &host.Watched{Connected: make(chan struct{}), Ended: make(chan struct{}), Again: make(chan struct{})}
 }
 
 func quick() Backend {
@@ -108,7 +109,7 @@ func TestWaitLetsAConnectedGuestTakeLongerThanTheBoot(t *testing.T) {
 	b := quick()
 	b.BootTimeout = 50 * time.Millisecond
 	w := terminal()
-	close(w.connected)
+	close(w.Connected)
 
 	time.AfterFunc(200*time.Millisecond, func() { v.set(vz.VirtualMachineStateStopped) })
 
@@ -140,8 +141,8 @@ func TestWaitStopsAVMThatStaysUpAfterItsSession(t *testing.T) {
 	b := quick()
 	b.PowerOffWait = 50 * time.Millisecond
 	w := terminal()
-	close(w.connected)
-	close(w.ended)
+	close(w.Connected)
+	close(w.Ended)
 
 	// act
 	err := b.wait(context.Background(), v, w)
@@ -157,8 +158,8 @@ func TestAVMThatStoppedByItselfIsNoErrorWhenATimerComesFirst(t *testing.T) {
 	b := quick()
 	b.PowerOffWait = time.Millisecond
 	w := terminal()
-	close(w.connected)
-	close(w.ended)
+	close(w.Connected)
+	close(w.Ended)
 
 	// the VM stopped, but wait sees the timer before the state
 	v.mu.Lock()
@@ -189,8 +190,8 @@ func TestWaitStopsAGuestThatStartedOver(t *testing.T) {
 	// arrange
 	v := newFakeVM()
 	w := terminal()
-	close(w.connected)
-	close(w.again)
+	close(w.Connected)
+	close(w.Again)
 
 	// act
 	err := quick().wait(context.Background(), v, w)

@@ -104,7 +104,9 @@ the project and the state disk can be written to.
 The kernel has no modules, no network drivers, no `bpf()` syscall, no ftrace
 and no kprobes. The kernel QEMU boots on amd64 has no PCI and no ACPI either.
 The arm64 kernel has them. The amd64 image also carries `vmlinuz-hyperv`, a
-kernel for Hyper-V on Windows, which needs both; Linux never boots it.
+kernel for Hyper-V on Windows, which needs both; Linux never boots it. On
+Windows the shares are 9p, served by aibox itself, which enforces the
+read-only ones as virtio-fs does elsewhere.
 
 ### The network
 
@@ -117,6 +119,25 @@ address, CID 3, and no other process on your machine can connect to it.
 
 On macOS aibox owns the VM, and only the process that owns a VM can reach
 its vsock. So it doesn't need a namespace.
+
+On Windows the VM's sockets are Hyper-V sockets, and the service that makes
+the VM lets only your user listen on them. Connecting into the VM stays
+with administrators, and nothing does it.
+
+### The Windows service
+
+Hyper-V serves only administrators, so on Windows a service that runs as
+SYSTEM makes the VMs. It is the one part of aibox with more rights than
+you, and it keeps them to itself: it boots its own copy of the kernel and
+the root disk, from a folder only administrators can change, and takes no
+path from you. [How it works](usage.md#how-it-works-1) says what it takes
+instead. The VM gets at one file of yours, the state disk, only after the
+service checked that you may write it, and only until the VM is gone: the
+entry on the file is for an account of that one VM, which goes with it. A
+VM may have as much memory and as many processors as the machine has,
+and all VMs together no more memory than that. What the service refuses,
+it says; what fails inside it goes to the Application event log, not to
+you.
 
 ### The host side
 

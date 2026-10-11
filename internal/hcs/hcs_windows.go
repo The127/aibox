@@ -371,19 +371,28 @@ type Summary struct {
 	State string `json:"State"`
 }
 
-// Enumerate lists every compute system of the service, whoever owns it.
-func Enumerate(ctx context.Context) ([]Summary, error) {
+// Enumerate lists the compute systems of the owner, the Owner of their
+// Document, which is how a program finds the VMs it left behind.
+func Enumerate(ctx context.Context, owner string) ([]Summary, error) {
 	if err := load(); err != nil {
 		return nil, err
 	}
 
-	// the query selects nothing, which lists everything
-	query, err := utf16("{}")
+	what := "list the compute systems of " + owner
+
+	q, err := json.Marshal(struct {
+		Owners []string `json:"Owners"`
+	}{[]string{owner}})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", what, err)
+	}
+
+	query, err := utf16(string(q))
 	if err != nil {
 		return nil, err
 	}
 
-	doc, err := run(ctx, "list the compute systems", func(op operation) uintptr {
+	doc, err := run(ctx, what, func(op operation) uintptr {
 		hresult, _, _ := procEnumerateComputeSystems.Call(
 			uintptr(unsafe.Pointer(query)), //nolint:gosec // the string is handed to the call as the ABI asks
 			uintptr(op))
@@ -396,7 +405,7 @@ func Enumerate(ctx context.Context) ([]Summary, error) {
 
 	var systems []Summary
 	if err := json.Unmarshal([]byte(doc), &systems); err != nil {
-		return nil, fmt.Errorf("read the list of compute systems: %w: %s", err, doc)
+		return nil, fmt.Errorf("read the list of compute systems of %s: %w: %s", owner, err, doc)
 	}
 
 	return systems, nil

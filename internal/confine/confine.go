@@ -104,8 +104,8 @@ func landlock(ports []uint16, on restrict) error {
 	// aibox has to signal its children, which are outside the domain, so
 	// the signal scope stays off
 	attr := unix.LandlockRulesetAttr{
-		Access_fs:  fileAccess(abi),
-		Access_net: unix.LANDLOCK_ACCESS_NET_CONNECT_TCP | unix.LANDLOCK_ACCESS_NET_BIND_TCP,
+		Handled_access_fs:  fileAccess(abi),
+		Handled_access_net: unix.LANDLOCK_ACCESS_NET_CONNECT_TCP | unix.LANDLOCK_ACCESS_NET_BIND_TCP,
 	}
 
 	if abi >= abiScopes {

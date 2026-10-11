@@ -37,7 +37,9 @@ func sshHome(t *testing.T, hosts ...string) string {
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "known_hosts"), []byte(lines), 0o600))
 
+	// USERPROFILE, which Windows and its ssh take the home from
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("SSH_AUTH_SOCK", "")
 
 	return dir

@@ -27,7 +27,8 @@ func helper(t *testing.T, script string) {
 func TestLoginForAsksTheCredentialHelperOfTheHost(t *testing.T) {
 	// arrange
 	asked := filepath.Join(t.TempDir(), "asked")
-	helper(t, "cat > "+asked+"; echo username=someone; echo password=the-token")
+	// with slashes, as the backslashes of Windows are escapes in the config
+	helper(t, "cat > "+filepath.ToSlash(asked)+"; echo username=someone; echo password=the-token")
 
 	// act
 	login, err := gitconfig.LoginFor(context.Background(), "github.com/owner/repo")

@@ -70,6 +70,21 @@ dependenciesRules:
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
+  # hvlaunch runs the VM on Hyper-V through the service, and reaches the
+  # service only as any client does
+  - package: '**.internal.hvlaunch$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.backend$'
+        - '**.internal.host$'
+        - '**.internal.machine$'
+        - '**.internal.vm$'
+        - '**.internal.vhd$'
+        - '**.internal.ninefs$'
+        - '**.internal.hvservice$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
   # seatbelt confines aibox on macOS with the sandbox of the system and
   # knows nothing of aibox
   - package: '**.internal.seatbelt$'
@@ -306,6 +321,7 @@ dependenciesRules:
         - '**.internal.vm$'
         - '**.internal.hvinstall$'
         - '**.internal.hvserver$'
+        - '**.internal.hvlaunch$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

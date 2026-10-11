@@ -148,6 +148,35 @@ in the VM, where they stay.
 You can only run one `aibox run` per project at a time on macOS.
 Virtualization.framework locks the state disk while the VM runs.
 
+## On Windows
+
+The VM runs on Hyper-V. The [service](installing.md#windows) of aibox
+starts it for you, because Hyper-V only lets administrators do that; `aibox
+run` itself needs no administrator rights. Windows programs don't run in
+the VM, which runs amd64 Linux.
+
+You can only run one `aibox run` per project at a time on Windows too.
+Hyper-V keeps the state disk open while the VM runs.
+
+The state disk, `state.ext4`, ends in the footer of a VHD on Windows,
+which is the kind of disk Hyper-V attaches. The VM sees the same disk as
+on Linux.
+
+### How it works
+
+aibox asks the service over a named pipe to make a VM with the memory,
+the processors and the kernel command line it wants. The service checks
+them against what the machine has and boots its own copy of the kernel
+and the root disk. It never opens a folder or a file you name: it has
+Windows tell it who you are, and gives the VM the state disk you hold
+open, and nothing else of yours.
+
+Your project, home and mounts are served to the VM by aibox itself, over
+9p on Hyper-V sockets, as you: the VM can do with them what you can, and
+no more. The terminal, the proxy and the console go over the same sockets
+and a pipe that only you and Hyper-V can open. When aibox ends, or is
+killed, the service ends the VM.
+
 ## How it works
 
 The terminal is an SSH session over vsock. Inside the VM, the init runs

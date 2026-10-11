@@ -94,6 +94,15 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # the fence confines a helper to one folder with the sandbox of the
+  # system and knows nothing of aibox
+  - package: '**.internal.fence$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.seatbelt$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
   # hcs talks to the Host Compute Service of Windows and knows nothing of
   # aibox
   - package: '**.internal.hcs$'
@@ -318,6 +327,7 @@ dependenciesRules:
         - '**.internal.filelock$'
         - '**.internal.ide$'
         - '**.internal.clipboard$'
+        - '**.internal.fence$'
         - '**.internal.vm$'
         - '**.internal.hvinstall$'
         - '**.internal.hvserver$'

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/urfave/cli/v3"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/clipboard"
+	"github.com/the127/aibox/internal/fence"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/image"
 	"github.com/the127/aibox/internal/version"
@@ -95,7 +97,7 @@ func NewRootCommand() *cli.Command {
 		stdinIsTerminal: func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
 		stdin:           os.Stdin,
 		lookupEnv:       os.LookupEnv,
-		gitIdentity:     gitconfig.Read,
+		gitIdentity:     func(dir string) gitconfig.Identity { return gitconfig.Read(dir, readOnly) },
 		gitLogin:        gitconfig.LoginFor,
 		sshKeys:         func() (sshKeys, error) { return gitconfig.LoadSSHKeys() },
 		backend:         newBackend(),
@@ -116,9 +118,24 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
-		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), configCommand(deps), clipboardCommand()}, platformCommands(deps)...),
+		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), configCommand(deps), clipboardCommand(), fenceCommand()}, platformCommands(deps)...),
 	}
 }
+
+// fenceCommand is the helper that does the work of aibox in a folder the VM
+// can write, which is not for people to call.
+func fenceCommand() *cli.Command {
+	return &cli.Command{
+		Name:            fence.Name,
+		Hidden:          true,
+		SkipFlagParsing: true,
+		Action:          func(_ context.Context, cmd *cli.Command) error { return fence.Serve(cmd.Args().Slice(), os.Stdin) },
+	}
+}
+
+// readOnly makes the command that runs the program in the helper, which
+// may write nowhere.
+func readOnly(name string, args ...string) *exec.Cmd { return fence.Command("", name, args...) }
 
 func aiboxDir() (string, error) {
 	home, err := os.UserHomeDir()

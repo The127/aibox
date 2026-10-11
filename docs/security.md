@@ -159,6 +159,21 @@ connects over TCP to the ports on the allow list, and to the system's name
 service. It can't start programs or read or signal other processes. Files it
 opened before, like the logs, and the VM keep working.
 
+Before the VM starts, aibox works in folders an earlier VM could write. git
+reads the project's `.git` for your identity and for the bundle of a task.
+With `ide: true` aibox writes the IDE's lock file into the VM's home. A
+symlink the VM left there could lead a write to a file outside. So aibox
+does that work in a helper, a short-lived copy of itself that the kernel
+lets create, change and delete files in one folder only. On Linux that's
+Landlock, on macOS Seatbelt. The kernel checks where a path really leads, so
+a symlink out of the folder can't be written through, by the helper or by a
+program it starts. When git reads `.git` it may write no file. For the
+bundle of a task it may write only in the task's folder in `~/.aibox`. The
+lock file goes into the VM's home. The helper can still read any file you
+can and reach the network. On Linux it can also still change the
+permissions, owner, times and extended attributes of a file outside, since
+Landlock doesn't restrict those.
+
 With the [clipboard](config.md#clipboard) on, aibox starts a helper before
 it locks itself down. The helper isn't locked down, because it has to start
 `osascript`, `wl-paste` or `xclip`. It only reads the clipboard when aibox

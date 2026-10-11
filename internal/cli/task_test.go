@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/fence"
 	"github.com/the127/aibox/internal/filelock"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/task"
@@ -59,7 +60,17 @@ var taskProject struct {
 	err  error
 }
 
+// The test binary is also the helper, since aibox starts itself as one.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == fence.Name {
+		if err := fence.Serve(os.Args[2:], os.Stdin); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		os.Exit(0)
+	}
+
 	code := m.Run()
 
 	if taskProject.dir != "" {

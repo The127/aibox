@@ -10,9 +10,8 @@ import (
 	"github.com/the127/aibox/internal/ninefs"
 )
 
-// direct is the root of a share of the folder with no wire between: the
-// client of the p9 library leaves the fid out of Tlock, where the guest's
-// kernel sends it.
+// direct is the root of a share of the folder with no wire between, for
+// what the p9 library refuses before the server sees it.
 func direct(t *testing.T, dir string) p9.File {
 	t.Helper()
 
@@ -39,7 +38,7 @@ func TestAWriteLockOfOneProcessBlocksAnother(t *testing.T) {
 	t.Parallel()
 
 	// arrange
-	root := direct(t, tree(t))
+	root := mount(t, tree(t))
 	first := opened(t, root, "src", "main.go")
 	second := opened(t, root, "src", "main.go")
 
@@ -59,7 +58,7 @@ func TestAnUnlockLetsTheOtherProcessIn(t *testing.T) {
 	t.Parallel()
 
 	// arrange
-	root := direct(t, tree(t))
+	root := mount(t, tree(t))
 	first := opened(t, root, "src", "main.go")
 	second := opened(t, root, "src", "main.go")
 
@@ -81,7 +80,7 @@ func TestALockHoldsForEveryNameOfTheFile(t *testing.T) {
 	t.Parallel()
 
 	// arrange
-	root := direct(t, tree(t))
+	root := mount(t, tree(t))
 	require.NoError(t, root.Link(walk(t, root, "src", "main.go"), "linked.go"))
 
 	first := opened(t, root, "src", "main.go")

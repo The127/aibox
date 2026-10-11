@@ -681,11 +681,16 @@ func isPort(port string) bool {
 // Ports are the distinct ports of the allow list, ascending. Load has
 // checked every entry, so one that does not parse is left out.
 func (h Hosts) Ports() []uint16 {
+	return h.ports(func(entry) bool { return true })
+}
+
+// ports are the distinct ports of the entries keep accepts, ascending.
+func (h Hosts) ports(keep func(entry) bool) []uint16 {
 	var ports []uint16
 
 	for _, text := range h {
 		e, err := parseEntry(text)
-		if err != nil {
+		if err != nil || !keep(e) {
 			continue
 		}
 
@@ -738,22 +743,7 @@ func checkLoopback(hosts Hosts) error {
 // LoopbackPorts are the distinct ports of the entries on the loopback of
 // the host, ascending. The VM has them on its own loopback.
 func (h Hosts) LoopbackPorts() []uint16 {
-	var ports []uint16
-
-	for _, text := range h {
-		e, err := parseEntry(text)
-		if err != nil || e.loopback() == nil {
-			continue
-		}
-
-		if port, err := strconv.ParseUint(e.port, 10, 16); err == nil {
-			ports = append(ports, uint16(port))
-		}
-	}
-
-	slices.Sort(ports)
-
-	return slices.Compact(ports)
+	return h.ports(func(e entry) bool { return e.loopback() != nil })
 }
 
 // Pinned returns the addresses a name stands for without asking DNS. For

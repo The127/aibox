@@ -128,3 +128,27 @@ func TestWriteReportWithoutSideBand(t *testing.T) {
 	// assert
 	assert.Equal(t, pktLine("unpack ok\n")+pktLine("ng refs/heads/main aibox: no\n")+flush, w.Body.String())
 }
+
+func TestWriteReportCutsALineTooLongForAPktLine(t *testing.T) {
+	// arrange
+	w := httptest.NewRecorder()
+	ref := "refs/heads/" + strings.Repeat("a", maxPktLine)
+
+	// act
+	writeReport(w, []string{"report-status"}, []refusal{{ref, "no"}})
+
+	// assert
+	r := bufio.NewReader(w.Body)
+	_, _, err := readPktLine(r)
+	require.NoError(t, err)
+
+	line, raw, err := readPktLine(r)
+	require.NoError(t, err)
+	assert.Len(t, raw, maxPktLine)
+	assert.True(t, strings.HasPrefix(string(line), "ng refs/heads/aaa"))
+	assert.True(t, strings.HasSuffix(string(line), "a\n"))
+
+	line, _, err = readPktLine(r)
+	require.NoError(t, err)
+	assert.Nil(t, line)
+}

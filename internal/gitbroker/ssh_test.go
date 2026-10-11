@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,9 @@ type testSSHServer struct {
 	// each POST but the one of ls-refs in protocol version 2
 	rounds int
 	refuse bool
+	// stalls is how many sessions the server does not open until the
+	// test ends
+	stalls int
 }
 
 // drop breaks every connection to the server, as a network that went away.
@@ -66,6 +70,8 @@ func newTestSSHServer(t *testing.T, root string, hostKeys ...ssh.Signer) *testSS
 	}
 
 	s := &testSSHServer{hostKeys: hostKeys, client: newEd25519Signer(t)}
+	unstall := make(chan struct{})
+	t.Cleanup(func() { close(unstall) })
 	config := &ssh.ServerConfig{
 		PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if meta.User() != "git" || string(key.Marshal()) != string(s.client.PublicKey().Marshal()) {
@@ -97,14 +103,14 @@ func newTestSSHServer(t *testing.T, root string, hostKeys ...ssh.Signer) *testSS
 			s.conns = append(s.conns, conn)
 			s.mu.Unlock()
 
-			go s.serveConn(conn, config, root)
+			go s.serveConn(conn, config, root, unstall)
 		}
 	}()
 
 	return s
 }
 
-func (s *testSSHServer) serveConn(conn net.Conn, config *ssh.ServerConfig, root string) {
+func (s *testSSHServer) serveConn(conn net.Conn, config *ssh.ServerConfig, root string, unstall <-chan struct{}) {
 	_, channels, requests, err := ssh.NewServerConn(conn, config)
 	if err != nil {
 		_ = conn.Close()
@@ -121,7 +127,18 @@ func (s *testSSHServer) serveConn(conn net.Conn, config *ssh.ServerConfig, root 
 	for newChannel := range channels {
 		s.mu.Lock()
 		refuse := s.refuse
+		stall := s.stalls > 0
+		if stall {
+			s.stalls--
+		}
+
 		s.mu.Unlock()
+
+		if stall {
+			<-unstall
+
+			continue
+		}
 
 		if refuse {
 			_ = newChannel.Reject(ssh.ResourceShortage, "too many sessions")
@@ -235,10 +252,8 @@ func knownHosts(t *testing.T, keys ...ssh.PublicKey) (ssh.HostKeyCallback, []str
 	return gitconfig.NewHostKeyCheck(check), algorithms
 }
 
-// broker returns a broker that reaches the SSH server for example.com.
-func (s *testSSHServer) broker(t *testing.T, remote Remote) (string, *safeWriter) {
-	t.Helper()
-
+// newBroker returns a broker that reaches the SSH server for example.com.
+func (s *testSSHServer) newBroker(remote Remote) (*broker, *safeWriter) {
 	log := &safeWriter{w: new(bytes.Buffer)}
 	b := newBroker([]Remote{remote}, nil, nil, log)
 	b.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -248,6 +263,15 @@ func (s *testSSHServer) broker(t *testing.T, remote Remote) (string, *safeWriter
 
 		return (&net.Dialer{}).DialContext(ctx, network, s.address)
 	}
+
+	return b, log
+}
+
+// broker serves a broker that reaches the SSH server for example.com.
+func (s *testSSHServer) broker(t *testing.T, remote Remote) (string, *safeWriter) {
+	t.Helper()
+
+	b, log := s.newBroker(remote)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -555,6 +579,63 @@ func TestBrokerLogsInAgainWhenTheConnectionBroke(t *testing.T) {
 
 	// assert
 	require.NoError(t, err, out)
+
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	assert.Equal(t, 2, server.logins)
+}
+
+func TestBrokerKeepsTheSessionsOfAConnectionThatStalled(t *testing.T) {
+	// arrange
+	timeout := sessionTimeout
+	sessionTimeout = time.Second
+	t.Cleanup(func() { sessionTimeout = timeout })
+
+	s := newServer(t)
+	s.repository(t, "owner/repo")
+	server := newTestSSHServer(t, s.root)
+	remote := server.remote(t)
+	b, _ := server.newBroker(remote)
+
+	first, done, err := b.session(t.Context(), remote)
+	require.NoError(t, err)
+
+	stalled := b.sshServers[remote.Name].conn.client
+
+	server.mu.Lock()
+	server.stalls = 1
+	server.mu.Unlock()
+
+	// act
+	_, doneSecond, err := b.session(t.Context(), remote)
+
+	// assert
+	require.NoError(t, err)
+	doneSecond()
+
+	out, _ := first.Output("git-upload-pack 'owner/repo.git'")
+	assert.Contains(t, string(out), "refs/heads/")
+
+	closed := make(chan struct{})
+	go func() {
+		_ = stalled.Wait()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		t.Fatal("the connection closed while a session still used it")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	done()
+
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the connection stayed open after its last session ended")
+	}
 
 	server.mu.Lock()
 	defer server.mu.Unlock()

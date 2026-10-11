@@ -25,9 +25,10 @@ You can also mount other folders into the VM, read-only.
 With `aibox run`, the VM connects to your machine like this:
 
 ```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 60}}}%%
 flowchart LR
   subgraph vm["VM"]
-    claude["Claude Code"]
+    claude["<br><br>Claude Code<br><br>"]
   end
   subgraph machine["Your machine"]
     terminal["Your terminal"]
@@ -45,7 +46,7 @@ flowchart LR
   claude <-->|"virtio-fs"| project
   claude ---|"virtio-fs, read-only"| mounts
   claude <-->|"vsock"| proxy
-  proxy --> hosts
+  proxy ---> hosts
   proxy --> broker
   broker -->|"your git login"| repos
 ```

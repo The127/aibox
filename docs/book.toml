@@ -9,3 +9,7 @@ build-dir = "book"
 
 [output.html]
 git-repository-url = "https://github.com/The127/aibox"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

@@ -12,6 +12,7 @@
     just
     lefthook
     mdbook
+    mdbook-mermaid
     reuse
     # go test -race needs a C compiler
     gcc

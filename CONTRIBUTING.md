@@ -16,6 +16,8 @@ Required tooling:
   copyright information.
 - [mdBook](https://rust-lang.github.io/mdBook/): builds the documentation
   site in `docs/`, run by `just docs`.
+- [mdbook-mermaid](https://github.com/badboy/mdbook-mermaid): draws the
+  Mermaid diagrams in the documentation site.
 
 All of them are in `devenv.nix`. With nix, devenv and direnv installed,
 `direnv allow` puts them on `PATH` in this folder. aibox takes them into its

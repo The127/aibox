@@ -4,6 +4,23 @@ A task is a job Claude Code does on its own while you do something else. It
 runs in a fresh VM on a clone of the last commit. When it's done, you get its
 commits back as a git bundle to review, and the VM is deleted.
 
+```mermaid
+sequenceDiagram
+  participant You
+  participant aibox
+  participant VM
+  You->>aibox: aibox task "prompt"
+  aibox->>aibox: bundle the start commit
+  aibox->>VM: prompt and bundle, read-only
+  VM->>VM: clone the bundle onto aibox/task
+  VM->>VM: Claude Code works and commits
+  VM->>aibox: changes.bundle and results
+  Note over VM: deleted
+  aibox->>aibox: check the bundle
+  aibox->>You: fetch command
+  You->>You: fetch into a branch and review
+```
+
 ```
 aibox task --model sonnet "fix the flaky test in internal/proxy"
 ```

@@ -142,6 +142,7 @@ kernel-config:
 
 # build the documentation site into docs/book
 docs:
+    mdbook-mermaid install docs
     mdbook build docs
 
 # install the git hooks

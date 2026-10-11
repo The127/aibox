@@ -59,7 +59,11 @@ var tools = map[string]tool{
 			return true
 		},
 	},
-	"closeAllDiffTabs": {fit: func(*filter, message) bool { return true }},
+	"closeAllDiffTabs": {fit: func(f *filter, _ message) bool {
+		clear(f.tabs)
+
+		return true
+	}},
 	"getDiagnostics": {
 		args: []string{"uri"},
 		fit: func(f *filter, args message) bool {

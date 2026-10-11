@@ -255,6 +255,23 @@ func TestFilterClosesOnlyTabsTheVMOpened(t *testing.T) {
 	assert.JSONEq(t, outside, string(reply))
 }
 
+func TestFilterForgetsTheTabsOfTheVMWhenAllDiffTabsClose(t *testing.T) {
+	// arrange
+	_, f := project(t)
+	_, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":"/project/main.go","new_file_path":"/project/main.go","new_file_contents":"","tab_name":"mine"}}}`))
+	require.NoError(t, err)
+	_, _, err = f.toIDE([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"closeAllDiffTabs","arguments":{}}}`))
+	require.NoError(t, err)
+
+	// act
+	forward, reply, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"close_tab","arguments":{"tab_name":"mine"}}}`))
+
+	// assert
+	require.NoError(t, err)
+	assert.Nil(t, forward)
+	assert.JSONEq(t, outside, string(reply))
+}
+
 func TestFilterTakesThePathOfTheHostOutOfAnError(t *testing.T) {
 	// arrange
 	host, f := project(t)

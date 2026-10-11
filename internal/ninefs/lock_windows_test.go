@@ -96,3 +96,46 @@ func TestALockHoldsForEveryNameOfTheFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, p9.LockStatusBlocked, status)
 }
+
+func TestGetLockNamesTheLockInTheWay(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	root := mount(t, tree(t))
+	first := opened(t, root, "src", "main.go")
+	second := opened(t, root, "src", "main.go")
+
+	_, err := first.Lock(1, p9.WriteLock, 0, 10, 20, "guest")
+	require.NoError(t, err)
+
+	// act
+	typ, start, length, pid, client, err := second.(p9.LockGetter).GetLock(2, p9.ReadLock, 0, 0, "guest")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, p9.WriteLock, typ)
+	assert.Equal(t, uint64(10), start)
+	assert.Equal(t, uint64(20), length)
+	assert.Equal(t, 1, pid)
+	assert.Equal(t, "guest", client)
+}
+
+func TestGetLockAnswersUnlockWhenNothingIsInTheWay(t *testing.T) {
+	t.Parallel()
+
+	// arrange: the owner's own lock is never in its way
+	root := mount(t, tree(t))
+	f := opened(t, root, "src", "main.go")
+
+	_, err := f.Lock(1, p9.WriteLock, 0, 0, 0, "guest")
+	require.NoError(t, err)
+
+	// act
+	typ, start, length, _, _, err := f.(p9.LockGetter).GetLock(1, p9.WriteLock, 5, 1, "guest")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, p9.Unlock, typ)
+	assert.Equal(t, uint64(5), start)
+	assert.Equal(t, uint64(1), length)
+}

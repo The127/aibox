@@ -122,3 +122,22 @@ func TestALockToTheEndOfTheFileDoesNotOverflow(t *testing.T) {
 	assert.Equal(t, uint64(1<<64-1), lockEnd(5, 0))
 	assert.Equal(t, uint64(15), lockEnd(5, 10))
 }
+
+func TestConflictFindsOnlyAnotherOwnersLockThatMatters(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	var table lockTable[string]
+	assert.True(t, table.set("db", alice, true, false, 0, 10))
+
+	// act
+	_, readerBlocked := table.conflict("db", bob, false, 0, 10)
+	l, writerBlocked := table.conflict("db", bob, true, 5, 1)
+	_, selfBlocked := table.conflict("db", alice, true, 0, 10)
+
+	// assert
+	assert.False(t, readerBlocked)
+	assert.True(t, writerBlocked)
+	assert.Equal(t, lockRange{owner: alice, start: 0, end: 10}, l)
+	assert.False(t, selfBlocked)
+}

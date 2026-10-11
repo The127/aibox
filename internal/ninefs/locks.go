@@ -93,3 +93,27 @@ func (t *lockTable[K]) set(file K, owner lockOwner, read, write bool, start, len
 
 	return true
 }
+
+// conflict is a lock of another owner in the way of the owner's lock on
+// the range, if there is one.
+func (t *lockTable[K]) conflict(file K, owner lockOwner, write bool, start, length uint64) (lockRange, bool) {
+	end := lockEnd(start, length)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, l := range t.files[file] {
+		if l.conflicts(owner, write, start, end) {
+			return l, true
+		}
+	}
+
+	return lockRange{}, false
+}
+
+// conflicts tells whether the lock keeps the owner from a lock on the
+// bytes from start up to end: a lock of another owner on some of them,
+// one of the two to write.
+func (l lockRange) conflicts(owner lockOwner, write bool, start, end uint64) bool {
+	return l.owner != owner && l.start < end && start < l.end && (l.write || write)
+}

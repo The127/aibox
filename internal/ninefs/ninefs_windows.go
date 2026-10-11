@@ -308,7 +308,7 @@ func infoOf(h windows.Handle) (p9.QID, fileInfo, error) {
 		info.tag = tag
 	}
 
-	return qidOf(info.FileAttributes, info.tag, uint64(info.FileIndexHigh)<<32|uint64(info.FileIndexLow)), info, nil
+	return qidOf(info.FileAttributes, info.tag, info.id()), info, nil
 }
 
 // fileInfo is what Windows says about a file, with the tag of its reparse
@@ -317,6 +317,11 @@ type fileInfo struct {
 	windows.ByHandleFileInformation
 
 	tag uint32
+}
+
+// id is the file's number on its volume, the same for every name of it.
+func (i fileInfo) id() uint64 {
+	return uint64(i.FileIndexHigh)<<32 | uint64(i.FileIndexLow)
 }
 
 func (i fileInfo) isLink() bool { return isLink(i.FileAttributes, i.tag) }

@@ -88,6 +88,7 @@ type fixture struct {
 	// fails the filters of the network
 	contained  bool
 	networkErr error
+	exemptErr  error
 	client     net.Conn
 	r          *bufio.Reader
 	done       chan struct{}
@@ -106,6 +107,19 @@ func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, 
 		f.calls.add("container " + name)
 
 		return aContainerSID, nil
+	}
+	f.srv.exempt = func(sid string) (func() error, error) {
+		if f.exemptErr != nil {
+			return nil, f.exemptErr
+		}
+
+		f.calls.add("exempt " + sid)
+
+		return func() error {
+			f.calls.add("unexempt " + sid)
+
+			return nil
+		}, nil
 	}
 	f.srv.network = func(sid string, n hvservice.Network) (func() error, error) {
 		if f.networkErr != nil {
@@ -586,11 +600,12 @@ func TestAVMWithANetworkGetsAContainerWhoseFiltersGoWithIt(t *testing.T) {
 	assert.Equal(t, aContainerSID, created.ContainerSID)
 
 	calls := f.calls.all()
-	require.Len(t, calls, 7)
+	require.Len(t, calls, 9)
 	assert.Equal(t, "container "+created.Container, calls[0], "named by the service")
 	assert.Equal(t, "create", calls[1])
 	assert.Equal(t, "filter "+aContainerSID+" [443 22] [63342]", calls[2], "before the reply")
-	assert.Equal(t, []string{"terminate", "close", "unfilter " + aContainerSID, "revoke"}, calls[3:], "and gone with the VM")
+	assert.Equal(t, "exempt "+aContainerSID, calls[3], "the loopback too, as it has a port there")
+	assert.Equal(t, []string{"terminate", "close", "revoke", "unexempt " + aContainerSID, "unfilter " + aContainerSID}, calls[4:], "and gone with the connection, after the VM")
 
 	require.Len(t, f.docs, 1)
 	bind := f.docs[0].VirtualMachine.Devices.HvSocket.HvSocketConfig.DefaultBindSecurityDescriptor
@@ -642,4 +657,57 @@ func TestAClientInAContainerGetsNoNetworkForAnother(t *testing.T) {
 	// assert
 	assert.Contains(t, created.Error, "AppContainer")
 	assert.Empty(t, f.calls.all(), "no VM was made")
+}
+
+func TestAContainerWithoutLoopbackPortsStaysOffTheLoopback(t *testing.T) {
+	// arrange
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+
+	// act
+	created := f.ask(t, `{"op":"create","create":{"memoryMiB":2048,"cpus":2,"cmdline":"console=ttyS0","state":420,"network":{"ports":[443]}}}`)
+	f.hangUp()
+
+	// assert
+	require.Empty(t, created.Error)
+
+	for _, call := range f.calls.all() {
+		assert.NotContains(t, call, "exempt")
+	}
+}
+
+func TestAVMWhoseContainerCantReachTheLoopbackIsEnded(t *testing.T) {
+	// arrange
+	f := newFixture(t, nil)
+	f.exemptErr = errors.New("the firewall said no")
+	f.serve(t.Context(), t)
+
+	// act
+	created := f.ask(t, networkLine)
+
+	// assert
+	assert.NotEmpty(t, created.Error)
+	assert.Contains(t, f.calls.all(), "unfilter "+aContainerSID, "its filters go with it")
+	assert.Zero(t, f.srv.ledger.used)
+}
+
+func TestTheFiltersOfAContainerOutliveAStopOfItsVM(t *testing.T) {
+	// arrange: aibox stops the VM, while the helper in the container may
+	// still run
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+
+	created := f.ask(t, networkLine)
+	require.Empty(t, created.Error)
+
+	// act
+	stopped := f.ask(t, `{"op":"stop"}`)
+
+	// assert
+	require.Empty(t, stopped.Error)
+	assert.Contains(t, f.calls.all(), "terminate")
+	assert.NotContains(t, f.calls.all(), "unfilter "+aContainerSID, "the helper may still run")
+
+	f.hangUp()
+	assert.Contains(t, f.calls.all(), "unfilter "+aContainerSID, "gone with the connection")
 }

@@ -80,6 +80,12 @@ func serve(ctx context.Context, ready func(), logf func(format string, args ...a
 	// before the pipe, so that it ends none of this service's VMs
 	sweep(ctx, leftBehind, endVM, logf)
 
+	// the containers of VMs a service that crashed left on the loopback
+	exempt := newExemptions()
+	if err := exempt.sweep(); err != nil {
+		logf("take the containers of earlier VMs off the loopback: %v", err)
+	}
+
 	l, err := listen(hvservice.PipeName, hvservice.PipeSDDL)
 	if err != nil {
 		return err
@@ -93,6 +99,7 @@ func serve(ctx context.Context, ready func(), logf func(format string, args ...a
 
 		containerSID: hvservice.ContainerSID,
 		network:      filterNetwork,
+		exempt:       exempt.exempt,
 	}
 
 	ready()

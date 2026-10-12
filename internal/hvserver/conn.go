@@ -60,20 +60,27 @@ type server struct {
 	// returns is called
 	containerSID func(name string) (string, error)
 	network      func(sid string, n hvservice.Network) (func() error, error)
+	// exempt lets the container of a SID reach the loopback, until the
+	// function it returns is called
+	exempt func(sid string) (func() error, error)
 }
 
 // errOutOfTurn is a request that comes when the VM of the connection
 // can't do it: a second create, or a start before a create or after one.
 var errOutOfTurn = fmt.Errorf("%w: out of turn", hvservice.ErrBadRequest)
 
-// session is the VM of one connection, from its create to its end.
+// session is the VM of one connection, from its create to its end, and
+// what its container may reach, until the connection ends.
 type session struct {
 	vm      vm
 	disk    stateDisk
 	release func()
 	started bool
-	// unfilter takes the network of the VM's container away, or is nil
-	unfilter func() error
+	// unnetwork take the network and the loopback away from the containers
+	// of the connection's VMs, last first. They outlive the VM: aibox ends
+	// the helper in the container after the VM, and the connection after
+	// the helper, so that the helper is never left without its filters.
+	unnetwork []func() error
 }
 
 // serve answers the requests of one connection, from the peer p, and
@@ -84,7 +91,11 @@ func (s *server) serve(ctx context.Context, conn io.ReadWriter, p peer) {
 	r := hvservice.NewReader(conn)
 
 	var sess session
-	defer s.end(ctx, &sess)
+
+	defer func() {
+		s.end(ctx, &sess)
+		s.unnetwork(&sess)
+	}()
 
 	for {
 		// a new value, so that nothing of one request is taken for the next
@@ -256,10 +267,30 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 
 	// before the reply, after which aibox starts its helper in the container
 	if c.Network != nil {
-		if sess.unfilter, err = s.network(containerSID, *c.Network); err != nil {
+		// a create that fails has no helper, whose container goes at once
+		fail := func(err error) (hvservice.Reply, error) {
 			s.end(ctx, sess)
+			s.unnetwork(sess)
 
-			return hvservice.Reply{}, fmt.Errorf("filter the network of the container: %w", err)
+			return hvservice.Reply{}, err
+		}
+
+		unfilter, err := s.network(containerSID, *c.Network)
+		if err != nil {
+			return fail(fmt.Errorf("filter the network of the container: %w", err))
+		}
+
+		sess.unnetwork = append(sess.unnetwork, unfilter)
+
+		// Windows keeps a container from the loopback whatever the filters
+		// let it, but for those on a list of the machine
+		if len(c.Network.Loopback) > 0 {
+			unexempt, err := s.exempt(containerSID)
+			if err != nil {
+				return fail(fmt.Errorf("let the container reach the loopback: %w", err))
+			}
+
+			sess.unnetwork = append(sess.unnetwork, unexempt)
 		}
 
 		// the counts, as the ports could be more than an event holds
@@ -335,15 +366,21 @@ func (s *server) end(ctx context.Context, sess *session) {
 		s.logf("let go of a VM: %v", err)
 	}
 
-	if sess.unfilter != nil {
-		if err := sess.unfilter(); err != nil {
+	s.revoke(sess.disk)
+	sess.release()
+	*sess = session{unnetwork: sess.unnetwork}
+}
+
+// unnetwork takes the network and the loopback away from the containers
+// of the session, once their helpers are gone.
+func (s *server) unnetwork(sess *session) {
+	for i := len(sess.unnetwork) - 1; i >= 0; i-- {
+		if err := sess.unnetwork[i](); err != nil {
 			s.logf("take the network of a container away: %v", err)
 		}
 	}
 
-	s.revoke(sess.disk)
-	sess.release()
-	*sess = session{}
+	sess.unnetwork = nil
 }
 
 // revoke takes the VM's access to the state disk away, once the VM is

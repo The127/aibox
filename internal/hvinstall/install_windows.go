@@ -60,6 +60,12 @@ func Install(image string) error {
 		return err
 	}
 
+	// before the key of the service goes, and the record of the containers
+	// with it, which the stopped service may have left on the loopback
+	if err := hvserver.SweepLoopback(); err != nil {
+		return fmt.Errorf("take the containers of the service off the loopback: %w", err)
+	}
+
 	exe, err := installExe()
 	if err != nil {
 		return err

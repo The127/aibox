@@ -1,6 +1,13 @@
 package hvservice
 
-import "github.com/Microsoft/go-winio/pkg/guid"
+import (
+	"strings"
+
+	"github.com/Microsoft/go-winio/pkg/guid"
+)
+
+// containerPrefix starts the name of each container of the service.
+const containerPrefix = "aibox."
 
 // ContainerName is the name of the AppContainer of the id, which the
 // service makes for the container alone and tells only the client: the
@@ -8,5 +15,18 @@ import "github.com/Microsoft/go-winio/pkg/guid"
 // learn, such as that of the VM, would be a container others could start
 // programs in too.
 func ContainerName(id guid.GUID) string {
-	return "aibox." + id.String()
+	return containerPrefix + id.String()
+}
+
+// IsContainerName is whether the name is one ContainerName gives, in any
+// case, as Windows keeps the names of containers in lower case.
+func IsContainerName(name string) bool {
+	id, ok := strings.CutPrefix(strings.ToLower(name), containerPrefix)
+	if !ok {
+		return false
+	}
+
+	parsed, err := guid.FromString(id)
+
+	return err == nil && parsed.String() == id
 }

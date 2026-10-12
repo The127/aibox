@@ -874,11 +874,16 @@ func normalize(host string) string {
 }
 
 // AddPresets adds an entry for each preset to the allow list of the config
-// in content, after its last entry and with its indent. It changes no other
-// line, so that the comments stay as they are. It returns ErrNoAllowList
-// when the list isn't one entry per line, and checks the result as Load
-// would.
+// in content, after its last entry, with its indent and its line ending. It
+// changes no other line, so that the comments stay as they are. It returns
+// ErrNoAllowList when the list isn't one entry per line, which it sees
+// when the result doesn't allow exactly what content did and the presets.
 func AddPresets(content []byte, names []string) ([]byte, error) {
+	before, err := parse(content)
+	if err != nil {
+		return nil, err
+	}
+
 	var doc yaml.Node
 	if err := yaml.Unmarshal(content, &doc); err != nil {
 		return nil, err
@@ -890,22 +895,40 @@ func AddPresets(content []byte, names []string) ([]byte, error) {
 	}
 
 	lines := strings.SplitAfter(string(content), "\n")
+	if last.Line > len(lines) {
+		return nil, ErrNoAllowList
+	}
+
 	at := lines[last.Line-1]
 	indent := at[:len(at)-len(strings.TrimLeft(at, " "))]
 
+	ending := "\n"
+	if strings.HasSuffix(at, "\r\n") {
+		ending = "\r\n"
+	}
+
 	if !strings.HasSuffix(at, "\n") {
-		lines[last.Line-1] += "\n"
+		lines[last.Line-1] += ending
 	}
 
 	added := make([]string, 0, len(names))
+	entries := slices.Clone(before.Allow)
+
 	for _, name := range names {
-		added = append(added, indent+"- preset:"+name+"\n")
+		added = append(added, indent+"- preset:"+name+ending)
+		entries = append(entries, "preset:"+name)
+	}
+
+	want, err := expand(entries)
+	if err != nil {
+		return nil, err
 	}
 
 	text := strings.Join(slices.Insert(lines, last.Line, added...), "")
 
-	if _, err := parse([]byte(text)); err != nil {
-		return nil, err
+	after, err := parse([]byte(text))
+	if err != nil || !slices.Equal(after.Allow, want) {
+		return nil, ErrNoAllowList
 	}
 
 	return []byte(text), nil

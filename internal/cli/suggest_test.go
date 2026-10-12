@@ -119,3 +119,25 @@ func TestSuggestTakesOnlyPlainFiles(t *testing.T) {
 	assert.Contains(t, f.stderr.String(), "aibox: nothing to suggest")
 	assert.Contains(t, f.stderr.String(), "go.mod, go.work, ")
 }
+
+func TestSuggestKeepsAConfigThatIsALink(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.projectFile(t, "go.mod")
+	config := f.project(t).Config
+	dotfiles := filepath.Join(t.TempDir(), "aibox.yaml")
+	require.NoError(t, os.WriteFile(dotfiles, []byte("allow:\n  - api.anthropic.com\n"), 0o600))
+	symlink(t, dotfiles, config)
+
+	// act
+	err := f.suggest("y\n")
+
+	// assert
+	require.NoError(t, err)
+	info, err := os.Lstat(config)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the link stays")
+	written, err := os.ReadFile(dotfiles) //nolint:gosec // a temp file of the test
+	require.NoError(t, err)
+	assert.Equal(t, "allow:\n  - api.anthropic.com\n  - preset:go\n", string(written))
+}

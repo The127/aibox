@@ -102,7 +102,9 @@ aibox config suggest
 
 aibox looks at the names of the files in the folder and suggests the
 presets they point to. It shows the hosts of each preset and asks before
-it adds them to `allow`. Start aibox again for them to apply.
+it adds them to `allow`. Start aibox again for them to apply. Without a
+terminal to ask, or when `allow` isn't a list with one entry per line, it
+only prints the lines to add with `aibox config edit`.
 
 | Preset | Files |
 |---|---|

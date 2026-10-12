@@ -161,8 +161,14 @@ func printPresets(deps dependencies, names []string) error {
 }
 
 // replaceFile writes content to a new file beside path and puts it in
-// path's place in one step, so that no aibox reads it half written.
+// path's place in one step, so that no aibox reads it half written. A link
+// at path, such as into a folder of dotfiles, stays and gets the new file.
 func replaceFile(path string, content []byte) error {
+	path, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+"-*")
 	if err != nil {
 		return err

@@ -152,17 +152,52 @@ func TestAddPresetsToAListAtTheEnd(t *testing.T) {
 	assert.Equal(t, "memory: 4096\nallow:\n- example.com\n- preset:go\n", string(added))
 }
 
+func TestAddPresetsKeepsTheLineEndingsAndComments(t *testing.T) {
+	// arrange
+	tests := map[string]struct{ content, want string }{
+		"windows line endings": {
+			"allow:\r\n  - example.com\r\n",
+			"allow:\r\n  - example.com\r\n  - preset:go\r\n",
+		},
+		"a comment on the last entry": {
+			"allow:\n  - example.com # mine\n",
+			"allow:\n  - example.com # mine\n  - preset:go\n",
+		},
+		"a comment after the list": {
+			"allow:\n  - example.com\n# memory: 4096\n",
+			"allow:\n  - example.com\n  - preset:go\n# memory: 4096\n",
+		},
+		"a quoted last entry": {
+			"allow:\n  - \"*.example.com\"\n",
+			"allow:\n  - \"*.example.com\"\n  - preset:go\n",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// act
+			added, err := AddPresets([]byte(test.content), []string{"go"})
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, test.want, string(added))
+		})
+	}
+}
+
 func TestAddPresetsRefusesAListOfAnotherForm(t *testing.T) {
 	// arrange
 	tests := map[string]string{
-		"no list":              "memory: 4096\n",
-		"an empty list":        "allow:\n",
-		"a list on one line":   "allow: [example.com]\n",
-		"an empty flow list":   "allow: []\n",
-		"an alias at the end":  "hosts: &h example.com\nallow:\n  - api.anthropic.com\n  - *h\n",
-		"a block scalar entry": "allow:\n  - |\n    example.com\n",
-		"no mapping":           "- example.com\n",
-		"nothing":              "",
+		"no list":                   "memory: 4096\n",
+		"an empty list":             "allow:\n",
+		"a list on one line":        "allow: [example.com]\n",
+		"an empty flow list":        "allow: []\n",
+		"an alias at the end":       "allow:\n  - &h example.com\n  - *h\n",
+		"a block scalar entry":      "allow:\n  - |\n    example.com\n",
+		"nothing":                   "",
+		"old mac line endings":      "allow:\r  - example.com\r",
+		"a last entry on two lines": "allow:\n  - a.example.com\n  - \"b.example\\\n    .com\"\n",
+		"an entry below its dash":   "allow:\n  -\n    example.com\n",
 	}
 
 	for name, content := range tests {
@@ -171,7 +206,7 @@ func TestAddPresetsRefusesAListOfAnotherForm(t *testing.T) {
 			_, err := AddPresets([]byte(content), []string{"go"})
 
 			// assert
-			assert.Error(t, err)
+			assert.ErrorIs(t, err, ErrNoAllowList)
 		})
 	}
 }

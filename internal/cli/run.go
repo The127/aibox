@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -169,8 +170,13 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
+	started := time.Now()
 	err = deps.backend.Run(ctx, spec)
 	r.proxyLog.Summarize()
+
+	if id, ok := lastSession(r.project.Home, started); ok {
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: to go on with this session, run aibox run --resume %s\n", id)
+	}
 
 	return err
 }
@@ -963,4 +969,67 @@ func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
 	}
 
 	return cmd.Int(flag)
+}
+
+// lastSession returns the ID of the Claude Code session in the VM home whose
+// file changed last, if one changed since then. The VM writes these
+// folders, so only names that are session IDs count.
+func lastSession(vmHome string, since time.Time) (string, bool) {
+	root, err := os.OpenRoot(vmHome)
+	if err != nil {
+		return "", false
+	}
+
+	defer func() { _ = root.Close() }()
+
+	projects := filepath.Join(".claude", "projects")
+
+	folders, err := readRootDir(root, projects)
+	if err != nil {
+		return "", false
+	}
+
+	var last string
+
+	latest := since
+
+	for _, folder := range folders {
+		if !folder.IsDir() {
+			continue
+		}
+
+		files, err := readRootDir(root, filepath.Join(projects, folder.Name()))
+		if err != nil {
+			continue
+		}
+
+		for _, file := range files {
+			id, ok := strings.CutSuffix(file.Name(), ".jsonl")
+			if !ok || !file.Type().IsRegular() || vm.CheckSessionID(id) != nil {
+				continue
+			}
+
+			info, err := file.Info()
+			if err != nil || info.ModTime().Before(latest) {
+				continue
+			}
+
+			last, latest = id, info.ModTime()
+		}
+	}
+
+	return last, last != ""
+}
+
+// readRootDir reads a folder of the root without waiting, since the VM
+// could have left a FIFO there.
+func readRootDir(root *os.Root, name string) ([]fs.DirEntry, error) {
+	dir, err := root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = dir.Close() }()
+
+	return dir.ReadDir(-1)
 }

@@ -228,6 +228,60 @@ func TestRunRefusesAResumeThatIsNoSessionID(t *testing.T) {
 	assert.False(t, f.launch.called)
 }
 
+// session writes the file of a Claude Code session into the VM home, last
+// changed at the given time.
+func session(t *testing.T, vmHome, folder, name string, changed time.Time) {
+	t.Helper()
+
+	path := filepath.Join(vmHome, ".claude", "projects", folder, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, os.Chtimes(path, changed, changed))
+}
+
+func TestRunTellsHowToGoOnWithTheLastSession(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		later := time.Now().Add(time.Minute)
+		session(t, spec.Home, "-project", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e.jsonl", later)
+		session(t, spec.Home, "-project", "1c0e4d5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f.jsonl", later.Add(time.Minute))
+		session(t, spec.Home, "-other", "2d1f5e6a-7b8c-4d9e-0f1a-2b3c4d5e6f7a.jsonl", later.Add(-time.Second))
+
+		return nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "aibox: to go on with this session, run aibox run --resume 1c0e4d5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f\n")
+}
+
+func TestRunTellsNothingWithoutASessionOfTheRun(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		later := time.Now().Add(time.Minute)
+		session(t, spec.Home, "-project", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e.jsonl", time.Now().Add(-time.Hour))
+		session(t, spec.Home, "-project", "not-a-session.jsonl", later)
+		session(t, spec.Home, "-project", "1c0e4d5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f.json", later)
+		session(t, spec.Home, "-project", "2d1f5e6a-7b8c-4d9e-0f1a-2b3c4d5e6f7a.jsonl/file", later)
+
+		return nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, f.stderr.String(), "--resume")
+}
+
 func TestRunSharesTheProjectAndItsHome(t *testing.T) {
 	// arrange
 	f := newFixture(t)

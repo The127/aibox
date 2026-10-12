@@ -65,5 +65,35 @@ func (c Create) Check(host Host) error {
 		return fmt.Errorf("%w: no state disk", ErrBadRequest)
 	}
 
+	if c.Network != nil {
+		if err := checkPorts("port", c.Network.Ports); err != nil {
+			return err
+		}
+
+		if err := checkPorts("loopback port", c.Network.Loopback); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkPorts refuses port 0, which is no port to connect to, and a port
+// named twice, which also keeps a list no longer than there are ports.
+func checkPorts(what string, ports []uint16) error {
+	seen := make(map[uint16]bool, len(ports))
+
+	for _, p := range ports {
+		if p == 0 {
+			return fmt.Errorf("%w: %s 0", ErrBadRequest, what)
+		}
+
+		if seen[p] {
+			return fmt.Errorf("%w: %s %d twice", ErrBadRequest, what, p)
+		}
+
+		seen[p] = true
+	}
+
 	return nil
 }

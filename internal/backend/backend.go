@@ -66,6 +66,12 @@ type Spec struct {
 	// Loopback are the ports on the loopback of the host that the proxy
 	// lets the VM reach. The VM has them on its own loopback.
 	Loopback []uint16
+	// AllowList are the entries of the allow list that Proxy.Allow and
+	// Proxy.Pinned decide by, and AllowFile the file they come from, which
+	// Proxy.Hint names, for a backend that serves the proxy from a process
+	// of its own, which can't take those functions.
+	AllowList []string
+	AllowFile string
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string

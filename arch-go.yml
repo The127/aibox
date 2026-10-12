@@ -76,12 +76,49 @@ dependenciesRules:
     shouldOnlyDependsOn:
       internal:
         - '**.internal.backend$'
+        - '**.internal.config$'
         - '**.internal.host$'
         - '**.internal.machine$'
         - '**.internal.vm$'
         - '**.internal.vhd$'
         - '**.internal.ninefs$'
         - '**.internal.hvservice$'
+        - '**.internal.hvsock$'
+        - '**.internal.hvshares$'
+        - '**.internal.hvvm$'
+        - '**.internal.appcontainer$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvsock listens on the sockets of a VM and knows nothing of aibox
+  - package: '**.internal.hvsock$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvvm is the helper that serves a VM on Windows its proxy
+  - package: '**.internal.hvvm$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.appcontainer$'
+        - '**.internal.config$'
+        - '**.internal.host$'
+        - '**.internal.hvchild$'
+        - '**.internal.hvsock$'
+        - '**.internal.proxy$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvshares is the helper that serves the shares of a VM on Windows
+  - package: '**.internal.hvshares$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.appcontainer$'
+        - '**.internal.hvchild$'
+        - '**.internal.hvsock$'
+        - '**.internal.ninefs$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
@@ -212,6 +249,24 @@ dependenciesRules:
   # realpath follows every link of a path, as the system does, and knows
   # nothing of aibox
   - package: '**.internal.realpath$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvchild carries messages between aibox and its helpers and knows
+  # nothing of what they say
+  - package: '**.internal.hvchild$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # appcontainer starts a program in a sandbox of Windows and knows nothing
+  # of aibox
+  - package: '**.internal.appcontainer$'
     shouldNotDependsOn:
       internal:
         - '**.internal.**'
@@ -350,6 +405,8 @@ dependenciesRules:
         - '**.internal.hvinstall$'
         - '**.internal.hvserver$'
         - '**.internal.hvlaunch$'
+        - '**.internal.hvshares$'
+        - '**.internal.hvvm$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

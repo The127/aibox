@@ -162,9 +162,11 @@ check it out or merge it. See
 
 ## What aibox assumes
 
-- KVM or Virtualization.framework holds. aibox makes a break-out harder,
-  but on macOS it can't sandbox the Virtualization.framework process. On
-  Linux, `--no-sandbox` takes QEMU out of bubblewrap.
+- KVM, Virtualization.framework or Hyper-V holds. aibox makes a break-out
+  harder, but on macOS it can't sandbox the Virtualization.framework
+  process. On Linux, `--no-sandbox` takes QEMU out of bubblewrap. On
+  Windows it takes the helper that serves the proxy out of its
+  AppContainer.
 - Your machine isn't already taken over. A program that can change aibox,
   its config in `~/.aibox` or the programs it starts is out of scope.
 - The release is the one we built. Check a download with cosign. See

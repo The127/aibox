@@ -211,3 +211,22 @@ func TestAddPresetsRefusesAListOfAnotherForm(t *testing.T) {
 		})
 	}
 }
+
+func TestAllowHint(t *testing.T) {
+	// arrange
+	tests := map[string]struct{ target, want string }{
+		"a host of a preset": {"proxy.golang.org:443", "Add it to config.yaml to allow it. preset:go allows it."},
+		"a host of none":     {"example.com:443", "Add it to config.yaml to allow it."},
+		"no host and port":   {"example.com", "Add it to config.yaml to allow it."},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// act
+			hint := AllowHint("config.yaml")(test.target)
+
+			// assert
+			assert.Equal(t, test.want, hint)
+		})
+	}
+}

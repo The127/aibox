@@ -125,8 +125,20 @@ On macOS aibox owns the VM, and only the process that owns a VM can reach
 its vsock. So it doesn't need a namespace.
 
 On Windows the VM's sockets are Hyper-V sockets, and the service that makes
-the VM lets only your user listen on them. Connecting into the VM stays
-with administrators, and nothing does it.
+the VM lets only your user and the helper that serves its proxy listen
+on them. Connecting into the VM stays with administrators, and nothing
+does it. The helper runs in an AppContainer of its own, and the service
+puts filters of the Windows Filtering Platform on that container: it
+connects only to the TCP ports of the allow list, to any host on them,
+and, on your machine's loopback, to the ports of the allow list and the
+one aibox serves the services of the proxy on. Windows keeps an
+AppContainer off the loopback, so the service lets this one on, in a
+list of the whole machine that it records, and takes it off again once
+aibox has ended the helper, or at its next start after a crash, or when
+it is uninstalled. The filters don't cover names: Windows looks them up
+for the helper outside its container, so a VM that took the helper over
+could look up any name, and send data out in the names it asks for. The
+helper holds no secret of aibox's to send.
 
 ### The Windows service
 
@@ -180,6 +192,21 @@ lock file goes into the VM's home. The helper can still read any file you
 can and reach the network. On Linux it can also still change the
 permissions, owner, times and extended attributes of a file outside, since
 Landlock doesn't restrict those.
+
+On Windows aibox serves the VM from two helpers, copies of itself. One
+serves the shares, with your rights, as it must to read and write them,
+and does nothing else. The other serves the proxy, in an AppContainer: it
+parses what the VM sends through the proxy, reads none of your files,
+holds no secret, has no console and reaches only the network the service
+lets it. The Claude API forwarder, the git broker, the IDE bridge and the
+clipboard stay in aibox, with the API key, your SSH keys and git logins
+and the token of the IDE: the helper hands their requests to aibox over a
+port of the loopback, which answers only requests with a token the
+helper got from aibox. The terminal stays in aibox as well. aibox reads
+what the helper says as it would what the VM says. Both helpers are in a
+job, which Windows ends with aibox, however aibox ends. `aibox run
+--no-sandbox` runs the helper of the proxy outside its container, with
+no filters.
 
 With the [clipboard](config.md#clipboard) on, aibox starts a helper before
 it locks itself down. The helper isn't locked down, because it has to start

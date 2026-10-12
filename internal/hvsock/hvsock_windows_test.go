@@ -1,4 +1,4 @@
-package hvlaunch
+package hvsock
 
 import (
 	"net"
@@ -15,7 +15,7 @@ func TestAClosedListenerSaysSoAsTheProxyAndTheTerminalExpect(t *testing.T) {
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	l := &closing{Listener: inner, closed: make(chan struct{})}
+	l := Closing(inner)
 
 	accepted := make(chan error, 1)
 

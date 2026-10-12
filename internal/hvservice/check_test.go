@@ -73,6 +73,9 @@ func TestCheckTakesAVMTheHostAndTheKernelCanTake(t *testing.T) {
 		"the longest kernel command line": vm(func(c *hvservice.Create) {
 			c.Cmdline = strings.Repeat("x", hvservice.MaxCmdline)
 		}),
+		"a network": vm(func(c *hvservice.Create) {
+			c.Network = &hvservice.Network{Ports: []uint16{443, 22}, Loopback: []uint16{8080, 443}}
+		}),
 	}
 
 	for name, c := range tests {
@@ -102,6 +105,10 @@ func TestCheckRefusesAVMTheHostOrTheKernelCantTake(t *testing.T) {
 		}),
 		"a kernel command line with a NUL": vm(func(c *hvservice.Create) { c.Cmdline = "console=ttyS0\x00aibox.hyperv" }),
 		"no state disk":                    vm(func(c *hvservice.Create) { c.State = 0 }),
+		"port 0":                           vm(func(c *hvservice.Create) { c.Network = &hvservice.Network{Ports: []uint16{443, 0}} }),
+		"a port twice":                     vm(func(c *hvservice.Create) { c.Network = &hvservice.Network{Ports: []uint16{443, 22, 443}} }),
+		"loopback port 0":                  vm(func(c *hvservice.Create) { c.Network = &hvservice.Network{Loopback: []uint16{0}} }),
+		"a loopback port twice":            vm(func(c *hvservice.Create) { c.Network = &hvservice.Network{Loopback: []uint16{8080, 8080}} }),
 	}
 
 	for name, c := range tests {

@@ -242,9 +242,15 @@ and the root disk. It never opens a folder or a file you name: it has
 Windows tell it who you are, and gives the VM the state disk you hold
 open, and nothing else of yours.
 
-Your project, home and mounts are served to the VM by aibox itself, over
-9p on Hyper-V sockets, as you: the VM can do with them what you can, and
-no more. The terminal and the proxy go over the same sockets. The console
+Your project, home and mounts are served to the VM by a helper, a copy of
+aibox, over 9p on Hyper-V sockets, as you: the VM can do with them what
+you can, and no more. The terminal and the proxy go over the same sockets.
+aibox serves the terminal itself, and the proxy from another helper in an
+AppContainer. That helper hands the requests for the services of the
+proxy, such as the Claude API forwarder and the git broker, to aibox,
+which holds their keys, over a port of the loopback. The service lets
+the helper reach only that port and those of the allow list. Both
+helpers end with aibox. The console
 comes over a pipe the service makes for the VM and hands to aibox open:
 Hyper-V connects the VM to it, and no one can open it by name. When
 aibox ends, or is killed, the service ends the VM.

@@ -2,9 +2,6 @@ package hvlaunch
 
 import (
 	"io"
-	"net"
-
-	"github.com/hugelgupf/p9/p9"
 )
 
 // consoleSource is the pipe the console of the VM comes over, as
@@ -35,18 +32,4 @@ func serveConsole(console consoleSource, log io.Writer) (gone <-chan struct{}) {
 	}()
 
 	return done
-}
-
-// serveShares serves the folders of the host to each connection the guest
-// makes to the listener, as the guest mounts each share over a connection
-// of its own, until the listener closes.
-func serveShares(l net.Listener, fs p9.Attacher) {
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return
-		}
-
-		go func() { _ = p9.NewServer(fs).Handle(conn, conn) }()
-	}
 }

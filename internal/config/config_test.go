@@ -774,6 +774,17 @@ func TestLoopbackPortsAreThePortsOfTheEntriesOnTheLoopback(t *testing.T) {
 	assert.Equal(t, []uint16{443, 8080, 64422}, ports)
 }
 
+func TestRemotePortsAreThePortsOfTheEntriesOffTheLoopback(t *testing.T) {
+	// arrange
+	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "example.com:8080", "10.0.0.5:22", "127.0.0.2:9000", "example.org"}
+
+	// act
+	ports := hosts.RemotePorts()
+
+	// assert
+	assert.Equal(t, []uint16{22, 443, 8080, 9000}, ports)
+}
+
 func TestPinned(t *testing.T) {
 	// arrange
 	hosts := config.Hosts{"127.0.0.1:64422", "[::1]:8080", "127.0.0.2:9000", "example.com:9000"}

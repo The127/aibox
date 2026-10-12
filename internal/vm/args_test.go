@@ -190,6 +190,7 @@ func TestGuestWordsTellTheGuestItsSettingsPortsAndMounts(t *testing.T) {
 	// arrange
 	m := machine()
 	m.Shell = true
+	m.Resume = "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"
 	m.ProxyPort = 1025
 	m.TerminalPort = 1024
 	m.Shares = append(m.Shares, vm.Share{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"})
@@ -199,7 +200,27 @@ func TestGuestWordsTellTheGuestItsSettingsPortsAndMounts(t *testing.T) {
 	words := m.GuestWords()
 
 	// assert
-	assert.Equal(t, []string{"aibox.shell", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go", "aibox.loopback=3000,64422"}, words)
+	assert.Equal(t, []string{"aibox.shell", "aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go", "aibox.loopback=3000,64422"}, words)
+}
+
+func TestCheckSessionIDTakesALowercaseUUID(t *testing.T) {
+	// act
+	err := vm.CheckSessionID("0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e")
+
+	// assert
+	assert.NoError(t, err)
+}
+
+func TestCheckSessionIDRejectsAnythingElse(t *testing.T) {
+	for _, id := range []string{"", "x", "0B9D3C4E-5F6A-4B7C-8D9E-0F1A2B3C4D5E", "0b9d3c4e5f6a4b7c8d9e0f1a2b3c4d5e", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e aibox.shell", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e\n"} {
+		t.Run(id, func(t *testing.T) {
+			// act
+			err := vm.CheckSessionID(id)
+
+			// assert
+			assert.ErrorIs(t, err, vm.ErrBadSessionID)
+		})
+	}
 }
 
 func TestGuestWordsOfAPlainMachineAreNone(t *testing.T) {

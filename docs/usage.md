@@ -29,6 +29,7 @@ all your files.
 | Flag | What it does |
 |---|---|
 | `--shell` | Opens a shell in the VM instead of Claude Code. |
+| `--resume <id>` | Goes on with the Claude Code session that has this ID. Claude Code prints the ID when you quit it. |
 | `--memory` | Sets the VM's memory in MiB. The default is 2048, or what the config says. |
 | `--cpus` | Sets the VM's number of CPUs. The default is 2, or what the config says. |
 | `--image` | Boots a folder with `vmlinuz` and `os.ext4` instead of the image your package installed or aibox downloaded. aibox doesn't check its kernel. |
@@ -78,7 +79,8 @@ aibox projects reset
 This clears the VM's home folder and deletes its state disk. The next run
 makes a new disk, at the size [`disk`](config.md#disk) says. Your config,
 the logs and the tasks stay, and so does Claude Code's login. Claude Code
-asks for your color theme again, since its other settings are gone.
+asks for your color theme again, since its other settings are gone. Your
+old sessions are gone too, so `--resume` can't go back to them.
 
 If you think a session was steered, add `--logout`. Then the login goes
 too. The VM can write the login file, so a steered session could have put

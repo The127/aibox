@@ -40,7 +40,7 @@ func TestPrepareBootsTheKernelAndRootDiskOfTheImage(t *testing.T) {
 	state := statePath(t)
 
 	// act
-	m, err := machine.Prepare(backend.Spec{Image: image, State: state, MemoryMiB: 1024, CPUs: 3, Shell: true})
+	m, err := machine.Prepare(backend.Spec{Image: image, State: state, MemoryMiB: 1024, CPUs: 3, Shell: true, Resume: "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"})
 
 	// assert
 	require.NoError(t, err)
@@ -50,6 +50,7 @@ func TestPrepareBootsTheKernelAndRootDiskOfTheImage(t *testing.T) {
 	assert.Equal(t, 1024, m.MemoryMiB)
 	assert.Equal(t, 3, m.CPUs)
 	assert.True(t, m.Shell)
+	assert.Equal(t, "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", m.Resume)
 	assert.Nil(t, m.Owner)
 }
 

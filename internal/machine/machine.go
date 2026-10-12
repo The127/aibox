@@ -77,6 +77,7 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		CPUs:         spec.CPUs,
 		Shares:       shares,
 		Shell:        spec.Shell,
+		Resume:       spec.Resume,
 		Task:         spec.Task != "",
 		Loopback:     spec.Loopback,
 	}, nil

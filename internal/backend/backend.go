@@ -43,6 +43,9 @@ type Spec struct {
 	Mounts []Mount
 	// Shell opens a shell in the VM instead of Claude Code.
 	Shell bool
+	// Resume is the ID of the Claude Code session to go on with, or empty
+	// for a new one.
+	Resume string
 	// Task is the host folder of a task the VM runs unattended, shared
 	// read-only. The VM then has neither Project nor Home and no terminal:
 	// Stdout gets the results and Progress what the task is doing. It has

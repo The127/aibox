@@ -25,6 +25,7 @@ import (
 
 	"github.com/the127/aibox/internal/guest"
 	"github.com/the127/aibox/internal/session"
+	"github.com/the127/aibox/internal/vm"
 )
 
 // terminalPort is the vsock port the fake host serves the terminal on.
@@ -37,9 +38,13 @@ var withTerminal = fmt.Sprintf("console=hvc0 aibox.terminal=%d", terminalPort)
 func TestParseCmdline(t *testing.T) {
 	// arrange
 	tests := map[string]guest.Options{
-		"root=/dev/vda rw console=ttyS0 quiet":   {Console: "/dev/ttyS0"},
-		"console=hvc0 aibox.shell":               {Console: "/dev/hvc0", Shell: true},
-		"console=hvc0 aibox.task":                {Console: "/dev/hvc0", Task: true},
+		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
+		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
+		"console=hvc0 aibox.task":              {Console: "/dev/hvc0", Task: true},
+		"console=hvc0 aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e": {
+			Console: "/dev/hvc0",
+			Resume:  "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
+		},
 		"console=ttyS0 aibox.hyperv":             {Console: "/dev/ttyS0", HyperV: true},
 		"root=/dev/vda":                          {Console: "/dev/console"},
 		"console=ttyS0 aibox.shell=1 panic=-1":   {Console: "/dev/ttyS0", Shell: true},
@@ -78,6 +83,16 @@ func TestParseCmdlineRejectsAMountItCannotRead(t *testing.T) {
 			assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
 		})
 	}
+}
+
+func TestParseCmdlineRejectsAResumeThatIsNoSessionID(t *testing.T) {
+	// act
+	options, err := guest.ParseCmdline("console=hvc0 aibox.resume=x")
+
+	// assert
+	assert.ErrorIs(t, err, vm.ErrBadSessionID)
+	assert.ErrorContains(t, err, "aibox.resume")
+	assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
 }
 
 func TestParseCmdlineRejectsABadPort(t *testing.T) {
@@ -567,6 +582,17 @@ func TestCommandKeepsTheGoModuleCacheOnTheStateDisk(t *testing.T) {
 
 	// assert
 	assert.Contains(t, cmd.Env, "GOMODCACHE=/home/user/.cache/go-mod")
+}
+
+func TestCommandResumesTheSessionWhenAsked(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Resume: "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"}, tty, session.Request{Term: "xterm"})
+
+	// assert
+	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md", "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"}, cmd.Args)
 }
 
 func TestCommandRunsAShellWhenAsked(t *testing.T) {

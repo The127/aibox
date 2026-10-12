@@ -41,6 +41,8 @@ var errRoot = errors.New("do not run aibox as root, start it as a normal user")
 // on stdin a run would sit there forever.
 var errNoTerminal = errors.New("run needs a terminal on stdin")
 
+var errResumeShell = errors.New("--resume goes on with a session of Claude Code, so it does not go with --shell")
+
 // The project folder is shared into the VM read-write. From the home or
 // above it the VM would get the configs and logins of every project, the
 // shell files and keys of the person, and could change its own allow list.
@@ -63,6 +65,7 @@ func runCommand(deps dependencies) *cli.Command {
 		Usage: "boot the VM with the current folder shared into it",
 		Flags: append(vmFlags(),
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
+			&cli.StringFlag{Name: "resume", Usage: "go on with the Claude Code session with this ID"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -87,6 +90,17 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	if !deps.stdinIsTerminal() {
 		return errNoTerminal
+	}
+
+	resume := cmd.String("resume")
+	if resume != "" {
+		if cmd.Bool("shell") {
+			return errResumeShell
+		}
+
+		if err := vm.CheckSessionID(resume); err != nil {
+			return fmt.Errorf("--resume %w", err)
+		}
 	}
 
 	cwd, aibox, err := folders(deps)
@@ -150,6 +164,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Project = cwd
 	spec.Home = r.project.Home
 	spec.Shell = cmd.Bool("shell")
+	spec.Resume = resume
 	spec.ConsoleLog = r.project.ConsoleLog
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout

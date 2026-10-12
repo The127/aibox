@@ -32,44 +32,88 @@ func (f *fixture) config(t *testing.T) string {
 	return string(content)
 }
 
-func TestSuggestAddsThePresetsOnceConfirmed(t *testing.T) {
+func TestSuggestAddsTheToolsSaidYesTo(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 	f.projectFile(t, "go.mod")
+	f.projectFile(t, "package.json")
+	f.projectFile(t, "yarn.lock")
 	f.projectFile(t, "uv.lock")
 	f.projectFile(t, "README.md")
 
-	// act
-	err := f.suggest("y\n")
+	// act: Go and npm get the default yes, Python a no
+	err := f.suggest("\ny\nn\n")
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "preset:go, for go.mod, allows proxy.golang.org, ")
-	assert.Contains(t, f.stderr.String(), "preset:pypi, for uv.lock, allows pypi.org, files.pythonhosted.org\n")
-	assert.Contains(t, f.stderr.String(), "Anyone can upload files")
-	assert.Contains(t, f.stderr.String(), "Start aibox again")
-	assert.Contains(t, f.config(t), "  - code.claude.com           # documentation lookups\n  - preset:go\n  - preset:pypi\n")
 
-	cfg, err := loadConfig(f.deps, f.project(t).Config, f.aiboxDir)
-	require.NoError(t, err)
-	assert.True(t, cfg.Allow.Allows("proxy.golang.org", "443"))
+	out := f.stderr.String()
+	assert.Contains(t, out, "aibox found these tools in "+filepath.Base(f.cwd)+":\n\n")
+	assert.Contains(t, out, "  Go       because of go.mod\n           proxy.golang.org  sum.golang.org")
+	assert.Contains(t, out, "  npm      because of package.json and yarn.lock\n")
+	assert.Contains(t, out, "  Python   because of uv.lock\n           pypi.org  files.pythonhosted.org\n")
+	assert.Contains(t, out, "Anyone can upload to package registries")
+	assert.Contains(t, out, "Allow Go? [Y/n] Allow npm? [Y/n] Allow Python? [Y/n] ")
+	assert.Contains(t, out, "Added Go and npm. Start aibox again to use them.\n")
+	assert.NotContains(t, out, "\x1b[", "no colors without a terminal")
 
-	// and has nothing more to suggest after
+	config := f.config(t)
+	assert.Contains(t, config, "  - code.claude.com           # documentation lookups\n  - preset:go\n  - preset:npm\n")
+	assert.NotContains(t, config, "preset:pypi")
+
+	// and suggests only Python after
 	f.stderr.Reset()
-	require.NoError(t, f.suggest("y\n"))
-	assert.Contains(t, f.stderr.String(), "aibox: nothing to suggest")
+	require.NoError(t, f.suggest("n\n"))
+	assert.Contains(t, f.stderr.String(), "  Python   because of uv.lock\n")
+	assert.NotContains(t, f.stderr.String(), "  Go ")
 }
 
-func TestSuggestChangesNothingUnlessConfirmed(t *testing.T) {
+func TestSuggestWrapsTheHostsAndPaintsOnATerminal(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	f.projectFile(t, "package.json")
+	f.projectFile(t, "go.mod")
+	f.deps.stderrWidth = func() (int, bool) { return 50, true }
 
 	// act
 	err := f.suggest("n\n")
 
 	// assert
-	require.ErrorIs(t, err, errNotConfirmed)
+	require.NoError(t, err)
+
+	out := f.stderr.String()
+	assert.Contains(t, out, "\x1b[1;36mGo\x1b[0m")
+	assert.Contains(t, out, "because of \x1b[1mgo.mod\x1b[0m")
+	assert.Contains(t, out, "\x1b[2mproxy.golang.org  sum.golang.org\x1b[0m\n")
+	assert.Contains(t, out, "\x1b[2mstorage.googleapis.com  vuln.go.dev\x1b[0m\n")
+	assert.Contains(t, out, "Nothing changed.")
+}
+
+func TestSuggestPaintsNothingWithNoColor(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.projectFile(t, "go.mod")
+	f.deps.stderrWidth = func() (int, bool) { return 80, true }
+	f.deps.lookupEnv = func(name string) (string, bool) { return "", name == "NO_COLOR" }
+
+	// act
+	err := f.suggest("n\n")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, f.stderr.String(), "\x1b[")
+}
+
+func TestSuggestChangesNothingWhenToldNo(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.projectFile(t, "package.json")
+
+	// act
+	err := f.suggest("no\n")
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "Nothing changed.")
 	assert.NotContains(t, f.config(t), "preset:npm")
 }
 
@@ -84,6 +128,7 @@ func TestSuggestWithoutATerminalOnlyPrints(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "  Rust   because of Cargo.toml\n")
 	assert.Contains(t, f.stderr.String(), "Add them to allow with aibox config edit:\n  - preset:cargo\n")
 	assert.NotContains(t, f.config(t), "preset:cargo")
 }
@@ -116,8 +161,8 @@ func TestSuggestTakesOnlyPlainFiles(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, f.stderr.String(), "aibox: nothing to suggest")
-	assert.Contains(t, f.stderr.String(), "go.mod, go.work, ")
+	assert.Contains(t, f.stderr.String(), "Nothing to suggest for "+filepath.Base(f.cwd)+". aibox looks for these files:\n\n  Cargo.toml  Cargo.lock  go.mod  go.work")
+	assert.Contains(t, f.stderr.String(), "It found none of them, or the config allows their tools already.\n")
 }
 
 func TestSuggestKeepsAConfigThatIsALink(t *testing.T) {

@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,28 +104,63 @@ func suggestConfig(deps dependencies) error {
 		}
 	}
 
+	out := newPainter(deps)
+	name := filepath.Base(cwd)
+
 	suggestions := config.Suggest(files, cfg.Allow)
 	if len(suggestions) == 0 {
-		_, _ = fmt.Fprintf(deps.stderr, "aibox: nothing to suggest. aibox looks for these files in the current folder, and the config allows the presets of those it found: %s\n", strings.Join(config.Markers(), ", "))
+		out.printf("Nothing to suggest for %s. aibox looks for these files:\n\n", name)
+
+		for _, line := range wrap(config.Markers(), out.width-2) {
+			out.printf("  %s\n", out.paint(line, dim))
+		}
+
+		out.printf("\nIt found none of them, or the config allows their tools already.\n")
 
 		return nil
 	}
 
-	names := make([]string, 0, len(suggestions))
+	out.printf("aibox found these tools in %s:\n\n", name)
+
+	toolWidth := 0
+	for _, s := range suggestions {
+		toolWidth = max(toolWidth, len(s.Tool))
+	}
 
 	for _, s := range suggestions {
-		names = append(names, s.Preset)
-		_, _ = fmt.Fprintf(deps.stderr, "preset:%s, for %s, allows %s\n", s.Preset, strings.Join(s.Files, ", "), strings.Join(s.Hosts, ", "))
+		indent := strings.Repeat(" ", 2+toolWidth+3)
+		out.printf("  %s%s   because of %s\n", out.paint(s.Tool, bold, cyan), strings.Repeat(" ", toolWidth-len(s.Tool)), joinAnd(out.each(s.Files, bold)))
+
+		for _, line := range wrap(s.Hosts, out.width-len(indent)) {
+			out.printf("%s%s\n", indent, out.paint(line, dim))
+		}
 	}
 
-	_, _ = fmt.Fprintln(deps.stderr, "Anyone can upload files to package registries like these, so a program in the VM can send data there too.")
+	out.printf("\n%s\n\n", out.paint("Anyone can upload to package registries, so a program in the VM could send data there.", yellow))
 
 	if !deps.stdinIsTerminal() {
-		return printPresets(deps, names)
+		return printPresets(out, suggestions)
 	}
 
-	if err := confirm(deps, "Add them to "+p.Config+"?", false); err != nil {
-		return err
+	var chosen []config.Suggestion
+
+	answers := bufio.NewReader(deps.stdin)
+
+	for _, s := range suggestions {
+		yes, err := ask(out, answers, "Allow "+s.Tool+"?")
+		if err != nil {
+			return err
+		}
+
+		if yes {
+			chosen = append(chosen, s)
+		}
+	}
+
+	if len(chosen) == 0 {
+		out.printf("\nNothing changed.\n")
+
+		return nil
 	}
 
 	content, err := os.ReadFile(p.Config)
@@ -131,9 +168,11 @@ func suggestConfig(deps dependencies) error {
 		return fmt.Errorf("read %s: %w", p.Config, err)
 	}
 
-	added, err := config.AddPresets(content, names)
+	added, err := config.AddPresets(content, presetsOf(chosen))
 	if errors.Is(err, config.ErrNoAllowList) {
-		return printPresets(deps, names)
+		out.printf("\n")
+
+		return printPresets(out, chosen)
 	}
 
 	if err != nil {
@@ -144,20 +183,87 @@ func suggestConfig(deps dependencies) error {
 		return fmt.Errorf("write %s: %w", p.Config, err)
 	}
 
-	_, _ = fmt.Fprintln(deps.stderr, "aibox: added them. Start aibox again for them to apply.")
+	tools := make([]string, 0, len(chosen))
+	for _, s := range chosen {
+		tools = append(tools, s.Tool)
+	}
+
+	out.printf("\n%s\n", out.paint("Added "+joinAnd(tools)+". Start aibox again to use them.", green))
 
 	return nil
 }
 
-// printPresets tells how to add the presets by hand.
-func printPresets(deps dependencies, names []string) error {
-	_, _ = fmt.Fprintln(deps.stderr, "Add them to allow with aibox config edit:")
+// ask asks the question and reads the answer from answers: yes unless it
+// starts with n.
+func ask(out painter, answers *bufio.Reader, question string) (bool, error) {
+	out.printf("%s [Y/n] ", out.paint(question, bold))
 
-	for _, name := range names {
-		_, _ = fmt.Fprintf(deps.stderr, "  - preset:%s\n", name)
+	answer, err := answers.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read the answer: %w", err)
+	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
+
+	// no answer at all, as when stdin ends, is no
+	if errors.Is(err, io.EOF) && answer == "" {
+		out.printf("\n")
+
+		return false, nil
+	}
+
+	return !strings.HasPrefix(answer, "n"), nil
+}
+
+// printPresets tells how to add the presets of the suggestions by hand.
+func printPresets(out painter, suggestions []config.Suggestion) error {
+	out.printf("Add them to allow with aibox config edit:\n")
+
+	for _, name := range presetsOf(suggestions) {
+		out.printf("  - preset:%s\n", name)
 	}
 
 	return nil
+}
+
+func presetsOf(suggestions []config.Suggestion) []string {
+	names := make([]string, 0, len(suggestions))
+	for _, s := range suggestions {
+		names = append(names, s.Preset)
+	}
+
+	return names
+}
+
+// joinAnd joins the words as a list in a sentence: a, b and c.
+func joinAnd(words []string) string {
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
+}
+
+// wrap puts the words into lines no wider than width, two spaces apart. A
+// word wider than width gets a line of its own.
+func wrap(words []string, width int) []string {
+	var lines []string
+
+	line := ""
+
+	for _, word := range words {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+2+len(word) <= width:
+			line += "  " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+
+	return append(lines, line)
 }
 
 // replaceFile writes content to a new file beside path and puts it in

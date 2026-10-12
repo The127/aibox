@@ -28,6 +28,9 @@ type dependencies struct {
 	homeDir         func() (string, error)
 	uid             func() int
 	stdinIsTerminal func() bool
+	// stderrWidth is how wide the terminal on stderr is, and whether it is
+	// one at all
+	stderrWidth func() (int, bool)
 	// stdin is where a task reads its prompt from
 	stdin       io.Reader
 	lookupEnv   func(name string) (string, bool)
@@ -95,21 +98,26 @@ func NewRootCommand() *cli.Command {
 		homeDir:         os.UserHomeDir,
 		uid:             os.Getuid,
 		stdinIsTerminal: func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
-		stdin:           os.Stdin,
-		lookupEnv:       os.LookupEnv,
-		gitIdentity:     func(dir string) gitconfig.Identity { return gitconfig.Read(dir, readOnly) },
-		gitLogin:        gitconfig.LoginFor,
-		sshKeys:         func() (sshKeys, error) { return gitconfig.LoadSSHKeys() },
-		backend:         newBackend(),
-		edit:            runEditor,
-		version:         version.Get,
-		imageDigest:     image.Digest,
-		kernelDigest:    image.KernelDigest,
-		systemImage:     image.SystemDir(),
-		fetchImage:      fetchImage(os.Stderr),
-		stdout:          os.Stdout,
-		stderr:          os.Stderr,
-		startClipboard:  func(log io.Writer) (clipboardHelper, error) { return clipboard.Start(log) },
+		stderrWidth: func() (int, bool) {
+			width, _, err := term.GetSize(int(os.Stderr.Fd()))
+
+			return width, err == nil
+		},
+		stdin:          os.Stdin,
+		lookupEnv:      os.LookupEnv,
+		gitIdentity:    func(dir string) gitconfig.Identity { return gitconfig.Read(dir, readOnly) },
+		gitLogin:       gitconfig.LoginFor,
+		sshKeys:        func() (sshKeys, error) { return gitconfig.LoadSSHKeys() },
+		backend:        newBackend(),
+		edit:           runEditor,
+		version:        version.Get,
+		imageDigest:    image.Digest,
+		kernelDigest:   image.KernelDigest,
+		systemImage:    image.SystemDir(),
+		fetchImage:     fetchImage(os.Stderr),
+		stdout:         os.Stdout,
+		stderr:         os.Stderr,
+		startClipboard: func(log io.Writer) (clipboardHelper, error) { return clipboard.Start(log) },
 	})
 }
 

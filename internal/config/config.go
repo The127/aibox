@@ -151,14 +151,25 @@ var markers = map[string][]string{
 	"cargo": {"Cargo.toml", "Cargo.lock"},
 }
 
+// titles are the names of the tools of the presets markers knows, as
+// people call them.
+var titles = map[string]string{
+	"go":    "Go",
+	"npm":   "npm",
+	"pypi":  "Python",
+	"cargo": "Rust",
+}
+
 func presetNames() []string {
 	return slices.Sorted(maps.Keys(presets))
 }
 
-// Suggestion is a preset that files of a project show it needs: the files
-// that show it, by the names in markers, and the hosts the preset allows.
+// Suggestion is a preset that files of a project show it needs: the name
+// of its tool, the files that show it, by the names in markers, and the
+// hosts the preset allows.
 type Suggestion struct {
 	Preset string
+	Tool   string
 	Files  []string
 	Hosts  []string
 }
@@ -175,7 +186,7 @@ func Suggest(files []string, allow Hosts) []Suggestion {
 		})
 
 		if len(found) > 0 && !allowsAll(allow, presets[name]) {
-			suggestions = append(suggestions, Suggestion{Preset: name, Files: found, Hosts: presets[name]})
+			suggestions = append(suggestions, Suggestion{Preset: name, Tool: titles[name], Files: found, Hosts: presets[name]})
 		}
 	}
 

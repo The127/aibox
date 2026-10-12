@@ -101,8 +101,8 @@ aibox config suggest
 ```
 
 aibox looks at the names of the files in the folder and suggests the
-presets they point to. It shows the hosts of each preset and asks before
-it adds them to `allow`. Start aibox again for them to apply. Without a
+tools they point to, with the files that show each one and the hosts of
+its preset. It asks for each tool before it adds its preset to `allow`. Start aibox again for them to apply. Without a
 terminal to ask, or when `allow` isn't a list with one entry per line, it
 only prints the lines to add with `aibox config edit`.
 

@@ -57,11 +57,12 @@ func TestDocsNameEveryPreset(t *testing.T) {
 	}
 }
 
-func TestEveryMarkerIsOfAPreset(t *testing.T) {
+func TestEveryMarkerIsOfAPresetWithATitle(t *testing.T) {
 	for name, files := range markers {
 		// assert
 		assert.Contains(t, presets, name)
 		assert.NotEmpty(t, files)
+		assert.NotEmpty(t, titles[name])
 	}
 }
 
@@ -86,8 +87,8 @@ func TestSuggest(t *testing.T) {
 
 	// assert
 	assert.Equal(t, []Suggestion{
-		{Preset: "cargo", Files: []string{"Cargo.lock"}, Hosts: presets["cargo"]},
-		{Preset: "go", Files: []string{"go.mod"}, Hosts: presets["go"]},
+		{Preset: "cargo", Tool: "Rust", Files: []string{"Cargo.lock"}, Hosts: presets["cargo"]},
+		{Preset: "go", Tool: "Go", Files: []string{"go.mod"}, Hosts: presets["go"]},
 	}, suggestions, "npm is allowed already, and names match exactly")
 }
 

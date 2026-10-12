@@ -57,11 +57,14 @@ just aibox           # build aibox and run it on this repo with the image in out
 ```
 
 On Linux, `just image` builds the image for amd64 with
-[miso](https://github.com/The127/miso), which needs `/dev/kvm`.
+[miso](https://github.com/The127/miso), which needs `/dev/kvm`. It builds the
+kernels from `image/kernel.Imagefile` and the root disk from
+`image/Imagefile`. `just image-kernel` and `just image-root` build one of the
+two.
 
 On macOS, miso does not run yet, so `just image` builds the image for arm64
 with Apple's [container](https://github.com/apple/container) tool from
-`image/Containerfile`. Its builder gets 8 CPUs and 8 GiB of memory, and needs
+`image/kernel.Containerfile` and `image/Containerfile`. Its builder gets 8 CPUs and 8 GiB of memory, and needs
 `rosetta = false` under `[build]` in `~/.config/container/config.toml` when
 Rosetta is not installed. `just image-docker-arm64` builds the same image with
 docker, as the release does.
@@ -75,13 +78,14 @@ The kernels are configured in `image/`:
   what aibox changes about it.
 - `kernel-hyperv.config` goes on top of both x86 files for a second kernel,
   `vmlinuz-hyperv`, that Hyper-V boots on Windows. aibox runs on Windows
-  on amd64 only for now, so the Containerfile has no such stage.
+  on amd64 only for now, so `kernel.Containerfile` has no such stage.
 
 `check-kernel-config` fails the build when an option of a fragment did not
 stick, since the kernel's own merge only warns about it.
 
-`image/Containerfile` builds the same image as the Imagefile, and its stages
-follow the stages of the Imagefile.
+`image/kernel.Containerfile` and `image/Containerfile` build the same image
+as `image/kernel.Imagefile` and `image/Imagefile`, and their stages follow
+the stages of those two.
 
 ## Developer Certificate of Origin
 

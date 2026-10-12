@@ -45,6 +45,14 @@ SHA-256 is the one built into aibox. A distro package can ship the image in
 `.goreleaser.yaml` sets these folders as `systemDir`. The amd64 image is
 built with miso, the arm64 image with docker from `image/Containerfile`.
 
+Building the kernels takes most of the time of a release. The `images`
+workflow keeps them in the GitHub Actions cache and builds them again only
+when their build files change or Debian sid has a new kernel source. Each
+kernel carries the Debian version of its source in its version string, after
+the `#`, and the cache is named with the version the kernel says. GitHub
+drops a cache that no run used for 7 days, so a release after a longer
+pause builds the kernels again.
+
 ## One-time setup
 
 The release pull request and the tag must start other workflows, and the

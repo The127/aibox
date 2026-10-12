@@ -28,7 +28,7 @@ const (
 	// the task share holds what the host gives a task
 	taskShare  = "task"
 	taskDir    = "/var/lib/aibox/task"
-	taskPrompt = "/etc/aibox/task.md"
+	taskPrompt = "/run/aibox/task.md"
 	gitPath    = "/usr/bin/git"
 
 	// outDir is where the init keeps the results until it sends them. It is

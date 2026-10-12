@@ -33,7 +33,9 @@ const (
 	project  = "/project"
 	home     = "/home/user"
 	claude   = "/usr/bin/claude"
-	prompt   = "/etc/aibox/prompt.md"
+	// prompt is the system prompt of Claude Code, which the init joins
+	// from the one of the image and the part of the host it runs on
+	prompt   = "/run/aibox/prompt.md"
 	bash     = "/usr/bin/bash"
 	userName = "user"
 
@@ -166,6 +168,9 @@ type System interface {
 	// Own makes the folder, if missing, and gives it to the user.
 	Own(path string) error
 	Symlink(target, path string) error
+	// Join writes the files one after another to path, apart by an empty
+	// line, as a file everyone may read.
+	Join(path string, files ...string) error
 	ReadCmdline() (string, error)
 	OpenConsole(path string) (*os.File, error)
 	Sethostname(name string) error
@@ -690,6 +695,10 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	if err := writePrompts(sys, options.HyperV); err != nil {
+		return console, options, err
+	}
+
 	if err := sys.Sethostname(hostname); err != nil {
 		say(console, "aibox: set the hostname: %v\n", err)
 	}
@@ -1160,4 +1169,32 @@ func (p *piped) Close() error {
 
 func say(console io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(console, format, args...)
+}
+
+// The system prompts of the image, and the part of the host each joins.
+// The amd64 image runs on Linux and on Windows alike, so the image has the
+// part of each, and the init picks the one of the host it runs on. The
+// arm64 image runs only on macOS and has only its part.
+const (
+	imagePrompt      = "/etc/aibox/prompt.md"
+	imageTaskPrompt  = "/etc/aibox/task.md"
+	hostPrompt       = "/etc/aibox/host.md"
+	hyperVHostPrompt = "/etc/aibox/hyperv/host.md"
+)
+
+// writePrompts joins the system prompts of the image with the part of the
+// host the VM runs on.
+func writePrompts(sys System, hyperV bool) error {
+	host := hostPrompt
+	if hyperV {
+		host = hyperVHostPrompt
+	}
+
+	for _, p := range []struct{ path, image string }{{prompt, imagePrompt}, {taskPrompt, imageTaskPrompt}} {
+		if err := sys.Join(p.path, p.image, host); err != nil {
+			return fmt.Errorf("write the system prompt %s: %w", p.path, err)
+		}
+	}
+
+	return nil
 }

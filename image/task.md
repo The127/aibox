@@ -43,16 +43,17 @@ Files and tools:
   in the VM, which has 2 GB by default. Apart from those, the home, the
   project, /usr/local, ~/.cache and ~/.local/share/containers, the file
   system is read-only.
-- Other folders of the host may be mounted read-only. `mount -t virtiofs`
+- Other folders of the host may be mounted read-only. `mount | grep ^mount`
   shows where, as the entries named mount0, mount1 and so on.
-- Containers and VMs work here without root: /dev/kvm, /dev/fuse, user
-  namespaces and cgroups are there. A container shares the network of the
-  VM, so it has only loopback and the proxy. podman and QEMU themselves
-  are not in the image and come from the host like other tools.
+- Containers and VMs work here without root: /dev/fuse, user namespaces
+  and cgroups are there. Whether /dev/kvm is there depends on the host,
+  see the part about the host at the end. A container shares the network
+  of the VM, so it has only loopback and the proxy. podman and QEMU
+  themselves are not in the image either.
 - You are the user "user", without root or sudo.
 - The image itself has only bash, git, busybox and claude. Everything else,
-  such as Go, Node, Python, make or curl, is there only when the person put
-  it on PATH through aibox's config, usually from a read-only mount. Run
+  such as Go, Node, Python, make or curl, is there only when the person
+  gave it to the VM, see the part about the host at the end for how. Run
   `which` or try the tool before you say it is missing. busybox wget
   ignores the proxy for https.
 - AIBOX=1 is set in every process.

@@ -1,14 +1,21 @@
 # Running Claude Code
 
-Go to your project folder and start aibox:
+Go to your project folder, let aibox suggest the hosts its tools need, and
+start it:
 
 ```
 cd ~/projects/my-app
+aibox config suggest
 aibox run
 ```
 
-aibox boots the VM, mounts the project at `/project` and starts Claude Code
-there. Log in like you would on your machine. aibox keeps the login for the
+The VM only reaches the hosts you allow. `aibox config suggest` looks at the
+files in your project, like `go.mod` or `package.json`, and offers the
+[presets](config.md#suggesting-presets) for them. It asks before it adds
+them.
+
+`aibox run` boots the VM, mounts the project at `/project` and starts Claude
+Code there. Log in like you would on your machine. aibox keeps the login for the
 next run in this project.
 
 Each project has a VM home of its own, so you log in once for each project.

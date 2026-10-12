@@ -170,11 +170,11 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
-	started := time.Now()
+	before := sessions(r.project.Home)
 	err = deps.backend.Run(ctx, spec)
 	r.proxyLog.Summarize()
 
-	if id, ok := lastSession(r.project.Home, started); ok {
+	if id, ok := lastSession(before, sessions(r.project.Home)); ok {
 		_, _ = fmt.Fprintf(deps.stderr, "aibox: to go on with this session, run aibox run --resume %s\n", id)
 	}
 
@@ -971,13 +971,36 @@ func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
 	return cmd.Int(flag)
 }
 
-// lastSession returns the ID of the Claude Code session in the VM home whose
-// file changed last, if one changed since then. The VM writes these
-// folders, so only names that are session IDs count.
-func lastSession(vmHome string, since time.Time) (string, bool) {
+// lastSession returns the ID of the session that changed last from before
+// to after, if one changed. Comparing the times of the files with each
+// other needs no clock of the host or the VM.
+func lastSession(before, after map[string]time.Time) (string, bool) {
+	var last string
+
+	var latest time.Time
+
+	for id, changed := range after {
+		if old, ok := before[id]; ok && old.Equal(changed) {
+			continue
+		}
+
+		if last == "" || changed.After(latest) {
+			last, latest = id, changed
+		}
+	}
+
+	return last, last != ""
+}
+
+// sessions are the Claude Code sessions in the VM home, with the time each
+// file changed last. The VM writes these folders, so only names that are
+// session IDs count.
+func sessions(vmHome string) map[string]time.Time {
+	found := map[string]time.Time{}
+
 	root, err := os.OpenRoot(vmHome)
 	if err != nil {
-		return "", false
+		return found
 	}
 
 	defer func() { _ = root.Close() }()
@@ -986,12 +1009,8 @@ func lastSession(vmHome string, since time.Time) (string, bool) {
 
 	folders, err := readRootDir(root, projects)
 	if err != nil {
-		return "", false
+		return found
 	}
-
-	var last string
-
-	latest := since
 
 	for _, folder := range folders {
 		if !folder.IsDir() {
@@ -1009,21 +1028,22 @@ func lastSession(vmHome string, since time.Time) (string, bool) {
 				continue
 			}
 
-			info, err := file.Info()
-			if err != nil || info.ModTime().Before(latest) {
-				continue
+			if info, err := file.Info(); err == nil {
+				found[id] = info.ModTime()
 			}
-
-			last, latest = id, info.ModTime()
 		}
 	}
 
-	return last, last != ""
+	return found
 }
 
 // readRootDir reads a folder of the root without waiting, since the VM
 // could have left a FIFO there.
 func readRootDir(root *os.Root, name string) ([]fs.DirEntry, error) {
+	if err := refuseLink(root, name); err != nil {
+		return nil, err
+	}
+
 	dir, err := root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
 	if err != nil {
 		return nil, err

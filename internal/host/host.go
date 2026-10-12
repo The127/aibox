@@ -35,6 +35,10 @@ const (
 // which the console log usually explains.
 var ErrNoTerminal = errors.New("the VM ended before its terminal came up")
 
+// ErrVMGone is a VM that ended while the command in it still ran, which
+// the console log usually explains.
+var ErrVMGone = errors.New("the VM ended while the command in it ran")
+
 // Session is the terminal of the person on Stdin and Stdout, and the
 // variables for the command in the VM, as NAME=value. EndDelay is how long
 // the session may go on after the VM stopped, to show its last output. With
@@ -176,8 +180,9 @@ func (c *capped) Write(b []byte) (int, error) {
 }
 
 // Result is how the run ended: the error of the VM itself, a VM that never
-// connected, with the console log that likely says why, the error of the
-// session, or the exit code of the command in the VM.
+// connected or one that ended while its command ran, with the console log
+// that likely says why, the error of the session, or the exit code of the
+// command in the VM.
 func Result(vmErr error, ended Outcome, consoleLog string) error {
 	switch {
 	case vmErr != nil:
@@ -186,6 +191,10 @@ func Result(vmErr error, ended Outcome, consoleLog string) error {
 		return fmt.Errorf("%w, see %s", ErrNoTerminal, consoleLog)
 	case !ended.attached:
 		return ErrNoTerminal
+	case errors.Is(ended.err, session.ErrNoExit) && consoleLog != "":
+		return fmt.Errorf("%w, see %s", ErrVMGone, consoleLog)
+	case errors.Is(ended.err, session.ErrNoExit):
+		return ErrVMGone
 	case ended.err != nil:
 		return ended.err
 	case ended.code != 0:

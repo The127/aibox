@@ -102,7 +102,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		return err
 	}
 
-	r, err := openProjectRun(ctx, deps, cmd, cwd, aibox)
+	r, err := openProjectRun(ctx, deps, cmd, cwd, aibox, lockRunOf)
 	if err != nil {
 		return err
 	}
@@ -203,10 +203,12 @@ type projectRun struct {
 	// for an image the person gave
 	kernelDigest string
 	project      project.Project
-	config       config.Config
-	mounts       []backend.Mount
-	env          []string
-	log          *os.File
+	// lock is the lock of the project the command holds while it runs
+	lock   *os.File
+	config config.Config
+	mounts []backend.Mount
+	env    []string
+	log    *os.File
 	// proxyLog writes the hosts the proxy connected to or refused into log
 	proxyLog *proxy.Log
 	// forwarder sends the requests of Claude Code to the Claude API with
@@ -228,7 +230,9 @@ type projectRun struct {
 	clipboard *clipboard.Gate
 }
 
-func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string) (projectRun, error) {
+// openProjectRun takes the lock of the project with lock, before it makes
+// the home, so that a reset or a remove never works in a home a VM uses.
+func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cwd, aibox string, lock func(dir string) (*os.File, error)) (projectRun, error) {
 	for _, flag := range []string{"memory", "cpus"} {
 		if cmd.Int(flag) < 1 {
 			return projectRun{}, fmt.Errorf("--%s must be at least 1", flag)
@@ -251,6 +255,29 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 		return projectRun{}, err
 	}
 
+	at, err := project.At(filepath.Join(aibox, "projects"), cwd)
+	if err != nil {
+		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
+	}
+
+	held, err := lock(at.Dir)
+	if err != nil {
+		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
+	}
+
+	r, err := openLockedProjectRun(ctx, deps, cwd, aibox, vmImage, kernelDigest)
+	if err != nil {
+		_ = held.Close()
+
+		return projectRun{}, err
+	}
+
+	r.lock = held
+
+	return r, nil
+}
+
+func openLockedProjectRun(ctx context.Context, deps dependencies, cwd, aibox, vmImage, kernelDigest string) (projectRun, error) {
 	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
 	if err != nil {
 		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
@@ -319,6 +346,10 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 func (r projectRun) close() {
 	_ = r.log.Close()
 	closeKeys(r.sshKeys)
+
+	if r.lock != nil {
+		_ = r.lock.Close()
+	}
 }
 
 func closeKeys(keys sshKeys) {

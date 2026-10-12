@@ -75,3 +75,31 @@ func TestLockWaits(t *testing.T) {
 	require.NoError(t, first.Close())
 	assert.NoError(t, <-locked)
 }
+
+func TestLockShared(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "lock")
+
+	// shared locks hold the file together
+	first := open(t, path)
+	require.NoError(t, filelock.LockShared(first, false))
+
+	second := open(t, path)
+	require.NoError(t, filelock.LockShared(second, false))
+
+	// and keep the exclusive lock out
+	third := open(t, path)
+	assert.ErrorIs(t, filelock.Lock(third, false), filelock.ErrLocked)
+
+	// until both let go
+	require.NoError(t, first.Close())
+	assert.ErrorIs(t, filelock.Lock(third, false), filelock.ErrLocked)
+
+	require.NoError(t, second.Close())
+	assert.NoError(t, filelock.Lock(third, false))
+
+	// which keeps a shared lock out in turn
+	fourth := open(t, path)
+	assert.ErrorIs(t, filelock.LockShared(fourth, false), filelock.ErrLocked)
+}

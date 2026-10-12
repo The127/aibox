@@ -297,9 +297,10 @@ task. The mounts from the config and your skills are, read-only like with
 
 Each task gets a new state disk, which the init formats. The home folder and
 the project are folders on that disk. aibox deletes the disk's file as soon
-as the VM has opened it, so the disk is gone when the VM is. Tasks don't
-lock the project, so they can run next to each other and next to
-`aibox run`.
+as the VM has opened it, so the disk is gone when the VM is. Tasks share a
+lock on the project, so they can run next to each other and next to
+`aibox run`, but `aibox projects remove` leaves the project alone while one
+runs.
 
 Then the init clones the bundle, removes the remote and switches to the
 branch `aibox/task`. It runs `claude --print` as the user, with

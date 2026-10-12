@@ -118,7 +118,7 @@ func newRootCommand(deps dependencies) *cli.Command {
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
-		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), configCommand(deps), clipboardCommand(), fenceCommand()}, platformCommands(deps)...),
+		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), projectsCommand(deps), configCommand(deps), clipboardCommand(), fenceCommand()}, platformCommands(deps)...),
 	}
 }
 

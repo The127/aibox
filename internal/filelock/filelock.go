@@ -16,5 +16,12 @@ var ErrLocked = errors.New("the file is locked by another process")
 // Lock takes the exclusive lock on the file. Unless it waits, it returns
 // ErrLocked while another process holds the lock.
 func Lock(file *os.File, wait bool) error {
-	return lock(file, wait)
+	return lock(file, true, wait)
+}
+
+// LockShared takes a shared lock on the file, which other shared locks
+// may hold too, but not an exclusive one. Unless it waits, it returns
+// ErrLocked while another process holds the exclusive lock.
+func LockShared(file *os.File, wait bool) error {
+	return lock(file, false, wait)
 }

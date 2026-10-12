@@ -40,6 +40,8 @@ path:
 | `console.log` | The kernel and init messages of the last run. |
 | `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. |
 | `tasks/` | The project's [tasks](tasks.md). |
+| `path` | The project's path, for `aibox projects list`. |
+| `run.lock`, `tasks.lock` | Locked while the project runs or a task runs, so that a reset or a remove leaves it alone. |
 
 Tools you install into `/usr/local` in the VM stay on the state disk. They
 survive restarts and new images. Caches with lots of small files, like Go's
@@ -50,6 +52,52 @@ The disk only takes up space on your machine as it fills, up to the size you
 set with [`disk`](config.md#disk). The VM formats it on the first boot. It
 won't format a disk that has data on it but no ext4 file system, so a broken
 disk never gets wiped.
+
+## Starting over
+
+The VM's home folder and state disk stay between runs. That's how your
+login and your tools survive. But it also means a session can leave
+something behind for the next one. That might be a broken tool or a full
+disk, or a line in `~/.claude/CLAUDE.md` that something in the project
+slipped in. To start the VM over, run this in the project folder:
+
+```
+aibox projects reset
+```
+
+This clears the VM's home folder and deletes its state disk. The next run
+makes a new disk, at the size [`disk`](config.md#disk) says. Your config,
+the logs and the tasks stay, and so does Claude Code's login.
+
+If you think a session was steered, add `--logout`. Then the login goes
+too. The VM can write the login file, so a steered session could have put
+someone else's login there, and your next sessions would work in their
+account.
+
+aibox asks before it changes anything. Without a terminal, pass `--yes`.
+It refuses while the project runs.
+
+## Removing a project
+
+aibox never removes a project's folder on its own. To see the projects it
+keeps a folder for, run:
+
+```
+aibox projects list
+```
+
+To remove everything aibox keeps for a project, run this in the project
+folder, or pass the project's path:
+
+```
+aibox projects remove
+aibox projects remove ~/projects/old-app
+```
+
+That removes the config, the VM's home folder with the login, the state
+disk, the logs and the tasks. Your project folder itself stays as it is.
+This works for a project whose folder you already moved or deleted too.
+aibox asks first, and refuses while the project or one of its tasks runs.
 
 ## In your IDE
 

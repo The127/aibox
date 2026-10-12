@@ -23,9 +23,15 @@ func getwd() (string, error) {
 		return "", err
 	}
 
-	if resolved, err := realpath.Of(cwd); err == nil && !strings.HasPrefix(filepath.VolumeName(resolved), `\\?\`) {
-		return resolved, nil
+	return spelled(cwd), nil
+}
+
+// spelled is the path as getwd would spell it, so that a path that is
+// typed names the same project as the folder aibox runs in.
+func spelled(path string) string {
+	if resolved, err := realpath.Of(path); err == nil && !strings.HasPrefix(filepath.VolumeName(resolved), `\\?\`) {
+		return resolved
 	}
 
-	return cwd, nil
+	return path
 }

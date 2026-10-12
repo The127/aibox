@@ -112,7 +112,9 @@ A few rules apply:
   absolute path must not end in a link.
 - The file has to be a plain file. For a pipe, use `--file -`.
 - The prompt can be up to 1 MiB of UTF-8 text, the arguments and the file
-  together.
+  together. A file in UTF-8 or UTF-16 with a byte order mark, as Notepad
+  or `>` in Windows PowerShell write them, is fine too. The 1 MiB counts
+  the file as it is saved, so a file in UTF-16 holds about half as much.
 
 A plan you haven't committed only reaches the task as its prompt.
 It's not a file in `/project`.

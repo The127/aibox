@@ -236,7 +236,7 @@ func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
 }
 
 func TestLoadReadsTheSkills(t *testing.T) {
-	for _, skills := range []config.Skills{config.SkillsAll, config.SkillsNone} {
+	for _, skills := range []config.Share{config.ShareAll, config.ShareNone} {
 		t.Run(string(skills), func(t *testing.T) {
 			// arrange
 			path := write(t, "skills: "+string(skills)+"\n")
@@ -273,7 +273,7 @@ func TestLoadRejectsSkillsOtherThanAllOrNone(t *testing.T) {
 			_, err := config.Load(path, "")
 
 			// assert
-			assert.ErrorIs(t, err, config.ErrBadSkills)
+			assert.ErrorIs(t, err, config.ErrBadShare)
 		})
 	}
 }
@@ -1011,4 +1011,37 @@ func TestEnsureDefaultWithoutATemplateWritesTheDefault(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.True(t, cfg.Allow.Allows("api.anthropic.com", "443"))
+}
+
+func TestLoadReadsTheSharesOfTheClaudeSetup(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("agents: none\ncommands: all\nclaude-md: none\nsettings: none\n"), 0o600))
+
+	// act
+	cfg, err := config.Load(path, "")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, config.ShareNone, cfg.Agents)
+	assert.Equal(t, config.ShareAll, cfg.Commands)
+	assert.Equal(t, config.ShareNone, cfg.ClaudeMD)
+	assert.Equal(t, config.ShareNone, cfg.Settings)
+}
+
+func TestLoadRefusesAShareOtherThanAllOrNone(t *testing.T) {
+	for _, field := range []string{"agents", "commands", "claude-md", "settings"} {
+		t.Run(field, func(t *testing.T) {
+			// arrange
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, []byte("memory: 4096\n"+field+": some\n"), 0o600))
+
+			// act
+			_, err := config.Load(path, "")
+
+			// assert
+			require.ErrorIs(t, err, config.ErrBadShare)
+			assert.ErrorContains(t, err, "line 2")
+		})
+	}
 }

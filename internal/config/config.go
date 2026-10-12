@@ -75,8 +75,9 @@ var ErrReservedMount = errors.New("the VM needs this path")
 // contains, that of another entry.
 var ErrMountOverlap = errors.New("mounts overlap")
 
-// ErrBadSkills is a skills setting other than all or none.
-var ErrBadSkills = errors.New("skills must be all or none")
+// ErrBadShare is a setting of skills, agents, commands, claude-md or
+// settings other than all or none.
+var ErrBadShare = errors.New("must be all or none")
 
 // ErrBadPath is a path entry that is neither an absolute folder without a
 // colon nor the name of a variable.
@@ -242,8 +243,15 @@ type Config struct {
 	Disk *int `yaml:"disk"`
 	// Mounts are folders of the host the VM sees read-only.
 	Mounts []Mount `yaml:"mounts"`
-	// Skills says whether the VM sees the skills of the person.
-	Skills Skills `yaml:"skills"`
+	// Skills, Agents and Commands say whether the VM sees those folders of
+	// the person's ~/.claude, ClaudeMD whether it gets their CLAUDE.md, and
+	// Settings whether it gets the settings of theirs that start no program
+	// and hold no secret.
+	Skills   Share `yaml:"skills"`
+	Agents   Share `yaml:"agents"`
+	Commands Share `yaml:"commands"`
+	ClaudeMD Share `yaml:"claude-md"`
+	Settings Share `yaml:"settings"`
 	// IDE says whether Claude Code in the VM may use the IDE that has the
 	// project open.
 	IDE bool `yaml:"ide"`
@@ -300,25 +308,26 @@ func parseVariable(text string) (Variable, error) {
 	return Variable{Name: name, Value: val, FromHost: !hasValue}, nil
 }
 
-// Skills says whether the VM sees the skills of the person. Empty is all.
-type Skills string
+// Share says whether the VM gets a part of the person's Claude Code setup.
+// Empty is all.
+type Share string
 
-// SkillsAll shares all skills of the person, SkillsNone none.
+// ShareAll shares the part, ShareNone doesn't.
 const (
-	SkillsAll  Skills = "all"
-	SkillsNone Skills = "none"
+	ShareAll  Share = "all"
+	ShareNone Share = "none"
 )
 
 // UnmarshalYAML reads all or none. Anything else, also a list, is
-// ErrBadSkills.
-func (s *Skills) UnmarshalYAML(value *yaml.Node) error {
-	if skills := Skills(value.Value); value.Kind == yaml.ScalarNode && (skills == SkillsAll || skills == SkillsNone) {
-		*s = skills
+// ErrBadShare.
+func (s *Share) UnmarshalYAML(value *yaml.Node) error {
+	if share := Share(value.Value); value.Kind == yaml.ScalarNode && (share == ShareAll || share == ShareNone) {
+		*s = share
 
 		return nil
 	}
 
-	return ErrBadSkills
+	return fmt.Errorf("line %d: %q: %w", value.Line, value.Value, ErrBadShare)
 }
 
 // Mount is a folder of the host that the VM sees read-only at Guest. In the
@@ -471,6 +480,16 @@ allow:
 # none. A mount inside /home/user/.claude/skills takes their place, so that
 # the VM sees only the skills you mount there. For example:
 # skills: none
+
+# Whether the VM gets more of your Claude Code setup: your agents and
+# commands in ~/.claude, read-only, and with aibox run your
+# ~/.claude/CLAUDE.md and the settings of ~/.claude/settings.json that start
+# no program and hold no secret, like model and theme. Each is all or none.
+# For example:
+# agents: none
+# commands: none
+# claude-md: none
+# settings: none
 
 # Whether Claude Code in the VM may use the IDE that has the project open,
 # like VS Code: the code you select, diffs in the editor and the errors it

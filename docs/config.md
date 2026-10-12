@@ -54,6 +54,7 @@ disk: 32
 mounts:
   - ~/sdk/go1.26.8:/opt/go
 skills: all
+settings: none
 ide: true
 clipboard: false
 path:
@@ -250,10 +251,47 @@ mounts:
 ```
 
 A symlink in the skills folder that points outside it doesn't work in the
-VM. Your settings, plugins and MCP servers are not shared. The VM starts
-with its own.
+VM.
 
 `aibox run` and tasks get the same skills.
+
+## agents, commands, claude-md, settings
+
+The VM gets more of your Claude Code setup, so it works like on your
+machine:
+
+- `agents` and `commands`: your folders `~/.claude/agents` and
+  `~/.claude/commands`, read-only, like your skills. Tasks get them too.
+- `claude-md`: your `~/.claude/CLAUDE.md`. `aibox run` copies it into the
+  VM's home at each start.
+- `settings`: a few settings of your `~/.claude/settings.json`, like
+  `model` and `theme`. `aibox run` puts them into the VM's own settings at
+  each start, and keeps the others the VM has.
+
+All four are `all` by default. To keep one out, set it to `none`:
+
+```yaml
+claude-md: none
+settings: none
+```
+
+A mount inside `/home/user/.claude/agents` or `/home/user/.claude/commands`
+takes the place of that folder, like with skills.
+
+aibox doesn't remove what it put into the VM's home before. If you delete
+your `CLAUDE.md` or a setting, or turn one of them off, the VM keeps the last
+copy. [`aibox projects reset`](usage.md#starting-over) starts the VM's home
+over. When the VM left something there that keeps a file from going in,
+aibox says so and starts the VM anyway.
+
+Only these settings come along: `model`, `theme`, `attribution`,
+`includeCoAuthoredBy`, `outputStyle` and `alwaysThinkingEnabled`. Settings
+that start a program or hold a secret stay on your machine: `hooks`, `env`,
+`apiKeyHelper`, `statusLine` and the permissions. So do your plugins and
+your MCP servers. The VM starts with its own.
+
+A task starts with an empty home folder, so it doesn't get your
+`CLAUDE.md` or your settings.
 
 ## ide
 

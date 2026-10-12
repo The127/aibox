@@ -297,10 +297,20 @@ func forwardResizes(s *ssh.Session, resized <-chan Size, stop <-chan struct{}) {
 	}
 }
 
+// ErrNoExit is a session that ended without the exit of its command, as one
+// does whose VM went away while the command ran: the init that serves the
+// session ends only with the VM.
+var ErrNoExit = errors.New("the session ended before its command did")
+
 func exitCode(err error) (int, error) {
 	var exitErr *ssh.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitStatus(), nil
+	}
+
+	var missing *ssh.ExitMissingError
+	if errors.As(err, &missing) {
+		return 0, ErrNoExit
 	}
 
 	if err != nil {

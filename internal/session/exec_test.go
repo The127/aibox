@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"io"
+	"net"
 	"strings"
 	"syscall"
 	"testing"
@@ -49,6 +50,8 @@ type execFixture struct {
 	errors    *syncBuffer
 	served    chan error
 	ran       chan attachResult
+	// guest is the end of the connection on the side of the VM
+	guest net.Conn
 }
 
 func newExecFixture(t *testing.T, input io.Reader, options ...func(*fakePiped)) *execFixture {
@@ -93,6 +96,7 @@ func newExecFixture(t *testing.T, input io.Reader, options ...func(*fakePiped)) 
 	client := session.Exec{In: input, Out: f.out, Errors: f.errors, Env: []string{"TASK_ID=42"}}
 
 	guestSide, hostSide := connPair(t)
+	f.guest = guestSide
 
 	go func() { f.served <- session.Serve(guestSide, start) }()
 
@@ -234,4 +238,25 @@ func TestExecSucceedsWhenTheCommandEndsWithoutReadingAllInput(t *testing.T) {
 	require.NoError(t, served)
 	require.NoError(t, ran.err)
 	assert.Equal(t, 0, ran.code)
+}
+
+func TestExecTellsOfASessionThatEndsBeforeItsCommand(t *testing.T) {
+	// arrange
+	f := newExecFixture(t, strings.NewReader(""))
+
+	// the command runs: what it prints comes after the start
+	_, err := io.WriteString(f.prints, "working")
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return f.out.String() == "working" }, patience, 10*time.Millisecond)
+
+	// act: the VM goes away while the command runs
+	require.NoError(t, f.guest.Close())
+
+	// assert
+	select {
+	case ran := <-f.ran:
+		assert.ErrorIs(t, ran.err, session.ErrNoExit)
+	case <-time.After(patience):
+		t.Fatal("Run did not return")
+	}
 }

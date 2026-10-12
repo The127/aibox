@@ -257,3 +257,49 @@ func TestTheConsoleLogKeepsItsLimitAndTakesTheRest(t *testing.T) {
 	assert.Equal(t, host.MaxConsoleLogBytes, log.Len())
 	assert.True(t, strings.HasSuffix(log.String(), "xy"))
 }
+
+// runningProcess is a command that runs until the test ends.
+type runningProcess struct {
+	pipedProcess
+
+	done chan struct{}
+}
+
+func (p *runningProcess) Wait() (int, error) {
+	<-p.done
+
+	return 0, nil
+}
+
+func TestAVMThatEndsWhileItsCommandRunsSaysSo(t *testing.T) {
+	// arrange
+	listener := listen(t)
+	out := &syncBuffer{}
+	end := host.ServeTerminal(context.Background(), listener, host.Session{Stdout: out, Errors: io.Discard, EndDelay: 5 * time.Second})
+
+	output, prints := io.Pipe()
+	running := &runningProcess{pipedProcess: pipedProcess{process: process{output: output}, stderr: strings.NewReader("")}, done: make(chan struct{})}
+	t.Cleanup(func() { close(running.done) })
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+
+	go func() {
+		_ = session.Serve(conn, func(session.Request) (session.Process, error) { return running, nil })
+	}()
+
+	_, err = io.WriteString(prints, "working")
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return out.String() == "working" }, 5*time.Second, 10*time.Millisecond)
+
+	// act: the VM goes away
+	require.NoError(t, conn.Close())
+
+	ended := end()
+
+	// assert
+	err = host.Result(nil, ended, "/p/console.log")
+	require.ErrorIs(t, err, host.ErrVMGone)
+	assert.ErrorContains(t, err, "see /p/console.log")
+	assert.ErrorIs(t, host.Result(nil, ended, ""), host.ErrVMGone)
+}

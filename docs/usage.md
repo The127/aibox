@@ -67,7 +67,8 @@ aibox projects reset
 
 This clears the VM's home folder and deletes its state disk. The next run
 makes a new disk, at the size [`disk`](config.md#disk) says. Your config,
-the logs and the tasks stay, and so does Claude Code's login.
+the logs and the tasks stay, and so does Claude Code's login. Claude Code
+asks for your color theme again, since its other settings are gone.
 
 If you think a session was steered, add `--logout`. Then the login goes
 too. The VM can write the login file, so a steered session could have put

@@ -103,6 +103,7 @@ const imagePath = "/usr/local/bin:/usr/bin:/bin"
 type Options struct {
 	Console      string
 	Shell        bool
+	Resume       string
 	Task         bool
 	HyperV       bool
 	ProxyPort    uint32
@@ -319,6 +320,12 @@ func ParseCmdline(cmdline string) (Options, error) {
 			}
 		case "aibox.shell":
 			options.Shell = true
+		case "aibox.resume":
+			if err := vm.CheckSessionID(value); err != nil {
+				errs = append(errs, fmt.Errorf("aibox.resume=%w", err))
+			} else {
+				options.Resume = value
+			}
 		case "aibox.task":
 			options.Task = true
 		case "aibox.hyperv":
@@ -387,6 +394,10 @@ func parsePort(key, value string) (uint32, error) {
 // of the image. The other variables aibox sets itself keep their values.
 func Command(options Options, terminal *os.File, request session.Request) *exec.Cmd {
 	name, args := claude, []string{"--append-system-prompt-file", prompt}
+	if options.Resume != "" {
+		args = append(args, "--resume", options.Resume)
+	}
+
 	if options.Shell {
 		name, args = bash, []string{"-l"}
 	}

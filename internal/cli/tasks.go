@@ -54,7 +54,12 @@ func runClean(deps dependencies, all bool, olderThan time.Duration) error {
 		return fmt.Errorf("open the project folder: %w", err)
 	}
 
-	result, err := cleanTasks(filepath.Join(p.Dir, "tasks"), all, time.Now().Add(-olderThan))
+	var before time.Time
+	if olderThan > 0 {
+		before = time.Now().Add(-olderThan)
+	}
+
+	result, err := cleanTasks(filepath.Join(p.Dir, "tasks"), all, before)
 
 	what := "the inputs of"
 	if all {
@@ -93,8 +98,9 @@ type cleaned struct {
 
 // cleanTasks removes the bundle of the input, or with all the whole folder,
 // of every task in the folder of the tasks that ended and started before
-// before. A task that runs holds its lock, and its folder stays. A folder
-// without a lock file counts as one of a task that ended: a task locks
+// before. A zero before checks no age: every task that ended counts. A
+// task that runs holds its lock, and its folder stays. A folder without a
+// lock file counts as one of a task that ended: a task locks
 // its lock before it makes its folder. cleanTasks also removes what is
 // left of tasks that failed to start over a minute ago: a lock without
 // its folder, and a folder an aibox from before the lock was beside the
@@ -174,7 +180,10 @@ func cleanTasks(tasks string, all bool, before time.Time) (cleaned, error) {
 					errs = append(errs, fmt.Errorf("remove %s: %w", name, err))
 				}
 			}
-		case !startedBefore(entry, before):
+
+		// without an age every task that ended counts, also one whose folder
+		// has a time after now, as a folder just made can have on Windows
+		case !before.IsZero() && !startedBefore(entry, before):
 		case all:
 			if err := root.RemoveAll(name); err != nil {
 				errs = append(errs, fmt.Errorf("remove the task %s: %w", name, err))

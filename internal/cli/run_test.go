@@ -23,6 +23,7 @@ import (
 	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/gitconfig"
 	"github.com/the127/aibox/internal/project"
+	"github.com/the127/aibox/internal/vm"
 )
 
 type fakeLaunch struct {
@@ -185,6 +186,46 @@ func TestRunWithShell(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.True(t, f.launch.spec.Shell)
+}
+
+func TestRunWithResume(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", f.launch.spec.Resume)
+}
+
+func TestRunRefusesResumeWithShell(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--shell", "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e")
+
+	// assert
+	require.ErrorIs(t, err, errResumeShell)
+	assert.False(t, f.launch.called)
+}
+
+func TestRunRefusesAResumeThatIsNoSessionID(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--resume", "my session")
+
+	// assert
+	require.ErrorIs(t, err, vm.ErrBadSessionID)
+	assert.ErrorContains(t, err, "my session")
+	assert.False(t, f.launch.called)
 }
 
 func TestRunSharesTheProjectAndItsHome(t *testing.T) {

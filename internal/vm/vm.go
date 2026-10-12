@@ -2,7 +2,9 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -26,12 +28,29 @@ const ClipboardPort uint16 = 3132
 // mounts an overlay for what it has to write.
 const RootCmdline = "root=/dev/vda rootfstype=ext4 ro console=hvc0 quiet"
 
+// ErrBadSessionID is a session ID that is not a lowercase UUID, which is
+// the form Claude Code gives its sessions.
+var ErrBadSessionID = errors.New("not a Claude Code session ID")
+
+var sessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// CheckSessionID returns ErrBadSessionID unless id is a Claude Code session
+// ID.
+func CheckSessionID(id string) error {
+	if !sessionID.MatchString(id) {
+		return fmt.Errorf("%q: %w", id, ErrBadSessionID)
+	}
+
+	return nil
+}
+
 // reboot=t makes the kernel reset the machine with a triple fault, which
 // -no-reboot below turns into a QEMU exit.
 const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk and keeps its state
-// on a second disk. Shell boots it into a shell instead of Claude Code, Task
+// on a second disk. Shell boots it into a shell instead of Claude Code,
+// Resume is the ID of the session Claude Code goes on with, or empty, Task
 // runs the task of the task share unattended. HyperV tells the guest it
 // runs on Hyper-V, which shares the folders of the host over Plan 9 and has
 // SCSI disks, instead of virtio-fs and virtio disks.
@@ -50,6 +69,7 @@ type Machine struct {
 	CPUs         int
 	Shares       []Share
 	Shell        bool
+	Resume       string
 	Task         bool
 	HyperV       bool
 	ProxyPort    uint32
@@ -182,6 +202,10 @@ func (m Machine) GuestWords() []string {
 	var words []string
 	if m.Shell {
 		words = append(words, "aibox.shell")
+	}
+
+	if m.Resume != "" {
+		words = append(words, "aibox.resume="+m.Resume)
 	}
 
 	if m.Task {

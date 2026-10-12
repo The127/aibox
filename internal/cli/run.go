@@ -375,7 +375,7 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 			OnConnected: r.proxyLog.Connected,
 			OnRefused:   r.proxyLog.Refused,
 			OnClosed:    r.proxyLog.Closed,
-			Hint:        "Add it to " + r.project.Config + " to allow it.",
+			Hint:        allowHint(r.project.Config),
 		},
 		Ports:    r.config.Allow.Ports(),
 		Loopback: r.config.Allow.LoopbackPorts(),
@@ -911,4 +911,23 @@ func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
 	}
 
 	return cmd.Int(flag)
+}
+
+// allowHint says where to allow a refused target, and which preset
+// allows it, when one does.
+func allowHint(configFile string) func(target string) string {
+	return func(target string) string {
+		hint := "Add it to " + configFile + " to allow it."
+
+		host, port, err := net.SplitHostPort(target)
+		if err != nil {
+			return hint
+		}
+
+		if preset, ok := config.PresetFor(host, port); ok {
+			hint += " preset:" + preset + " allows it."
+		}
+
+		return hint
+	}
 }

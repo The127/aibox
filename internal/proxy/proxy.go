@@ -37,8 +37,9 @@ type Options struct {
 	// OnClosed is called with the host:port of each request the proxy
 	// reached once its tunnel has closed.
 	OnClosed func(target string)
-	// Hint is a line added to each refusal, such as where to allow the host.
-	Hint string
+	// Hint returns a line added to each refusal of the target, such as
+	// where to allow it, or nothing.
+	Hint func(target string) string
 	// Resolve looks a host name up. Nil uses the system resolver.
 	Resolve func(ctx context.Context, host string) ([]net.IP, error)
 	// Local returns the handler that answers a target itself, over HTTP in
@@ -291,8 +292,10 @@ func (l *oneConn) Addr() net.Addr { return l.conn.LocalAddr() }
 // when the host is missing from the list.
 func refuse(conn net.Conn, target, reason string, options Options) {
 	body := "aibox: " + target + " " + reason + "\n"
-	if reason == reasonNotAllowed && options.Hint != "" {
-		body += options.Hint + "\n"
+	if reason == reasonNotAllowed && options.Hint != nil {
+		if hint := options.Hint(target); hint != "" {
+			body += hint + "\n"
+		}
 	}
 
 	writeError(conn, http.StatusForbidden, body)

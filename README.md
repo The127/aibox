@@ -123,7 +123,8 @@ aibox config edit
 ```
 
 Presets like `preset:go`, `preset:npm` and `preset:github` stand for the
-hosts a tool needs. `proxy.log` in the project's folder in
+hosts a tool needs. `aibox config suggest` suggests presets from the files
+in your project. `proxy.log` in the project's folder in
 `~/.aibox/projects` shows each host the proxy connected to or refused.
 
 Note that the VM can change anything in your project folder, `.git`

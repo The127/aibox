@@ -62,7 +62,7 @@ func TestBackendPassesTheHostSideOptionsOn(t *testing.T) {
 		Env:         []string{"A=b"},
 		Ports:       []uint16{22, 443},
 		ConsoleLog:  "/log/console",
-		Proxy:       proxy.Options{Hint: "hint"},
+		Proxy:       proxy.Options{Hint: func(string) string { return "hint" }},
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
@@ -79,7 +79,7 @@ func TestBackendPassesTheHostSideOptionsOn(t *testing.T) {
 	assert.Equal(t, []string{"A=b"}, options.Env)
 	assert.Equal(t, []uint16{22, 443}, options.Ports)
 	assert.Equal(t, "/log/console", options.ConsoleLog)
-	assert.Equal(t, "hint", options.Proxy.Hint)
+	assert.Equal(t, "hint", options.Proxy.Hint("example.com:443"))
 	assert.Same(t, os.Stdin, options.Stdin)
 	assert.Same(t, os.Stdout, options.Stdout)
 	assert.Same(t, os.Stderr, options.Stderr)

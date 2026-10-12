@@ -548,7 +548,7 @@ func TestServeRefusesANameThatResolvesToTheHostItself(t *testing.T) {
 	address := serve(t, proxy.Options{
 		Resolve:   resolveTo("127.0.0.1"),
 		OnRefused: func(host string) { refused <- host },
-		Hint:      "Add it to /somewhere/config.yaml to allow it.",
+		Hint:      func(string) string { return "Add it to /somewhere/config.yaml to allow it." },
 	})
 
 	// act
@@ -662,7 +662,7 @@ func TestServeSaysWhatItRefused(t *testing.T) {
 	// arrange
 	address := serve(t, proxy.Options{
 		Allow: func(string, string) bool { return false },
-		Hint:  "Add it to /somewhere/config.yaml to allow it.",
+		Hint:  func(string) string { return "Add it to /somewhere/config.yaml to allow it." },
 	})
 
 	// act

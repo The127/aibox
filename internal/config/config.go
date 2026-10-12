@@ -229,6 +229,25 @@ func PresetFor(host, port string) (string, bool) {
 	return "", false
 }
 
+// AllowHint says where to allow a refused target, and which preset
+// allows it, when one does.
+func AllowHint(configFile string) func(target string) string {
+	return func(target string) string {
+		hint := "Add it to " + configFile + " to allow it."
+
+		host, port, err := net.SplitHostPort(target)
+		if err != nil {
+			return hint
+		}
+
+		if preset, ok := PresetFor(host, port); ok {
+			hint += " preset:" + preset + " allows it."
+		}
+
+		return hint
+	}
+}
+
 // Config holds the settings of one project. Memory and CPUs are nil when
 // the file does not set them.
 type Config struct {
@@ -879,6 +898,12 @@ func checkLoopback(hosts Hosts) error {
 // the host, ascending. The VM has them on its own loopback.
 func (h Hosts) LoopbackPorts() []uint16 {
 	return h.ports(func(e entry) bool { return e.loopback() != nil })
+}
+
+// RemotePorts are the distinct ports of the entries off the loopback of
+// the host, ascending.
+func (h Hosts) RemotePorts() []uint16 {
+	return h.ports(func(e entry) bool { return e.loopback() == nil })
 }
 
 // Pinned returns the addresses a name stands for without asking DNS. For

@@ -3,11 +3,15 @@ package hvlaunch
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/Microsoft/go-winio/pkg/guid"
@@ -15,10 +19,12 @@ import (
 
 	"github.com/the127/aibox/internal/appcontainer"
 	"github.com/the127/aibox/internal/backend"
+	"github.com/the127/aibox/internal/config"
 	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/hvservice"
 	"github.com/the127/aibox/internal/hvshares"
 	"github.com/the127/aibox/internal/hvsock"
+	"github.com/the127/aibox/internal/hvvm"
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/ninefs"
 	"github.com/the127/aibox/internal/vm"
@@ -48,6 +54,12 @@ var (
 	// ErrSharesGone is a helper that served the folders of the VM and
 	// ended, after which the VM has them no more.
 	ErrSharesGone = errors.New("the helper that serves the folders of the VM ended")
+	// ErrProxyGone is a helper that served the proxy of the VM and ended,
+	// after which the VM reaches nothing.
+	ErrProxyGone = errors.New("the helper that serves the proxy of the VM ended")
+	// ErrOldService is a service that made the VM no container, which
+	// one older than aibox does.
+	ErrOldService = errors.New("the service made the VM no container, as one older than aibox does: install the service again")
 )
 
 // Backend runs the VM through the service. BootTimeout is how long the
@@ -61,12 +73,14 @@ type Backend struct {
 
 	// dial connects to the service, listen listens on a port of the VM,
 	// console takes the pipe of its console under the handle the service
-	// put into this process and shares serves the folders of the VM from a
-	// helper in the job, which the tests fake
+	// put into this process, shares serves the folders of the VM from a
+	// helper in the job and proxy serves its proxy from one in the
+	// container, or in none, which the tests fake
 	dial    func(ctx context.Context) (net.Conn, error)
 	listen  func(vm guid.GUID, port uint32) (net.Listener, error)
 	console func(handle uint64) consoleSource
-	shares  func(ctx context.Context, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error)
+	shares  func(ctx context.Context, self string, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error)
+	proxy   func(ctx context.Context, container *container, s hvvm.Spec, c hvvm.Config) (helper, error)
 }
 
 var _ backend.Backend = Backend{}
@@ -76,6 +90,12 @@ var _ backend.Backend = Backend{}
 type helper interface {
 	io.Closer
 	Done() <-chan struct{}
+}
+
+// container is the AppContainer the service let reach the network of
+// the VM, by its name and SID.
+type container struct {
+	name, sid string
 }
 
 // NewBackend returns the Backend with its default timeouts.
@@ -88,6 +108,7 @@ func NewBackend() Backend {
 		listen:          hvsock.Listen,
 		console:         consoleOf,
 		shares:          startShares,
+		proxy:           startProxy,
 	}
 }
 
@@ -136,6 +157,12 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return err
 	}
 
+	// the helpers are aibox itself, under their commands
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find aibox for its helpers: %w", err)
+	}
+
 	// the helpers of the run end with it, or with aibox, however it ends
 	job, err := appcontainer.NewJob()
 	if err != nil {
@@ -158,14 +185,45 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer s.close()
 
-	created, err := s.ask(hvservice.Request{Op: hvservice.OpCreate, Create: &hvservice.Create{
+	// the services the proxy answers itself hold secrets, which aibox
+	// keeps: the helper hands their requests to it, over the loopback
+	services, err := serveServices(spec)
+	if err != nil {
+		return err
+	}
+
+	defer services.stop()
+
+	create := &hvservice.Create{
 		MemoryMiB: m.MemoryMiB,
 		CPUs:      m.CPUs,
 		Cmdline:   cmdline,
 		State:     uint64(state),
-	}})
+	}
+
+	// a helper without its sandbox reaches what the user does
+	if !spec.Unsandboxed {
+		allow := config.Hosts(spec.AllowList)
+		create.Network = &hvservice.Network{Ports: allow.RemotePorts(), Loopback: allow.LoopbackPorts()}
+
+		if services.port != 0 && !slices.Contains(create.Network.Loopback, services.port) {
+			create.Network.Loopback = append(create.Network.Loopback, services.port)
+		}
+	}
+
+	created, err := s.ask(hvservice.Request{Op: hvservice.OpCreate, Create: create})
 	if err != nil {
 		return fmt.Errorf("create the VM: %w", err)
+	}
+
+	var sandbox *container
+
+	if create.Network != nil {
+		if created.Container == "" {
+			return ErrOldService
+		}
+
+		sandbox = &container{name: created.Container, sid: created.ContainerSID}
 	}
 
 	id, err := guid.FromString(created.RuntimeID)
@@ -192,7 +250,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	gone := serveConsole(console, host.ConsoleLog(log))
 
-	shares, err := b.shares(ctx, job, spec.Stderr, hvshares.Config{
+	shares, err := b.shares(ctx, self, job, spec.Stderr, hvshares.Config{
 		VM:     id,
 		Port:   sharesPort,
 		Shares: sharesOf(m.Shares),
@@ -204,13 +262,25 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	defer func() { _ = shares.Close() }()
 
-	proxyListener, err := b.listen(id, proxyPort)
+	proxy, err := b.proxy(ctx, sandbox, hvvm.Spec{
+		Self:   self,
+		Job:    job,
+		Stderr: spec.Stderr,
+		Events: hvvm.Events{OnConnected: spec.Proxy.OnConnected, OnRefused: spec.Proxy.OnRefused, OnClosed: spec.Proxy.OnClosed},
+	}, hvvm.Config{
+		VM:        id,
+		ProxyPort: proxyPort,
+		AllowList: spec.AllowList,
+		AllowFile: spec.AllowFile,
+		Local:     services.local,
+		Services:  services.addr,
+		Token:     services.token,
+	})
 	if err != nil {
 		return err
 	}
 
-	stopProxy := host.ServeProxy(ctx, proxyListener, spec.Proxy, spec.Stderr)
-	defer stopProxy()
+	defer func() { _ = proxy.Close() }()
 
 	terminalListener, err := b.listen(id, terminalPort)
 	if err != nil {
@@ -244,7 +314,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		}
 	}
 
-	vmErr := b.wait(ctx, gone, shares.Done(), terminal, s.stop)
+	vmErr := b.wait(ctx, gone, shares.Done(), proxy.Done(), terminal, s.stop)
 
 	// the VM is gone, so Hyper-V has let go of the console, whose last
 	// lines may still be on their way into the log: they are what explains
@@ -267,9 +337,9 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 }
 
 // wait waits for the VM to be gone by itself, and stops it when the
-// context ends, the guest does not connect in time, starts over or the VM
-// stays up after the session.
-func (b Backend) wait(ctx context.Context, gone, sharesGone <-chan struct{}, terminal *host.Watched, stop func() error) error {
+// context ends, the guest does not connect in time, starts over, the VM
+// stays up after the session or a helper ended.
+func (b Backend) wait(ctx context.Context, gone, sharesGone, proxyGone <-chan struct{}, terminal *host.Watched, stop func() error) error {
 	boot := time.NewTimer(b.BootTimeout)
 	defer boot.Stop()
 
@@ -295,6 +365,8 @@ func (b Backend) wait(ctx context.Context, gone, sharesGone <-chan struct{}, ter
 			return errors.Join(ErrStartedOver, stop())
 		case <-sharesGone:
 			return errors.Join(ErrSharesGone, stop())
+		case <-proxyGone:
+			return errors.Join(ErrProxyGone, stop())
 		case <-boot.C:
 			return errors.Join(fmt.Errorf("%w in %v", ErrNoBoot, b.BootTimeout), stop())
 		case <-ctx.Done():
@@ -381,15 +453,94 @@ type nopCloser struct{ io.Writer }
 
 func (nopCloser) Close() error { return nil }
 
-// startShares starts the helper that serves the folders of the VM: aibox
-// itself, under the command of the helper.
-func startShares(ctx context.Context, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("find aibox for the helper: %w", err)
+// startShares starts the helper that serves the folders of the VM.
+func startShares(ctx context.Context, self string, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error) {
+	return hvshares.Start(ctx, self, job, stderr, c)
+}
+
+// startProxy starts the helper that serves the proxy in the container,
+// whose profile it makes for as long as the helper runs, or in none.
+func startProxy(ctx context.Context, c *container, s hvvm.Spec, config hvvm.Config) (helper, error) {
+	if c == nil {
+		return hvvm.Start(ctx, s, config)
 	}
 
-	return hvshares.Start(ctx, self, job, stderr, c)
+	sid, err := appcontainer.CreateProfile(c.name)
+	if err != nil {
+		return nil, fmt.Errorf("make the container of the helper: %w", err)
+	}
+
+	// the filters of the service are for the SID it gave: a helper in any
+	// other container would reach nothing, or what is someone else's
+	if sid.String() != c.sid {
+		return nil, errors.Join(fmt.Errorf("the container %s is %s, not %s as the service says", c.name, sid, c.sid), appcontainer.DeleteProfile(c.name))
+	}
+
+	s.Container = sid
+
+	h, err := hvvm.Start(ctx, s, config)
+	if err != nil {
+		return nil, errors.Join(err, appcontainer.DeleteProfile(c.name))
+	}
+
+	return profiled{Helper: h, name: c.name}, nil
+}
+
+// profiled is a helper in a container whose profile goes with it.
+type profiled struct {
+	*hvvm.Helper
+	name string
+}
+
+func (p profiled) Close() error {
+	return errors.Join(p.Helper.Close(), appcontainer.DeleteProfile(p.name))
+}
+
+// services are the services of the proxy as aibox serves them to its
+// helper: the ports of the loopback of the VM they answer on, the address
+// on the loopback of the host the helper hands their requests to, and
+// the port of it, and the token they want.
+type services struct {
+	local []uint16
+	addr  string
+	port  uint16
+	token string
+	stop  func()
+}
+
+// serveServices serves the services of the spec, if it has any, on a
+// port of the loopback it picks.
+func serveServices(spec backend.Spec) (services, error) {
+	none := services{stop: func() {}}
+
+	if spec.Proxy.Local == nil {
+		return none, nil
+	}
+
+	for _, port := range spec.Loopback {
+		if spec.Proxy.Local("localhost", strconv.Itoa(int(port))) != nil {
+			none.local = append(none.local, port)
+		}
+	}
+
+	if len(none.local) == 0 {
+		return none, nil
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return services{}, fmt.Errorf("serve the services of the proxy: %w", err)
+	}
+
+	token := make([]byte, 32)
+	_, _ = rand.Read(token)
+
+	s := none
+	s.addr, s.token = l.Addr().String(), hex.EncodeToString(token)
+	s.port = uint16(l.Addr().(*net.TCPAddr).Port) //nolint:gosec // a port of TCP
+	s.stop = hvvm.ServeServices(l, s.token, spec.Proxy.Local)
+
+	return s, nil
 }
 
 // checkShares refuses a share whose folder is none, before the run makes

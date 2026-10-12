@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +25,7 @@ import (
 	"github.com/the127/aibox/internal/hvservice"
 	"github.com/the127/aibox/internal/hvshares"
 	"github.com/the127/aibox/internal/hvsock"
+	"github.com/the127/aibox/internal/hvvm"
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/vhd"
 )
@@ -41,11 +44,15 @@ type fakeService struct {
 	// it refuses a start with, if anything
 	refuse      string
 	refuseStart string
+	// old is a service older than aibox, which makes no container
+	old bool
 	// stateGoneAtStop tells whether the state disk's name was gone when
 	// the VM was stopped, as a task's should be
 	stateGoneAtStop bool
 	state           string
 	onStop          func()
+	// onStart is called as the VM starts, once the helpers serve it
+	onStart func()
 }
 
 func (s *fakeService) dial(context.Context) (net.Conn, error) {
@@ -81,6 +88,10 @@ func (s *fakeService) serve(conn net.Conn) {
 			} else {
 				id, _ := guid.NewV4()
 				reply = hvservice.Reply{RuntimeID: id.String(), Console: aConsoleHandle}
+
+				if request.Create.Network != nil && !s.old {
+					reply.Container, reply.ContainerSID = "aibox.the-container", "S-1-15-2-1"
+				}
 			}
 		case hvservice.OpStop:
 			_, err := os.Stat(s.state)
@@ -93,6 +104,10 @@ func (s *fakeService) serve(conn net.Conn) {
 
 		case hvservice.OpStart:
 			reply.Error = s.refuseStart
+
+			if s.onStart != nil {
+				s.onStart()
+			}
 		}
 
 		s.mu.Unlock()
@@ -120,6 +135,11 @@ type fixture struct {
 	// shared is what the helper of the shares was given
 	shared       *hvshares.Config
 	sharesHelper *fakeHelper
+	// sandbox is the container the helper of the proxy was started in, if
+	// any, and proxied what it was given
+	sandbox     *container
+	proxied     *hvvm.Config
+	proxyHelper *fakeHelper
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -137,6 +157,7 @@ func newFixture(t *testing.T) *fixture {
 
 	f := &fixture{
 		sharesHelper: &fakeHelper{done: make(chan struct{})},
+		proxyHelper:  &fakeHelper{done: make(chan struct{})},
 		service:      &fakeService{state: filepath.Join(dir, "state.ext4")},
 		console:      newFed(),
 		spec: backend.Spec{
@@ -167,10 +188,15 @@ func newFixture(t *testing.T) *fixture {
 
 			return hvsock.Closing(l), nil
 		},
-		shares: func(_ context.Context, _ *appcontainer.Job, _ io.Writer, c hvshares.Config) (helper, error) {
+		shares: func(_ context.Context, _ string, _ *appcontainer.Job, _ io.Writer, c hvshares.Config) (helper, error) {
 			f.shared = &c
 
 			return f.sharesHelper, nil
+		},
+		proxy: func(_ context.Context, c *container, _ hvvm.Spec, config hvvm.Config) (helper, error) {
+			f.sandbox, f.proxied = c, &config
+
+			return f.proxyHelper, nil
 		},
 		console: func(handle uint64) consoleSource {
 			if handle != aConsoleHandle {
@@ -413,4 +439,149 @@ func TestRunRefusesAShareThatIsNoFolderBeforeItMakesAnything(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Empty(t, f.service.asked())
+}
+
+func TestRunServesTheProxyFromAHelperInTheContainerTheServiceLetReachTheAllowList(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+	f.spec.AllowList = []string{"example.com:443", "git.example.com:22", "127.0.0.1:8080"}
+	f.spec.AllowFile = `C:\Users\me\.aibox\projects\repo\config.yaml`
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, ErrNoBoot)
+
+	require.NotNil(t, f.service.made.Network, "the service is asked for the network of the container")
+	assert.Equal(t, []uint16{22, 443}, f.service.made.Network.Ports)
+	assert.Equal(t, []uint16{8080}, f.service.made.Network.Loopback)
+
+	assert.Equal(t, &container{name: "aibox.the-container", sid: "S-1-15-2-1"}, f.sandbox, "the container the service named")
+	require.NotNil(t, f.proxied)
+	assert.Equal(t, uint32(proxyPort), f.proxied.ProxyPort)
+	assert.Equal(t, f.spec.AllowList, f.proxied.AllowList)
+	assert.Equal(t, f.spec.AllowFile, f.proxied.AllowFile)
+	assert.Empty(t, f.proxied.Local, "no services")
+}
+
+func TestRunHandsTheServicesToTheHelperOnALoopbackPortOfItsOwn(t *testing.T) {
+	t.Parallel()
+
+	// arrange: a service on port 3129 of the loopback of the VM
+	f := newFixture(t)
+	f.spec.Loopback = []uint16{8080, 3129}
+	f.spec.AllowList = []string{"127.0.0.1:8080"}
+	f.spec.Proxy.Local = func(host, port string) http.Handler {
+		if host != "localhost" || port != "3129" {
+			return nil
+		}
+
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "answered") })
+	}
+
+	answered := make(chan string, 1)
+	f.service.onStart = func() {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+f.proxied.Services+"/", nil)
+		req.Header.Set("Aibox-Token", f.proxied.Token)
+		req.Header.Set("Aibox-Port", "3129")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			answered <- err.Error()
+
+			return
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		answered <- string(body)
+	}
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, ErrNoBoot)
+	assert.Equal(t, "answered", <-answered, "aibox answers what the helper hands it")
+	assert.Equal(t, []uint16{3129}, f.proxied.Local)
+	assert.NotEmpty(t, f.proxied.Token)
+
+	_, port, err := net.SplitHostPort(f.proxied.Services)
+	require.NoError(t, err)
+	assert.Contains(t, f.service.made.Network.Loopback, mustPort(t, port), "which the container may reach")
+	assert.Contains(t, f.service.made.Network.Loopback, uint16(8080))
+}
+
+func mustPort(t *testing.T, port string) uint16 {
+	t.Helper()
+
+	n, err := strconv.ParseUint(port, 10, 16)
+	require.NoError(t, err)
+
+	return uint16(n)
+}
+
+func TestRunWithoutTheSandboxServesTheProxyFromAHelperInNoContainer(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+	f.spec.Unsandboxed = true
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, ErrNoBoot)
+	assert.Nil(t, f.service.made.Network)
+	require.NotNil(t, f.proxied, "a helper serves the proxy")
+	assert.Nil(t, f.sandbox, "in no container")
+}
+
+func TestRunRefusesAServiceThatMakesNoContainer(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+	f.service.old = true
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, ErrOldService)
+	assert.Nil(t, f.proxied, "no helper runs outside the container")
+	assert.Equal(t, []hvservice.Op{hvservice.OpCreate}, f.service.asked())
+}
+
+func TestRunStopsTheVMWhenTheHelperOfTheProxyEnds(t *testing.T) {
+	t.Parallel()
+
+	// arrange: a VM that runs, with a console that runs
+	f := newFixture(t)
+	f.backend.BootTimeout = time.Minute
+
+	ran := make(chan error, 1)
+
+	go func() { ran <- f.backend.Run(t.Context(), f.spec) }()
+
+	hyperV, guest := net.Pipe()
+	f.service.onStop = func() { _ = guest.Close() }
+	f.console.conns <- hyperV
+
+	// act
+	close(f.proxyHelper.done)
+
+	// assert
+	select {
+	case err := <-ran:
+		assert.ErrorIs(t, err, ErrProxyGone)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run outlived the helper of the proxy")
+	}
+
+	assert.Contains(t, f.service.asked(), hvservice.OpStop)
 }

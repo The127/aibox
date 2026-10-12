@@ -55,6 +55,11 @@ type server struct {
 	host    func() (hvservice.Host, error)
 	create  func(ctx context.Context, id string, doc hcs.Document) (vm, error)
 	logf    func(format string, args ...any)
+	// containerSID is the SID of the AppContainer of the name, and network
+	// lets the container of a SID reach the network, until the function it
+	// returns is called
+	containerSID func(name string) (string, error)
+	network      func(sid string, n hvservice.Network) (func() error, error)
 }
 
 // errOutOfTurn is a request that comes when the VM of the connection
@@ -67,6 +72,8 @@ type session struct {
 	disk    stateDisk
 	release func()
 	started bool
+	// unfilter takes the network of the VM's container away, or is nil
+	unfilter func() error
 }
 
 // serve answers the requests of one connection, from the peer p, and
@@ -186,6 +193,11 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 		return hvservice.Reply{}, err
 	}
 
+	container, containerSID, err := s.container(client, c.Network)
+	if err != nil {
+		return hvservice.Reply{}, err
+	}
+
 	disk, err := p.stateDisk(id.String(), c.State)
 	if err != nil {
 		return hvservice.Reply{}, err
@@ -204,7 +216,13 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 
 	defer s.closeConsole(con)
 
-	doc, err := c.Document(host, s.install, pipe, disk.path, client.SIDs())
+	// the helper in the container listens on the Hyper-V sockets of the VM
+	sids := client.SIDs()
+	if containerSID != "" {
+		sids = append(sids, containerSID)
+	}
+
+	doc, err := c.Document(host, s.install, pipe, disk.path, sids)
 	if err != nil {
 		s.revoke(disk)
 
@@ -236,6 +254,18 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 		return hvservice.Reply{}, err
 	}
 
+	// before the reply, after which aibox starts its helper in the container
+	if c.Network != nil {
+		if sess.unfilter, err = s.network(containerSID, *c.Network); err != nil {
+			s.end(ctx, sess)
+
+			return hvservice.Reply{}, fmt.Errorf("filter the network of the container: %w", err)
+		}
+
+		// the counts, as the ports could be more than an event holds
+		s.logf("the container %s of VM %s may connect to %d ports, and to %d of the loopback", container, id, len(c.Network.Ports), len(c.Network.Loopback))
+	}
+
 	handle, err := con.give()
 	if err != nil {
 		s.end(ctx, sess)
@@ -245,7 +275,37 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 
 	s.logf("created VM %s for %s, with the state disk %s", id, client.User, disk.path)
 
-	return hvservice.Reply{RuntimeID: runtimeID.String(), Console: handle}, nil
+	return hvservice.Reply{RuntimeID: runtimeID.String(), Console: handle, Container: container, ContainerSID: containerSID}, nil
+}
+
+// errContainedClient is a client in a container of its own that asks for
+// the network of another, which may get more of it than its own has.
+var errContainedClient = fmt.Errorf("%w: a client in an AppContainer asks for the network of another", hvservice.ErrBadRequest)
+
+// container is the name and the SID of a container of its own for the VM,
+// when the client asks for a network: the service names it, never after
+// the request.
+func (s *server) container(client hvservice.Client, n *hvservice.Network) (name, sid string, err error) {
+	if n == nil {
+		return "", "", nil
+	}
+
+	if client.AppContainer != "" {
+		return "", "", errContainedClient
+	}
+
+	unique, err := guid.NewV4()
+	if err != nil {
+		return "", "", fmt.Errorf("name the container: %w", err)
+	}
+
+	name = hvservice.ContainerName(unique)
+
+	if sid, err = s.containerSID(name); err != nil {
+		return "", "", fmt.Errorf("find the SID of the container: %w", err)
+	}
+
+	return name, sid, nil
 }
 
 // closeConsole lets go of the service's handle of a console pipe.
@@ -273,6 +333,12 @@ func (s *server) end(ctx context.Context, sess *session) {
 	// with its last handle, so the VM is gone whatever Terminate said
 	if err := sess.vm.Close(); err != nil {
 		s.logf("let go of a VM: %v", err)
+	}
+
+	if sess.unfilter != nil {
+		if err := sess.unfilter(); err != nil {
+			s.logf("take the network of a container away: %v", err)
+		}
 	}
 
 	s.revoke(sess.disk)

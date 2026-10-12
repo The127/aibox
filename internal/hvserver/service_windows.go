@@ -90,6 +90,9 @@ func serve(ctx context.Context, ready func(), logf func(format string, args ...a
 		host:    host,
 		create:  createVM,
 		logf:    logf,
+
+		containerSID: hvservice.ContainerSID,
+		network:      filterNetwork,
 	}
 
 	ready()

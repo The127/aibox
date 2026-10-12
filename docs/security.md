@@ -32,7 +32,7 @@ To report a vulnerability, see
   requests from the VM, but only for the repositories and branches the
   config names. See [Git](git.md).
 - The VM can't read your clipboard whenever it likes. It gets one image,
-  and only right after you press Ctrl+V. See
+  and only right after you press Ctrl+V, or Alt+V on Windows. See
   [Pasting images](usage.md#pasting-images).
 - The programs that run the VM are locked down. On Linux QEMU runs in a
   bubblewrap sandbox, and aibox restricts itself with Landlock and seccomp.
@@ -74,10 +74,11 @@ To report a vulnerability, see
   then accept or edit the diff in the IDE, the IDE writes through the
   symlink. Approve changes in the terminal instead. See
   [In your IDE](usage.md#in-your-ide).
-- Your clipboard right after Ctrl+V. aibox can't tell which program in the
-  VM you pressed the key in. After a Ctrl+V in bash or vim, the VM can read
-  the image on your clipboard too. aibox also counts on your terminal not
-  to echo text a program chose back as input, as current terminals don't.
+- Your clipboard right after Ctrl+V, or Alt+V on Windows. aibox can't
+  tell which program in the VM you pressed the key in. After a Ctrl+V in
+  bash or vim, the VM can read the image on your clipboard too. aibox also
+  counts on your terminal not to echo text a program chose back as input,
+  as current terminals don't.
   A terminal that does lets any program type into it, with or without
   aibox.
 - Gatekeeper on macOS. The VM can set and remove extended attributes on

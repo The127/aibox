@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -169,8 +170,13 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
+	before := sessions(r.project.Home)
 	err = deps.backend.Run(ctx, spec)
 	r.proxyLog.Summarize()
+
+	if id, ok := lastSession(before, sessions(r.project.Home)); ok {
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: to go on with this session, run aibox run --resume %s\n", id)
+	}
 
 	return err
 }
@@ -963,4 +969,87 @@ func flagOrConfig(cmd *cli.Command, flag string, configured *int) int {
 	}
 
 	return cmd.Int(flag)
+}
+
+// lastSession returns the ID of the session that changed last from before
+// to after, if one changed. Comparing the times of the files with each
+// other needs no clock of the host or the VM.
+func lastSession(before, after map[string]time.Time) (string, bool) {
+	var last string
+
+	var latest time.Time
+
+	for id, changed := range after {
+		if old, ok := before[id]; ok && old.Equal(changed) {
+			continue
+		}
+
+		if last == "" || changed.After(latest) {
+			last, latest = id, changed
+		}
+	}
+
+	return last, last != ""
+}
+
+// sessions are the Claude Code sessions in the VM home, with the time each
+// file changed last. The VM writes these folders, so only names that are
+// session IDs count.
+func sessions(vmHome string) map[string]time.Time {
+	found := map[string]time.Time{}
+
+	root, err := os.OpenRoot(vmHome)
+	if err != nil {
+		return found
+	}
+
+	defer func() { _ = root.Close() }()
+
+	projects := filepath.Join(".claude", "projects")
+
+	folders, err := readRootDir(root, projects)
+	if err != nil {
+		return found
+	}
+
+	for _, folder := range folders {
+		if !folder.IsDir() {
+			continue
+		}
+
+		files, err := readRootDir(root, filepath.Join(projects, folder.Name()))
+		if err != nil {
+			continue
+		}
+
+		for _, file := range files {
+			id, ok := strings.CutSuffix(file.Name(), ".jsonl")
+			if !ok || !file.Type().IsRegular() || vm.CheckSessionID(id) != nil {
+				continue
+			}
+
+			if info, err := file.Info(); err == nil {
+				found[id] = info.ModTime()
+			}
+		}
+	}
+
+	return found
+}
+
+// readRootDir reads a folder of the root without waiting, since the VM
+// could have left a FIFO there.
+func readRootDir(root *os.Root, name string) ([]fs.DirEntry, error) {
+	if err := refuseLink(root, name); err != nil {
+		return nil, err
+	}
+
+	dir, err := root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = dir.Close() }()
+
+	return dir.ReadDir(-1)
 }

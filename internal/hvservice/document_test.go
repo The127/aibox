@@ -148,3 +148,13 @@ func TestDocumentRefusesAVMThatDoesNotPassCheck(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, hvservice.ErrBadRequest)
 }
+
+func TestDocumentKeepsTheClockOfTheVMInUTC(t *testing.T) {
+	t.Parallel()
+
+	// act
+	doc := documentOf(t)
+
+	// assert: Linux takes the clock for UTC
+	assert.True(t, doc.VirtualMachine.Chipset.UseUtc)
+}

@@ -70,6 +70,9 @@ type VirtualMachine struct {
 // Chipset is how a VM boots. The only way this package knows is a Linux
 // kernel loaded straight from a file on the host.
 type Chipset struct {
+	// UseUtc keeps the clock of the VM in UTC. Without it the clock is in
+	// the local time of the host, which Linux takes for UTC.
+	UseUtc bool `json:"UseUtc,omitempty"`
 	// LinuxKernelDirect is the kernel the VM boots.
 	LinuxKernelDirect LinuxKernelDirect `json:"LinuxKernelDirect"`
 }

@@ -63,7 +63,7 @@ func (c Create) Document(host Host, install Install, consolePipe, state string, 
 		ShouldTerminateOnLastHandleClosed: true,
 		VirtualMachine: hcs.VirtualMachine{
 			StopOnReset: true,
-			Chipset: hcs.Chipset{LinuxKernelDirect: hcs.LinuxKernelDirect{
+			Chipset: hcs.Chipset{UseUtc: true, LinuxKernelDirect: hcs.LinuxKernelDirect{
 				KernelFilePath: install.Kernel,
 				KernelCmdLine:  c.Cmdline,
 			}},

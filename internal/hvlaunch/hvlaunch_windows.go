@@ -75,12 +75,14 @@ type Backend struct {
 	// console takes the pipe of its console under the handle the service
 	// put into this process, shares serves the folders of the VM from a
 	// helper in the job and proxy serves its proxy from one in the
-	// container, or in none, which the tests fake
+	// container, or in none, and sweep removes the containers of runs
+	// that ended without, which the tests fake
 	dial    func(ctx context.Context) (net.Conn, error)
 	listen  func(vm guid.GUID, port uint32) (net.Listener, error)
 	console func(handle uint64) consoleSource
 	shares  func(ctx context.Context, self string, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error)
 	proxy   func(ctx context.Context, container *container, s hvvm.Spec, c hvvm.Config) (helper, error)
+	sweep   func() error
 }
 
 var _ backend.Backend = Backend{}
@@ -109,6 +111,7 @@ func NewBackend() Backend {
 		console:         consoleOf,
 		shares:          startShares,
 		proxy:           startProxy,
+		sweep:           sweepProfiles,
 	}
 }
 
@@ -261,6 +264,13 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	}
 
 	defer func() { _ = shares.Close() }()
+
+	// a profile left behind is no danger, so it keeps no run from starting
+	if sandbox != nil {
+		if err := b.sweep(); err != nil {
+			_, _ = fmt.Fprintf(spec.Stderr, "aibox: remove the containers of runs that ended: %v\n", err)
+		}
+	}
 
 	proxy, err := b.proxy(ctx, sandbox, hvvm.Spec{
 		Self:   self,
@@ -465,35 +475,45 @@ func startProxy(ctx context.Context, c *container, s hvvm.Spec, config hvvm.Conf
 		return hvvm.Start(ctx, s, config)
 	}
 
+	// before the profile, so that no sweep takes it once it is there
+	held, err := claim(c.name)
+	if err != nil {
+		return nil, err
+	}
+
+	release := func() error { return windows.CloseHandle(held) }
+
 	sid, err := appcontainer.CreateProfile(c.name)
 	if err != nil {
-		return nil, fmt.Errorf("make the container of the helper: %w", err)
+		return nil, errors.Join(fmt.Errorf("make the container of the helper: %w", err), release())
 	}
 
 	// the filters of the service are for the SID it gave: a helper in any
 	// other container would reach nothing, or what is someone else's
 	if sid.String() != c.sid {
-		return nil, errors.Join(fmt.Errorf("the container %s is %s, not %s as the service says", c.name, sid, c.sid), appcontainer.DeleteProfile(c.name))
+		return nil, errors.Join(fmt.Errorf("the container %s is %s, not %s as the service says", c.name, sid, c.sid), appcontainer.DeleteProfile(c.name), release())
 	}
 
 	s.Container = sid
 
 	h, err := hvvm.Start(ctx, s, config)
 	if err != nil {
-		return nil, errors.Join(err, appcontainer.DeleteProfile(c.name))
+		return nil, errors.Join(err, appcontainer.DeleteProfile(c.name), release())
 	}
 
-	return profiled{Helper: h, name: c.name}, nil
+	return profiled{Helper: h, name: c.name, release: release}, nil
 }
 
-// profiled is a helper in a container whose profile goes with it.
+// profiled is a helper in a container whose profile goes with it, and
+// then the claim on its name.
 type profiled struct {
 	*hvvm.Helper
-	name string
+	name    string
+	release func() error
 }
 
 func (p profiled) Close() error {
-	return errors.Join(p.Helper.Close(), appcontainer.DeleteProfile(p.name))
+	return errors.Join(p.Helper.Close(), appcontainer.DeleteProfile(p.name), p.release())
 }
 
 // services are the services of the proxy as aibox serves them to its

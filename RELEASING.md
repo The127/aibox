@@ -43,7 +43,8 @@ the image of its own version from the release and takes it only if its
 SHA-256 is the one built into aibox. A distro package can ship the image in
 `/usr/lib/aibox` on Linux or `/opt/homebrew/lib/aibox` on macOS instead.
 `.goreleaser.yaml` sets these folders as `systemDir`. The amd64 image is
-built with miso, the arm64 image with docker from `image/Containerfile`.
+built with miso, the arm64 image with docker from
+`image/kernel.Containerfile` and `image/Containerfile`.
 
 Building the kernels takes most of the time of a release. The `images`
 workflow keeps them in the GitHub Actions cache and builds them again only

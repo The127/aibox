@@ -6,9 +6,9 @@
 #
 # builds the init of the VM for arm64 into image/aibox-init, so that the
 # image needs no Go toolchain, and leaves out/vmlinuz and out/os.ext4, as
-# miso does on Linux. The stages follow the Imagefile, so that a change to one belongs
-# in the other too. The kernel comes from kernel.Containerfile, as the
-# kernels of the Imagefile come from kernel.Imagefile.
+# miso does on Linux. The stages follow the Imagefile, so that a change to
+# one belongs in the other too. The kernel comes from kernel.Containerfile,
+# as the kernels of the Imagefile come from kernel.Imagefile.
 
 # The programs of the VM, each collected with the libraries it loads into a
 # tree of its own under /out.

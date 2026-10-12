@@ -64,10 +64,11 @@ two.
 
 On macOS, miso does not run yet, so `just image` builds the image for arm64
 with Apple's [container](https://github.com/apple/container) tool from
-`image/kernel.Containerfile` and `image/Containerfile`. Its builder gets 8 CPUs and 8 GiB of memory, and needs
-`rosetta = false` under `[build]` in `~/.config/container/config.toml` when
-Rosetta is not installed. `just image-docker-arm64` builds the same image with
-docker, as the release does.
+`image/kernel.Containerfile` and `image/Containerfile`. Its builder gets 8
+CPUs and 8 GiB of memory, and needs `rosetta = false` under `[build]` in
+`~/.config/container/config.toml` when Rosetta is not installed. `just image-docker-arm64` builds the same image with
+docker, as the release does, and `just image-docker-arm64-kernel` and
+`just image-docker-arm64-root` build one of its two parts.
 
 The kernels are configured in `image/`:
 

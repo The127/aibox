@@ -35,6 +35,8 @@ type dependencies struct {
 	stdin       io.Reader
 	lookupEnv   func(name string) (string, bool)
 	gitIdentity func(dir string) gitconfig.Identity
+	// gitAutoCRLF is how git on the host converts line endings in a folder
+	gitAutoCRLF func(dir string) string
 	// gitLogin is the login git on the host has for a remote
 	gitLogin func(ctx context.Context, remote string) (gitconfig.Login, error)
 	// sshKeys are the SSH keys and the known hosts of the host
@@ -106,6 +108,7 @@ func NewRootCommand() *cli.Command {
 		stdin:          os.Stdin,
 		lookupEnv:      os.LookupEnv,
 		gitIdentity:    func(dir string) gitconfig.Identity { return gitconfig.Read(dir, readOnly) },
+		gitAutoCRLF:    func(dir string) string { return gitconfig.AutoCRLF(dir, readOnly) },
 		gitLogin:       gitconfig.LoginFor,
 		sshKeys:        func() (sshKeys, error) { return gitconfig.LoadSSHKeys() },
 		backend:        newBackend(),

@@ -106,6 +106,19 @@ can connect to the SSH server's port. To limit what a bug in aibox could do
 with that, give aibox its own key, or use an agent that asks before it
 signs, like with `ssh-add -c`.
 
+## Your name and line endings
+
+The VM has a home of its own, without your git config. So aibox gives git
+in the VM the name and email git uses in your project. `aibox run` also
+gives it your `core.autocrlf`. Git for Windows sets that to `true` when it
+installs, and checks out files with CRLF line endings. Without the
+setting, git in the VM would see every file as changed, and a commit would
+change the line endings of every file. A task doesn't need it, since the
+VM clones the repository itself.
+
+Settings of your own in `env` win, such as `GIT_AUTHOR_NAME`, or
+`core.autocrlf` in a `GIT_CONFIG_KEY_*`.
+
 ## What the broker can't stop
 
 The broker can't stop a force push to a branch you allowed. It sees which

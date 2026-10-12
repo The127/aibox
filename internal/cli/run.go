@@ -112,6 +112,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
 
+	if err := shareClaudeSetup(deps.homeDir, r.project.Home, r.config); err != nil {
+		return err
+	}
+
 	if r.config.IDE {
 		if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
 			return err
@@ -289,7 +293,7 @@ func openLockedProjectRun(ctx context.Context, deps dependencies, cwd, aibox, vm
 		return projectRun{}, err
 	}
 
-	mounts, err := mountFolders(deps.homeDir, cfg.Mounts, cfg.Skills)
+	mounts, err := mountFolders(deps.homeDir, cfg)
 	if err != nil {
 		return projectRun{}, err
 	}
@@ -888,19 +892,29 @@ func stateBytes(cfg config.Config) int64 {
 // has any, the config does not turn them off and no mount of the config
 // takes their place, and a mount for each mount of the config, once the
 // host folders are known to exist.
-func mountFolders(homeDir func() (string, error), mounts []config.Mount, skillsSetting config.Skills) ([]backend.Mount, error) {
+func mountFolders(homeDir func() (string, error), cfg config.Config) ([]backend.Mount, error) {
 	home, err := homeDir()
 	if err != nil {
 		return nil, fmt.Errorf("find the home folder: %w", err)
 	}
 
-	folders := make([]backend.Mount, 0, len(mounts)+1)
+	mounts := cfg.Mounts
+	folders := make([]backend.Mount, 0, len(mounts)+3)
 
-	// a person without skills is the normal case, so a missing folder is
-	// nothing to report
-	skills := filepath.Join(home, hostSkillsDir)
-	if skillsSetting != config.SkillsNone && isFolder(skills) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(guestSkillsDir) }) {
-		folders = append(folders, backend.Mount{Host: skills, Guest: guestSkillsDir})
+	// a person without skills, agents or commands is the normal case, so a
+	// missing folder is nothing to report
+	for _, shared := range []struct {
+		host, guest string
+		setting     config.Share
+	}{
+		{hostSkillsDir, guestSkillsDir, cfg.Skills},
+		{".claude/agents", "/home/user/.claude/agents", cfg.Agents},
+		{".claude/commands", "/home/user/.claude/commands", cfg.Commands},
+	} {
+		host := filepath.Join(home, shared.host)
+		if shared.setting != config.ShareNone && isFolder(host) && !slices.ContainsFunc(mounts, func(m config.Mount) bool { return m.Touches(shared.guest) }) {
+			folders = append(folders, backend.Mount{Host: host, Guest: shared.guest})
+		}
 	}
 
 	for _, mount := range mounts {

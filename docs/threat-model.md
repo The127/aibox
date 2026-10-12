@@ -68,7 +68,7 @@ Everything the VM can reach on your machine goes through one of these.
 | Boundary | What crosses it | What aibox does |
 |---|---|---|
 | The hypervisor | The VM's CPU, memory and devices | The VM has its own kernel. On Linux it runs on QEMU in a bubblewrap sandbox. On macOS it runs on Virtualization.framework, which aibox can't sandbox. On both, aibox locks itself down once the VM runs. See [The host side](security.md#the-host-side). |
-| The shares | The project, the mounts, your skills and the VM's home | Your machine enforces the read-only shares. aibox won't start in your home folder or above it, and won't mount your home folder, a folder above it, or a folder in or above `~/.aibox`. See [mounts](config.md#mounts). |
+| The shares | The project, the mounts, your skills, agents and commands, and the VM's home | Your machine enforces the read-only shares. aibox won't start in your home folder or above it, and won't mount your home folder, a folder above it, or a folder in or above `~/.aibox`. See [mounts](config.md#mounts). |
 | The proxy | All network traffic, over vsock | The VM has no network card. The proxy only connects to the allow list and refuses names that lead to your own networks. See [allow](config.md#allow). |
 | The git broker | git's requests | The broker adds your login on your machine, only for the repositories and branches the config names. See [Git](git.md). |
 | The key forwarder | Requests to the Claude API | The VM gets a placeholder key. aibox adds the real one. See [API key](tasks.md#api-key). |

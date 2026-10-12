@@ -14,8 +14,11 @@ To report a vulnerability, see
 
 - The VM can't see your other files. With `aibox run` it sees your project
   folder. A task only sees a clone of a commit. Both also see the folders
-  you list in `mounts` and your skills in `~/.claude/skills`, read-only.
-  `skills: none` in the project config keeps your skills out.
+  you list in `mounts`, and your skills, agents and commands from
+  `~/.claude`, read-only. `aibox run` also copies your `~/.claude/CLAUDE.md`
+  and a few settings that start no program and hold no secret into the VM's
+  home. The project config can keep each of them out. See
+  [agents, commands, claude-md, settings](config.md#agents-commands-claude-md-settings).
   aibox won't start in your home folder or above it.
 - The VM can only reach the hosts on the allow list. It has no network card,
   only a proxy on your machine. aibox refuses a name that resolves to your
@@ -91,7 +94,8 @@ To report a vulnerability, see
 On Linux the VM runs on QEMU's microvm machine type. On macOS it runs on
 Virtualization.framework.
 
-The project folder of `aibox run`, the mounts and the skills are shared into
+The project folder of `aibox run`, the mounts, the skills, the agents and
+the commands are shared into
 the VM with virtio-fs. Your user on your machine is the user in the VM, so
 the files it creates belong to you. Your machine enforces the read-only
 shares, not the VM.

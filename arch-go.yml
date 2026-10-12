@@ -227,6 +227,15 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # appcontainer starts a program in a sandbox of Windows and knows nothing
+  # of aibox
+  - package: '**.internal.appcontainer$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # testlink makes links for tests and knows nothing of aibox
   - package: '**.internal.testlink$'
     shouldNotDependsOn:

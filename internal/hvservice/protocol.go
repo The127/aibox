@@ -35,6 +35,7 @@ var maxMessage = func() int {
 		CPUs:      math.MinInt,
 		Cmdline:   strings.Repeat("\x00", MaxCmdline),
 		State:     math.MaxUint64,
+		Network:   &Network{Ports: everyPort(), Loopback: everyPort()},
 	}})
 	if err != nil {
 		panic(err)
@@ -88,6 +89,18 @@ type Create struct {
 	// its attributes and its security, which the service's checks read,
 	// and not for its data, which Hyper-V opens it for, and shares all.
 	State uint64 `json:"state"`
+	// Network is what the helper of aibox in the VM's container may reach,
+	// or nil for a VM whose aibox runs no such helper.
+	Network *Network `json:"network,omitempty"`
+}
+
+// Network is what the container of a VM may connect to: the TCP ports of
+// other hosts, and those on the loopback, which the container may reach
+// only through an exemption from the isolation Windows gives it from
+// the loopback.
+type Network struct {
+	Ports    []uint16 `json:"ports,omitempty"`
+	Loopback []uint16 `json:"loopback,omitempty"`
 }
 
 // Reply is the answer of the service to a request.
@@ -103,6 +116,13 @@ type Reply struct {
 	// anyone's, a handle is the service's own.
 	RuntimeID string `json:"runtimeId,omitempty"`
 	Console   uint64 `json:"console,omitempty"`
+	// Container and ContainerSID answer an OpCreate with a Network: the
+	// name of the AppContainer the service let reach the network, which
+	// aibox makes for its helper, and its SID. The service names it, from
+	// a number it makes up and tells only the client, so that no request
+	// can point its filters at a container of someone else.
+	Container    string `json:"container,omitempty"`
+	ContainerSID string `json:"containerSid,omitempty"`
 }
 
 // Refusal is the reply that says why the service refused a request, its
@@ -144,9 +164,10 @@ func Write(w io.Writer, message any) error {
 	return nil
 }
 
-// NewReader is the reader Read takes, with room for the longest message.
+// NewReader is the reader Read takes. Read grows a line as it comes, up to
+// the longest message, so the buffer need not hold one.
 func NewReader(r io.Reader) *bufio.Reader {
-	return bufio.NewReaderSize(r, maxMessage)
+	return bufio.NewReader(r)
 }
 
 // Read reads the next message, one line, into message, which should be a
@@ -156,13 +177,27 @@ func NewReader(r io.Reader) *bufio.Reader {
 // unread, so the stream is of no further use; after ErrBadMessage it is,
 // as the line was read whole.
 func Read(r *bufio.Reader, message any) error {
-	line, err := r.ReadSlice('\n')
-	if errors.Is(err, bufio.ErrBufferFull) {
-		return ErrMessageTooLong
-	}
+	// the line grows as it comes, rather than a buffer of the longest
+	// message for each connection, which every user of the machine opens
+	var line []byte
 
-	if err != nil {
-		return fmt.Errorf("receive a message: %w", err)
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if len(line)+len(chunk) > maxMessage {
+			return ErrMessageTooLong
+		}
+
+		line = append(line, chunk...)
+
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf("receive a message: %w", err)
+		}
+
+		break
 	}
 
 	if err := json.Unmarshal(line, message); err != nil {
@@ -170,4 +205,14 @@ func Read(r *bufio.Reader, message any) error {
 	}
 
 	return nil
+}
+
+// everyPort is every TCP port, the longest list Check takes.
+func everyPort() []uint16 {
+	ports := make([]uint16, 0, math.MaxUint16)
+	for p := math.MaxUint16; p >= 1; p-- {
+		ports = append(ports, uint16(p))
+	}
+
+	return ports
 }

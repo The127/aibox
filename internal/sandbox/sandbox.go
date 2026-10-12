@@ -4,7 +4,7 @@
 package sandbox
 
 import (
-	"path/filepath"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,7 +41,7 @@ func (s Spec) Command(args []string) (string, []string) {
 	for _, library := range s.Libraries {
 		wrapped = append(wrapped, "--ro-bind", library, library)
 
-		if folder := filepath.Dir(library); !slices.Contains(folders, folder) {
+		if folder := path.Dir(library); !slices.Contains(folders, folder) {
 			folders = append(folders, folder)
 		}
 	}

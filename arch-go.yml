@@ -218,6 +218,15 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
+  # hvchild carries messages between aibox and its helpers and knows
+  # nothing of what they say
+  - package: '**.internal.hvchild$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
   # testlink makes links for tests and knows nothing of aibox
   - package: '**.internal.testlink$'
     shouldNotDependsOn:

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,8 +17,16 @@ func TestEscape(t *testing.T) {
 	// arrange
 	tests := map[string]string{
 		"/home/someone/repos/aibox":  "-home-someone-repos-aibox",
-		"/home/someone/.config/x_y":  "-home-someone--config-x-y",
-		"/home/someone/My Project 2": "-home-someone-My-Project-2",
+		"/home/someone/.config/x_y":  "-home-someone-_2econfig-x_5fy",
+		"/home/someone/My Project 2": "-home-someone-My_20Project_202",
+		"/work/my-app":               "-work-my_2dapp",
+		"/work/my/app":               "-work-my-app",
+		"/work/my_2dapp":             "-work-my_5f2dapp",
+		"/home/someone/Müller":       "-home-someone-M_c3_bcller",
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("the paths are of Unix")
 	}
 
 	for path, want := range tests {
@@ -35,7 +44,7 @@ func TestEscape(t *testing.T) {
 // folder.
 func aProject() (path, escaped string) {
 	if runtime.GOOS == "windows" {
-		return `C:\home\someone\repos\aibox`, "C--home-someone-repos-aibox"
+		return `C:\home\someone\repos\aibox`, "C_3a-home-someone-repos-aibox"
 	}
 
 	return "/home/someone/repos/aibox", "-home-someone-repos-aibox"
@@ -155,4 +164,19 @@ func TestAtRelativePath(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, project.ErrRelativePath)
+}
+
+func TestEscapeCutsANameThatIsTooLong(t *testing.T) {
+	// arrange
+	long := string(filepath.Separator) + strings.Repeat("a.", 100)
+	longer := long + "b"
+
+	// act
+	name := project.Escape(long)
+
+	// assert
+	assert.LessOrEqual(t, len(name), 255)
+	assert.Contains(t, name, "_h")
+	assert.NotEqual(t, name, project.Escape(longer), "the hash keeps paths with the same start apart")
+	assert.Equal(t, name, project.Escape(long))
 }

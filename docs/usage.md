@@ -30,7 +30,10 @@ all your files.
 ## What aibox keeps for a project
 
 Each project gets a folder in `~/.aibox/projects`, named after the project's
-path:
+path. Letters and digits stay, each `/` becomes `-`, and every other
+character becomes `_` and a code, so `/work/my-app` gets
+`-work-my_2dapp`. A very long name is cut and ends in a hash of the path.
+The folder holds:
 
 | File | What's in it |
 |---|---|

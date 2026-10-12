@@ -99,33 +99,37 @@ and shows how to check a download.
 
 ## Your first run
 
-Go to a project and start aibox:
+Go to a project, let aibox suggest the hosts its tools need, and start it:
 
 ```
 cd ~/projects/my-app
+aibox config suggest
 aibox run
 ```
 
-This boots the VM with `my-app` at `/project` and starts Claude Code in it.
-The first run downloads the VM image, which is about 150 MB, unless your
-package ships it. Log in to Claude Code like you would on your machine.
+The VM only reaches the hosts you allow. `aibox config suggest` looks at the
+files in your project, like `go.mod` or `package.json`, and offers presets,
+the hosts a tool like Go or npm needs. It shows them and asks before it adds
+them.
+
+`aibox run` boots the VM with `my-app` at `/project` and starts Claude Code
+in it. The first run downloads the VM image, which is about 150 MB, unless
+your package ships it. Log in to Claude Code like you would on your machine.
 
 You log in once for each project, because each project has a VM home of its
 own. aibox doesn't copy the login from one project to another. That would
 mean aibox handles your login, and Anthropic's terms don't allow anyone but
 you to do that.
 
-The first run also writes a config for the project. It only allows the hosts
-Claude Code needs. To allow more, run:
+When a tool still can't reach a host, the error names it, and the preset
+that allows it if there is one. To allow more, run:
 
 ```
 aibox config edit
 ```
 
-Presets like `preset:go`, `preset:npm` and `preset:github` stand for the
-hosts a tool needs. `aibox config suggest` suggests presets from the files
-in your project. `proxy.log` in the project's folder in
-`~/.aibox/projects` shows each host the proxy connected to or refused.
+`proxy.log` in the project's folder in `~/.aibox/projects` shows each host
+the proxy connected to or refused.
 
 Note that the VM can change anything in your project folder, `.git`
 included. Treat those changes like a pull request from a stranger.

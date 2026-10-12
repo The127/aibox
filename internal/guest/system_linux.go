@@ -197,6 +197,34 @@ func (Linux) Symlink(target, path string) error {
 	return os.Symlink(target, path)
 }
 
+// Join writes the files one after another to path, apart by an empty line,
+// as a file everyone may read.
+func (Linux) Join(path string, files ...string) error {
+	var joined []byte
+
+	for i, file := range files {
+		content, err := os.ReadFile(file) //nolint:gosec // the files of the image
+		if err != nil {
+			return err
+		}
+
+		if i > 0 {
+			joined = append(joined, '\n')
+		}
+
+		joined = append(joined, content...)
+		if len(content) > 0 && content[len(content)-1] != '\n' {
+			joined = append(joined, '\n')
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // a folder everyone may enter
+		return err
+	}
+
+	return os.WriteFile(path, joined, 0o644) //nolint:gosec // a prompt everyone may read
+}
+
 // ReadCmdline returns the kernel command line.
 func (Linux) ReadCmdline() (string, error) {
 	content, err := os.ReadFile("/proc/cmdline")

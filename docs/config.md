@@ -225,6 +225,9 @@ home folder.
 - The VM caches names and attributes for the whole run. If you change the
   folder on your machine, a running VM may not see it.
 - On macOS the VM runs arm64 Linux, so Mac programs don't run in it.
+- On Windows the VM runs amd64 Linux, so Windows programs don't run in it,
+  and files made on Windows aren't executable there. Mount data, not tools,
+  and install tools in the VM into `/usr/local`.
 - The host folder can't be the root of a drive or share either.
 - On Windows write the host folder with its drive, like
   `C:\Users\me\sdk:/opt/go`, or with forward slashes, `C:/Users/me/sdk:/opt/go`.

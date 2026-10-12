@@ -271,3 +271,36 @@ func TestKillFailsForAFolderThatIsNotACgroup(t *testing.T) {
 	// assert
 	assert.Error(t, err)
 }
+
+func TestJoinWritesTheFilesApartByAnEmptyLine(t *testing.T) {
+	// arrange: one file that ends its last line, one that doesn't
+	dir := t.TempDir()
+	common := filepath.Join(dir, "prompt.md")
+	host := filepath.Join(dir, "host.md")
+	require.NoError(t, os.WriteFile(common, []byte("all hosts\n"), 0o600))
+	require.NoError(t, os.WriteFile(host, []byte("this host"), 0o600))
+
+	joined := filepath.Join(dir, "run", "aibox", "prompt.md")
+
+	// act
+	err := guest.Linux{}.Join(joined, common, host)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(joined) //nolint:gosec // the test's own folder
+	require.NoError(t, err)
+	assert.Equal(t, "all hosts\n\nthis host\n", string(content))
+
+	info, err := os.Stat(joined)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm(), "everyone may read it")
+}
+
+func TestJoinFailsWithoutAFile(t *testing.T) {
+	// act
+	err := guest.Linux{}.Join(filepath.Join(t.TempDir(), "prompt.md"), filepath.Join(t.TempDir(), "missing.md"))
+
+	// assert
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}

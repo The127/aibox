@@ -378,7 +378,7 @@ echo warning >&2
 		"--output-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",
-		"--append-system-prompt-file", "/etc/aibox/task.md",
+		"--append-system-prompt-file", "/run/aibox/task.md",
 		"--model", "opus",
 		"--max-turns", "3",
 		"--max-budget-usd", "1.5",

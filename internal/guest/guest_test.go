@@ -132,7 +132,7 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, session.Request{Term: "xterm-kitty"})
 
 	// assert
-	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md"}, cmd.Args)
+	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md"}, cmd.Args)
 	assert.Equal(t, "/project", cmd.Dir)
 	assert.Contains(t, cmd.Env, "AIBOX=1")
 	assert.Contains(t, cmd.Env, "HOME=/home/user")
@@ -592,7 +592,7 @@ func TestCommandResumesTheSessionWhenAsked(t *testing.T) {
 	cmd := guest.Command(guest.Options{Console: tty.Name(), Resume: "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"}, tty, session.Request{Term: "xterm"})
 
 	// assert
-	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/etc/aibox/prompt.md", "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"}, cmd.Args)
+	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md", "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"}, cmd.Args)
 }
 
 func TestCommandRunsAShellWhenAsked(t *testing.T) {
@@ -652,6 +652,8 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"link /dev/stdin -> /proc/self/fd/0",
 		"link /dev/stdout -> /proc/self/fd/1",
 		"link /dev/stderr -> /proc/self/fd/2",
+		"join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/host.md",
+		"join /run/aibox/task.md <- /etc/aibox/task.md /etc/aibox/host.md",
 		"hostname aibox",
 		"dial host 5432",
 		"start /usr/bin/claude",
@@ -904,6 +906,19 @@ func TestRunFormatsAndMountsTheSCSIStateDiskOnHyperV(t *testing.T) {
 		"mount /dev/sdq /var/lib/aibox/state",
 	}, "\n"))
 	assert.NotContains(t, calls, "/dev/vdb")
+}
+
+func TestRunGivesClaudeCodeThePromptOfWindowsOnHyperV(t *testing.T) {
+	// arrange: the amd64 image runs on Linux and on Windows alike
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.hyperv"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, sys.calls, "join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/hyperv/host.md")
+	assert.Contains(t, sys.calls, "join /run/aibox/task.md <- /etc/aibox/task.md /etc/aibox/hyperv/host.md")
 }
 
 func TestRunLooksForNoSCSIDiskOffHyperV(t *testing.T) {
@@ -1393,6 +1408,12 @@ func (s *fakeSystem) PivotRoot(newRoot, putOld string) error {
 
 func (s *fakeSystem) Symlink(target, path string) error {
 	s.record("link " + path + " -> " + target)
+
+	return nil
+}
+
+func (s *fakeSystem) Join(path string, files ...string) error {
+	s.record("join " + path + " <- " + strings.Join(files, " "))
 
 	return nil
 }

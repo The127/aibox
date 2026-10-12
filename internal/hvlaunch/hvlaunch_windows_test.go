@@ -140,6 +140,11 @@ type fixture struct {
 	sandbox     *container
 	proxied     *hvvm.Config
 	proxyHelper *fakeHelper
+	// swept is how often the containers of runs that ended were swept,
+	// sweptBefore how often before the helper of the proxy started, and
+	// sweepFails what a sweep fails with, if anything
+	swept, sweptBefore int
+	sweepFails         error
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -194,9 +199,14 @@ func newFixture(t *testing.T) *fixture {
 			return f.sharesHelper, nil
 		},
 		proxy: func(_ context.Context, c *container, _ hvvm.Spec, config hvvm.Config) (helper, error) {
-			f.sandbox, f.proxied = c, &config
+			f.sandbox, f.proxied, f.sweptBefore = c, &config, f.swept
 
 			return f.proxyHelper, nil
+		},
+		sweep: func() error {
+			f.swept++
+
+			return f.sweepFails
 		},
 		console: func(handle uint64) consoleSource {
 			if handle != aConsoleHandle {
@@ -539,6 +549,7 @@ func TestRunWithoutTheSandboxServesTheProxyFromAHelperInNoContainer(t *testing.T
 	assert.Nil(t, f.service.made.Network)
 	require.NotNil(t, f.proxied, "a helper serves the proxy")
 	assert.Nil(t, f.sandbox, "in no container")
+	assert.Zero(t, f.swept, "no container to sweep for")
 }
 
 func TestRunRefusesAServiceThatMakesNoContainer(t *testing.T) {
@@ -584,4 +595,39 @@ func TestRunStopsTheVMWhenTheHelperOfTheProxyEnds(t *testing.T) {
 	}
 
 	assert.Contains(t, f.service.asked(), hvservice.OpStop)
+}
+
+func TestRunSweepsTheContainersOfRunsThatEndedBeforeItStartsTheHelper(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, ErrNoBoot)
+	assert.Equal(t, 1, f.swept)
+	assert.Equal(t, 1, f.sweptBefore, "before the helper of the proxy started")
+}
+
+func TestRunStartsWhenTheSweepFails(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+	f.sweepFails = errors.New("access denied")
+
+	var stderr bytes.Buffer
+
+	f.spec.Stderr = &stderr
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, ErrNoBoot, "the run went on")
+	require.NotNil(t, f.proxied, "a helper serves the proxy")
+	assert.Contains(t, stderr.String(), "remove the containers of runs that ended: access denied")
 }

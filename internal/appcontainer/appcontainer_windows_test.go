@@ -211,6 +211,28 @@ func TestTheProfileHasTheSIDTheNameDerives(t *testing.T) {
 	assert.True(t, again.Equals(derived), "a profile that is there already")
 }
 
+func TestTheProfilesListTheContainersOfTheUser(t *testing.T) {
+	// arrange: in lower case, as the list has them
+	kept := "aibox.test." + strings.ToLower(rand.Text())
+	removed := "aibox.test." + strings.ToLower(rand.Text())
+
+	_, err := appcontainer.CreateProfile(kept)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = appcontainer.DeleteProfile(kept) })
+
+	_, err = appcontainer.CreateProfile(removed)
+	require.NoError(t, err)
+	require.NoError(t, appcontainer.DeleteProfile(removed))
+
+	// act
+	names, err := appcontainer.Profiles()
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, names, kept)
+	assert.NotContains(t, names, removed)
+}
+
 func TestAProgramInTheContainerReadsNoFileOfTheUser(t *testing.T) {
 	// arrange
 	home, err := os.UserHomeDir()

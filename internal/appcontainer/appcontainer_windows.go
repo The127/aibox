@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 // The attributes of a new process that put it into a container, give it
@@ -93,6 +94,68 @@ func DeleteProfile(name string) error {
 	}
 
 	return nil
+}
+
+// mappings is the key of the user's registry where CreateProfile records
+// each profile, under its SID, and moniker the value with its name.
+// Windows has no call that lists the profiles of one user:
+// NetworkIsolationEnumAppContainers lists those of every user.
+const (
+	mappings = `Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppContainer\Mappings`
+	moniker  = "Moniker"
+)
+
+// Profiles are the names of the containers the user has a profile of, in
+// lower case, as Windows keeps them.
+func Profiles() ([]string, error) {
+	k, err := registry.OpenKey(registry.CURRENT_USER, mappings, registry.ENUMERATE_SUB_KEYS)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("list the profiles of containers: %w", err)
+	}
+
+	defer func() { _ = k.Close() }()
+
+	sids, err := k.ReadSubKeyNames(-1)
+	if err != nil {
+		return nil, fmt.Errorf("list the profiles of containers: %w", err)
+	}
+
+	names := make([]string, 0, len(sids))
+
+	for _, sid := range sids {
+		name, err := profileName(k, sid)
+		// a profile removed since the list was read is none, and an entry
+		// whose name is no string, which CreateProfile never makes
+		if errors.Is(err, registry.ErrNotExist) || errors.Is(err, registry.ErrUnexpectedType) {
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("read the profile of the container %s: %w", sid, err)
+		}
+
+		names = append(names, name)
+	}
+
+	return names, nil
+}
+
+// profileName is the name of the container of the profile under the SID.
+func profileName(parent registry.Key, sid string) (string, error) {
+	k, err := registry.OpenKey(parent, sid, registry.QUERY_VALUE)
+	if err != nil {
+		return "", err
+	}
+
+	defer func() { _ = k.Close() }()
+
+	name, _, err := k.GetStringValue(moniker)
+
+	return name, err
 }
 
 // Job holds the processes started into it, and kills them when it is

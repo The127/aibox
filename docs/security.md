@@ -204,7 +204,10 @@ and the token of the IDE: the helper hands their requests to aibox over a
 port of the loopback, which answers only requests with a token the
 helper got from aibox. The terminal stays in aibox as well. aibox reads
 what the helper says as it would what the VM says. Both helpers are in a
-job, which Windows ends with aibox, however aibox ends. `aibox run
+job, which Windows ends with aibox, however aibox ends. The AppContainer
+has a profile under your account, which aibox removes when the helper
+ends. A profile an aibox that was killed left behind goes with the next
+run without `--no-sandbox`. `aibox run
 --no-sandbox` runs the helper of the proxy outside its container, with
 no filters.
 

@@ -327,7 +327,7 @@ func (s *Share) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	}
 
-	return fmt.Errorf("%q: %w", value.Value, ErrBadShare)
+	return fmt.Errorf("line %d: %q: %w", value.Line, value.Value, ErrBadShare)
 }
 
 // Mount is a folder of the host that the VM sees read-only at Guest. In the

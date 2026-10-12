@@ -1014,22 +1014,34 @@ func TestEnsureDefaultWithoutATemplateWritesTheDefault(t *testing.T) {
 }
 
 func TestLoadReadsTheSharesOfTheClaudeSetup(t *testing.T) {
+	// arrange
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("agents: none\ncommands: all\nclaude-md: none\nsettings: none\n"), 0o600))
+
+	// act
+	cfg, err := config.Load(path, "")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, config.ShareNone, cfg.Agents)
+	assert.Equal(t, config.ShareAll, cfg.Commands)
+	assert.Equal(t, config.ShareNone, cfg.ClaudeMD)
+	assert.Equal(t, config.ShareNone, cfg.Settings)
+}
+
+func TestLoadRefusesAShareOtherThanAllOrNone(t *testing.T) {
 	for _, field := range []string{"agents", "commands", "claude-md", "settings"} {
 		t.Run(field, func(t *testing.T) {
 			// arrange
-			dir := t.TempDir()
-			path := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.WriteFile(path, []byte(field+": some\n"), 0o600))
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, []byte("memory: 4096\n"+field+": some\n"), 0o600))
 
 			// act
 			_, err := config.Load(path, "")
 
 			// assert
 			require.ErrorIs(t, err, config.ErrBadShare)
-
-			require.NoError(t, os.WriteFile(path, []byte(field+": none\n"), 0o600))
-			_, err = config.Load(path, "")
-			assert.NoError(t, err)
+			assert.ErrorContains(t, err, "line 2")
 		})
 	}
 }

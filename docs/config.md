@@ -275,6 +275,15 @@ claude-md: none
 settings: none
 ```
 
+A mount inside `/home/user/.claude/agents` or `/home/user/.claude/commands`
+takes the place of that folder, like with skills.
+
+aibox doesn't remove what it put into the VM's home before. If you delete
+your `CLAUDE.md` or a setting, or turn one of them off, the VM keeps the last
+copy. [`aibox projects reset`](usage.md#starting-over) starts the VM's home
+over. When the VM left something there that keeps a file from going in,
+aibox says so and starts the VM anyway.
+
 Only these settings come along: `model`, `theme`, `attribution`,
 `includeCoAuthoredBy`, `outputStyle` and `alwaysThinkingEnabled`. Settings
 that start a program or hold a secret stay on your machine: `hooks`, `env`,

@@ -112,9 +112,7 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
 
-	if err := shareClaudeSetup(deps.homeDir, r.project.Home, r.config); err != nil {
-		return err
-	}
+	shareClaudeSetup(home, r.project.Home, r.config, deps.stderr)
 
 	if r.config.IDE {
 		if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
@@ -888,10 +886,10 @@ func stateBytes(cfg config.Config) int64 {
 	return int64(gib) << 30
 }
 
-// mountFolders returns the mount of the skills of the person, when the host
-// has any, the config does not turn them off and no mount of the config
-// takes their place, and a mount for each mount of the config, once the
-// host folders are known to exist.
+// mountFolders returns a mount for the skills, the agents and the commands
+// of the person, each when the host has them, the config does not turn
+// them off and no mount of the config takes their place, and a mount for
+// each mount of the config, once the host folders are known to exist.
 func mountFolders(homeDir func() (string, error), cfg config.Config) ([]backend.Mount, error) {
 	home, err := homeDir()
 	if err != nil {

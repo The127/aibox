@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -140,12 +141,82 @@ func TestRunFollowsNoLinkTheVMLeftForTheSettings(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-
-	content, err := os.ReadFile(vmSettings) //nolint:gosec // a file in the test
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"model": "opus"}`, string(content), "nothing of the file outside comes in")
+	assert.Contains(t, f.stderr.String(), "aibox: the VM gets none of your settings: the VM's settings.json, which stays as it is")
 
 	untouched, err := os.ReadFile(outside) //nolint:gosec // a temp file of the test
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"token": "x"}`, string(untouched))
+	assert.JSONEq(t, `{"token": "x"}`, string(untouched), "aibox neither reads nor writes the file outside")
+}
+
+func TestRunLeavesVMSettingsThatAreNoObject(t *testing.T) {
+	for name, content := range map[string]string{
+		"null":        "null",
+		"a list":      "[1, 2]",
+		"broken":      `{"theme": `,
+		"a huge file": `{"x": "` + strings.Repeat("a", maxVMSettings) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			f.claudeFile(t, "settings.json", `{"model": "opus"}`)
+
+			vmSettings := filepath.Join(f.project(t).Home, ".claude", "settings.json")
+			require.NoError(t, os.MkdirAll(filepath.Dir(vmSettings), 0o700))
+			require.NoError(t, os.WriteFile(vmSettings, []byte(content), 0o600))
+
+			// act
+			err := f.runWithImage(t)
+
+			// assert
+			require.NoError(t, err, "the VM starts anyway")
+			assert.Contains(t, f.stderr.String(), "the VM gets none of your settings")
+
+			kept, err := os.ReadFile(vmSettings) //nolint:gosec // a file in the test
+			require.NoError(t, err)
+			assert.Equal(t, content, string(kept))
+		})
+	}
+}
+
+func TestRunStartsWhenTheVMLeftAFolderForTheClaudeMD(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.claudeFile(t, "CLAUDE.md", "Use short sentences.\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(f.project(t).Home, ".claude", "CLAUDE.md", "x"), 0o700))
+
+	// act
+	err := f.runWithImage(t)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "aibox: the VM gets no CLAUDE.md")
+}
+
+func TestRunSkipsSettingsItCannotRead(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.claudeFile(t, "settings.json", `{"model": "opus",}`)
+
+	// act
+	err := f.runWithImage(t)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "aibox: the VM gets none of your settings: read ~/.claude/settings.json")
+}
+
+func TestRunSkipsSettingsThatAreNull(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.claudeFile(t, "settings.json", `{"model": null, "theme": "dark"}`)
+
+	// act
+	err := f.runWithImage(t)
+
+	// assert
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(f.project(t).Home, ".claude", "settings.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"theme": "dark"}`, string(content))
 }

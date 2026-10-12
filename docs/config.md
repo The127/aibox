@@ -313,9 +313,10 @@ aibox sets it itself. Tasks never get the IDE, only `aibox run` does.
 
 ## clipboard
 
-When you press Ctrl+V in Claude Code, it pastes the image on your clipboard.
-The VM can read your clipboard only right after you press the key, and only
-once. This is on by default. To turn it off, set:
+When you press Ctrl+V in Claude Code, or Alt+V on Windows, it pastes the
+image on your clipboard. The VM can read your clipboard only right after
+you press the key, and only once. This is on by default. To turn it off,
+set:
 
 ```yaml
 clipboard: false

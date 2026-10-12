@@ -172,6 +172,11 @@ request an ID of its own. `proxy.log` shows what it held back.
 Press Ctrl+V in Claude Code to paste the image on your clipboard, like a
 screenshot. Pasting text works like in any terminal, and so does copying.
 
+On Windows, press Alt+V, as in Claude Code on Windows. Windows Terminal
+and the Windows console paste on Ctrl+V themselves, so the key never
+reaches aibox. aibox passes Alt+V on to the VM as Ctrl+V, so Alt+V in
+another program in the VM is Ctrl+V there too.
+
 The VM can't read your clipboard whenever it likes. If it could, it would
 see every password you copy. aibox lets it read the clipboard only right
 after you press Ctrl+V, for 5 seconds, and only one image. If you don't want
@@ -192,7 +197,10 @@ On Linux aibox reads the clipboard with `wl-paste` under Wayland and with
 aibox reads what you type before it goes to the VM. It looks for Ctrl+V as
 the terminal sends it: as a control character, in the kitty keyboard
 protocol or with xterm's modifyOtherKeys. Text you paste into the terminal
-doesn't count.
+doesn't count. On Windows it looks for Alt+V the same ways, and sends the
+VM Ctrl+V in its place. It does that only when Alt+V comes in one read,
+as it does from a terminal: holding back the escape it starts with until
+the next read would hold back the Escape key too.
 
 In the VM, `xclip` and `wl-paste` are aibox's init under another name. When
 Claude Code runs them for Ctrl+V, they ask aibox on port 3132 of the

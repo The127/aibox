@@ -13,6 +13,7 @@ const (
 	// modifyOtherKeys of xterm
 	keyV = "118"
 	// the bits of the modifiers, less one, as both encode them
+	modifierAlt      = 2
 	modifierCtrl     = 4
 	modifierCapsLock = 64
 	modifierNumLock  = 128
@@ -32,31 +33,57 @@ const longestSequence = 16
 // pasteWatcher passes on what the person types and calls onPaste for each
 // Ctrl+V in it: as the control byte, in the kitty keyboard protocol and
 // with modifyOtherKeys of xterm. It looks at the bytes one by one, so that
-// a sequence split across two reads counts too.
+// a sequence split across two reads counts too. With altV it takes Alt+V
+// for Ctrl+V as well, and passes it on as Ctrl+V.
 type pasteWatcher struct {
 	r       io.Reader
 	onPaste func()
+	altV    bool
 	// sequence is the escape sequence read so far, without the escape, or
 	// nil outside of one
 	sequence []byte
-	pasting  bool
+	// from is where the escape of the sequence is in what the read passes
+	// on, or -1 when an earlier read passed it on already
+	from    int
+	pasting bool
 }
 
 func watchPaste(r io.Reader, onPaste func()) io.Reader {
-	return &pasteWatcher{r: r, onPaste: onPaste}
+	return &pasteWatcher{r: r, onPaste: onPaste, altV: altVPastes, from: -1}
 }
 
+// Read passes on what it reads, with an Alt+V the read holds whole as the
+// Ctrl+V it stands for. One that spans two reads goes on as it is: holding
+// back an escape until the next read would hold back the Escape key too.
 func (p *pasteWatcher) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
+	kept := 0
 
 	for _, c := range b[:n] {
-		p.see(c)
+		if c == esc {
+			p.from = kept
+		}
+
+		b[kept] = c
+		kept++
+
+		if p.see(c) && p.from >= 0 {
+			kept = p.from
+			b[kept] = ctrlV
+			kept++
+
+			p.onPaste()
+		}
 	}
 
-	return n, err
+	p.from = -1
+
+	return kept, err
 }
 
-func (p *pasteWatcher) see(c byte) {
+// see looks at the next byte, and tells whether it ends an Alt+V that
+// stands for Ctrl+V.
+func (p *pasteWatcher) see(c byte) bool {
 	switch {
 	case c == esc:
 		p.sequence = []byte{}
@@ -68,7 +95,8 @@ func (p *pasteWatcher) see(c byte) {
 		// no sequence the watcher reads holds a control byte, so this one
 		// is a key of its own
 		p.sequence = nil
-		p.see(c)
+
+		return p.see(c)
 	default:
 		p.sequence = append(p.sequence, c)
 
@@ -76,8 +104,10 @@ func (p *pasteWatcher) see(c byte) {
 		case '[':
 			// a CSI sequence ends with a byte from @ to ~
 			if len(p.sequence) > 1 && c >= '@' && c <= '~' {
-				p.end(string(p.sequence))
+				sequence := string(p.sequence)
 				p.sequence = nil
+
+				return p.end(sequence)
 			}
 		case 'O':
 			// SS3, as for F1, has one more byte
@@ -87,25 +117,34 @@ func (p *pasteWatcher) see(c byte) {
 		default:
 			// Alt and a key
 			p.sequence = nil
+
+			return p.altV && !p.pasting && c == 'v'
 		}
 	}
+
+	return false
 }
 
-func (p *pasteWatcher) end(sequence string) {
+func (p *pasteWatcher) end(sequence string) bool {
 	switch {
 	case sequence == pasteStart:
 		p.pasting = true
 	case sequence == pasteEnd:
 		p.pasting = false
-	case !p.pasting && isCtrlV(sequence):
+	case p.pasting:
+	case isKeyV(sequence, modifierCtrl):
 		p.onPaste()
+	case p.altV && isKeyV(sequence, modifierAlt):
+		return true
 	}
+
+	return false
 }
 
-// isCtrlV tells whether a CSI sequence is Ctrl+V going down: [118;5u in
-// the kitty protocol, maybe with :1 for the press, or [27;5;118~ with
-// modifyOtherKeys. Caps Lock and Num Lock may be on.
-func isCtrlV(sequence string) bool {
+// isKeyV tells whether a CSI sequence is V with the modifier going down:
+// [118;5u for Ctrl in the kitty protocol, maybe with :1 for the press, or
+// [27;5;118~ with modifyOtherKeys. Caps Lock and Num Lock may be on.
+func isKeyV(sequence string, modifier int) bool {
 	body := sequence[1 : len(sequence)-1]
 
 	switch sequence[len(sequence)-1] {
@@ -120,21 +159,22 @@ func isCtrlV(sequence string) bool {
 
 		modifiers, event, _ := strings.Cut(rest, ":")
 
-		return (event == "" || event == "1") && onlyCtrl(modifiers)
+		return (event == "" || event == "1") && only(modifiers, modifier)
 	case '~':
 		fields := strings.Split(body, ";")
 
-		return len(fields) == 3 && fields[0] == "27" && fields[2] == keyV && onlyCtrl(fields[1])
+		return len(fields) == 3 && fields[0] == "27" && fields[2] == keyV && only(fields[1], modifier)
 	default:
 		return false
 	}
 }
 
-func onlyCtrl(field string) bool {
+// only tells whether the modifiers of the field are the one alone.
+func only(field string, modifier int) bool {
 	value, err := strconv.Atoi(field)
 	if err != nil || value < 1 {
 		return false
 	}
 
-	return (value-1)&^(modifierCapsLock|modifierNumLock) == modifierCtrl
+	return (value-1)&^(modifierCapsLock|modifierNumLock) == modifier
 }

@@ -132,9 +132,9 @@ has the details.
   your terminal as it is, escape sequences included.
 - Force pushes to an allowed branch, and the CI a pushed branch starts.
 - Diffs you accept or edit in your IDE.
-- Your clipboard right after a Ctrl+V in any program in the VM. aibox
-  watches for the key, not for Claude Code, so a Ctrl+V in bash or vim lets
-  the VM read the image too.
+- Your clipboard right after a Ctrl+V, or Alt+V on Windows, in any
+  program in the VM. aibox watches for the key, not for Claude Code, so a
+  Ctrl+V in bash or vim lets the VM read the image too.
 - Gatekeeper on macOS, for programs that come out of the VM.
 - Spending. Only a task's `--timeout` is enforced by aibox.
 

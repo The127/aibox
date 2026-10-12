@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,13 +49,13 @@ func TestSuggestAddsTheToolsSaidYesTo(t *testing.T) {
 	require.NoError(t, err)
 
 	out := f.stderr.String()
-	assert.Contains(t, out, "aibox found these tools in "+filepath.Base(f.cwd)+":\n\n")
-	assert.Contains(t, out, "  Go       because of go.mod\n           proxy.golang.org  sum.golang.org")
+	assert.Contains(t, out, "aibox found these tools in "+filepath.Base(f.cwd)+". The VM can't reach their package registries yet:\n\n")
+	assert.Contains(t, out, "  Go       because of go.mod\n           preset:go would allow:\n             proxy.golang.org  sum.golang.org")
 	assert.Contains(t, out, "  npm      because of package.json and yarn.lock\n")
-	assert.Contains(t, out, "  Python   because of uv.lock\n           pypi.org  files.pythonhosted.org\n")
+	assert.Contains(t, out, "  Python   because of uv.lock\n           preset:pypi would allow:\n             pypi.org  files.pythonhosted.org\n")
 	assert.Contains(t, out, "Anyone can upload to package registries")
-	assert.Contains(t, out, "Allow Go? [Y/n] Allow npm? [Y/n] Allow Python? [Y/n] ")
-	assert.Contains(t, out, "Added Go and npm. Start aibox again to use them.\n")
+	assert.Contains(t, out, "Allow the preset for Go? [Y/n] Allow the preset for npm? [Y/n] Allow the preset for Python? [Y/n] ")
+	assert.Contains(t, out, "Added the presets for Go and npm.\nStart aibox again for it to apply.\n")
 	assert.NotContains(t, out, "\x1b[", "no colors without a terminal")
 
 	config := f.config(t)
@@ -83,8 +84,8 @@ func TestSuggestWrapsTheHostsAndPaintsOnATerminal(t *testing.T) {
 	out := f.stderr.String()
 	assert.Contains(t, out, "\x1b[1;36mGo\x1b[0m")
 	assert.Contains(t, out, "because of \x1b[1mgo.mod\x1b[0m")
-	assert.Contains(t, out, "\x1b[2mproxy.golang.org  sum.golang.org\x1b[0m\n")
-	assert.Contains(t, out, "\x1b[2mstorage.googleapis.com  vuln.go.dev\x1b[0m\n")
+	assert.Contains(t, out, "  \x1b[2mproxy.golang.org  sum.golang.org\x1b[0m\n")
+	assert.Contains(t, out, "  \x1b[2mstorage.googleapis.com  vuln.go.dev\x1b[0m\n")
 	assert.Contains(t, out, "Nothing changed.")
 }
 
@@ -185,4 +186,43 @@ func TestSuggestKeepsAConfigThatIsALink(t *testing.T) {
 	written, err := os.ReadFile(dotfiles) //nolint:gosec // a temp file of the test
 	require.NoError(t, err)
 	assert.Equal(t, "allow:\n  - api.anthropic.com\n  - preset:go\n", string(written))
+}
+
+// waitingStdin is a terminal no one types into.
+func waitingStdin(t *testing.T) io.Reader {
+	t.Helper()
+
+	r, w := io.Pipe()
+	t.Cleanup(func() { _ = w.Close() })
+
+	return r
+}
+
+func TestCtrlCEndsTheQuestions(t *testing.T) {
+	for name, args := range map[string][]string{
+		"suggest": {"aibox", "config", "suggest"},
+		"reset":   {"aibox", "projects", "reset"},
+		"remove":  {"aibox", "projects", "remove"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			f.projectFile(t, "go.mod")
+			f.project(t)
+			require.NoError(t, f.suggest("n\n"))
+			before := f.config(t)
+			f.deps.stdin = waitingStdin(t)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+
+			// act
+			go func() { done <- newRootCommand(f.deps).Run(ctx, args) }()
+			cancel()
+
+			// assert
+			require.ErrorIs(t, <-done, context.Canceled)
+			assert.Equal(t, before, f.config(t))
+		})
+	}
 }

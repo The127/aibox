@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +31,8 @@ func configCommand(deps dependencies) *cli.Command {
 		}, {
 			Name:  "suggest",
 			Usage: "suggest presets for the allow list from the names of the files in the current folder, and add them once you say yes",
-			Action: func(context.Context, *cli.Command) error {
-				return suggestConfig(deps)
+			Action: func(ctx context.Context, _ *cli.Command) error {
+				return suggestConfig(ctx, deps)
 			},
 		}},
 	}
@@ -74,7 +73,7 @@ func editConfig(deps dependencies, editor string) error {
 	return err
 }
 
-func suggestConfig(deps dependencies) error {
+func suggestConfig(ctx context.Context, deps dependencies) error {
 	cwd, aibox, err := folders(deps)
 	if err != nil {
 		return err
@@ -120,7 +119,7 @@ func suggestConfig(deps dependencies) error {
 		return nil
 	}
 
-	out.printf("aibox found these tools in %s:\n\n", name)
+	out.printf("aibox found these tools in %s. The VM can't reach their package registries yet:\n\n", name)
 
 	toolWidth := 0
 	for _, s := range suggestions {
@@ -130,9 +129,10 @@ func suggestConfig(deps dependencies) error {
 	for _, s := range suggestions {
 		indent := strings.Repeat(" ", 2+toolWidth+3)
 		out.printf("  %s%s   because of %s\n", out.paint(s.Tool, bold, cyan), strings.Repeat(" ", toolWidth-len(s.Tool)), joinAnd(out.each(s.Files, bold)))
+		out.printf("%spreset:%s would allow:\n", indent, s.Preset)
 
-		for _, line := range wrap(s.Hosts, out.width-len(indent)) {
-			out.printf("%s%s\n", indent, out.paint(line, dim))
+		for _, line := range wrap(s.Hosts, out.width-len(indent)-2) {
+			out.printf("%s  %s\n", indent, out.paint(line, dim))
 		}
 	}
 
@@ -147,7 +147,7 @@ func suggestConfig(deps dependencies) error {
 	answers := bufio.NewReader(deps.stdin)
 
 	for _, s := range suggestions {
-		yes, err := ask(out, answers, "Allow "+s.Tool+"?")
+		yes, err := ask(ctx, out, answers, "Allow the preset for "+s.Tool+"?")
 		if err != nil {
 			return err
 		}
@@ -188,29 +188,31 @@ func suggestConfig(deps dependencies) error {
 		tools = append(tools, s.Tool)
 	}
 
-	out.printf("\n%s\n", out.paint("Added "+joinAnd(tools)+". Start aibox again to use them.", green))
+	out.printf("\n%s\n", out.paint("Added the "+plural(len(tools), "preset", "presets")+" for "+joinAnd(tools)+".", green))
+	out.printf("Start aibox again for it to apply.\n")
 
 	return nil
 }
 
-// ask asks the question and reads the answer from answers: yes unless it
-// starts with n.
-func ask(out painter, answers *bufio.Reader, question string) (bool, error) {
+// ask asks the question and reads the answer from answers: yes for an
+// empty line, else yes unless it starts with n. The end of the input is no.
+func ask(ctx context.Context, out painter, answers *bufio.Reader, question string) (bool, error) {
 	out.printf("%s [Y/n] ", out.paint(question, bold))
 
-	answer, err := answers.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("read the answer: %w", err)
+	answer, err := readAnswer(ctx, answers)
+	if err != nil {
+		out.printf("\n")
+
+		return false, err
 	}
 
-	answer = strings.ToLower(strings.TrimSpace(answer))
-
-	// no answer at all, as when stdin ends, is no
-	if errors.Is(err, io.EOF) && answer == "" {
+	if !strings.HasSuffix(answer, "\n") {
 		out.printf("\n")
 
 		return false, nil
 	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
 
 	return !strings.HasPrefix(answer, "n"), nil
 }

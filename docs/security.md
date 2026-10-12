@@ -96,10 +96,9 @@ On Linux the VM runs on QEMU's microvm machine type. On macOS it runs on
 Virtualization.framework.
 
 The project folder of `aibox run`, the mounts, the skills, the agents and
-the commands are shared into
-the VM with virtio-fs. Your user on your machine is the user in the VM, so
-the files it creates belong to you. Your machine enforces the read-only
-shares, not the VM.
+the commands are shared into the VM with virtio-fs, or with 9p on Windows.
+Your user on your machine is the user in the VM, so the files it creates
+belong to you. Your machine enforces the read-only shares, not the VM.
 
 The root disk is read-only, for QEMU and for the VM. The init puts an
 overlay in RAM over it, only to create the mount points, and then makes the

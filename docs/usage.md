@@ -243,6 +243,14 @@ The state disk, `state.ext4`, is a dynamic VHD on Windows, the kind of
 disk Hyper-V attaches, which takes up space as the VM fills it. The VM
 sees the same disk as on Linux.
 
+The VM sees your folders as Windows keeps them. Names are the same in any
+case, so `Foo` and `foo` are one file. Files made on Windows are not
+executable in the VM until you `chmod +x` them there, and a checkout of
+git for Windows has CRLF line endings, which bash scripts in the VM
+can't run with. Tools on your machine are Windows programs, which the VM
+can't run, so a mount of them is no use. Install the tools in the VM
+into `/usr/local` instead: it's on the state disk and stays.
+
 ### How it works
 
 aibox asks the service over a named pipe to make a VM with the memory,

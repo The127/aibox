@@ -308,8 +308,10 @@ Then the init clones the bundle, removes the remote and switches to the
 branch `aibox/task`. It runs `claude --print` as the user, with
 `bypassPermissions`, `stream-json` output and
 [`image/task.md`](https://github.com/The127/aibox/blob/main/image/task.md)
-as an extra system prompt. Finally it commits whatever is left and bundles
-the branch.
+as an extra system prompt, followed by the part of
+[`image/host`](https://github.com/The127/aibox/tree/main/image/host) for
+the system your machine runs. Finally it commits whatever is left and
+bundles the branch.
 
 aibox runs its git commands with hooks and fsmonitor turned off, because the
 repository came from the task. Filters the task sets up still run, but only

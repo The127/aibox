@@ -2,15 +2,17 @@
 
 You can run containers and VMs inside the VM, without root. Bring podman or
 QEMU from your machine like any other tool, with
-[`mounts`](config.md#mounts) and [`path`](config.md#path).
+[`mounts`](config.md#mounts) and [`path`](config.md#path). On Windows
+your machine has only Windows programs, which the VM can't run, so
+install them in the VM into `/usr/local`, which stays.
 
 A container shares the VM's network. It only has the loopback and the proxy,
 and gets the proxy variables. To pull images from Docker Hub, add
 `preset:docker` to the allow list.
 
 podman keeps its storage on the state disk, in
-`~/.local/share/containers`. overlayfs doesn't work on virtio-fs, so it
-can't live in the shared home.
+`~/.local/share/containers`. overlayfs doesn't work on the shared folders,
+so it can't live in the shared home.
 
 podman's limits, like `--memory` and `--pids-limit`, work. Setuid programs
 in an image don't, because the state disk is mounted with nosuid.
@@ -20,8 +22,9 @@ in an image don't, because the state disk is mounted with nosuid.
 The VM has `/dev/kvm` for VMs of its own. On Linux this needs nested
 virtualization on your machine. On macOS it needs a Mac where
 Virtualization.framework offers nested virtualization. Apple documents that
-for M3 and newer, with macOS 15 or newer. Everywhere else, those VMs run in
-software.
+for M3 and newer, with macOS 15 or newer. On Windows the VM never has
+`/dev/kvm`: Hyper-V gives the VM of aibox no virtualization of its own.
+Everywhere else, those VMs run in software.
 
 ## How it works
 

@@ -43,8 +43,8 @@ flowchart LR
   repos["Repositories on the git list"]
 
   claude <-->|"SSH over vsock"| terminal
-  claude <-->|"virtio-fs"| project
-  claude ---|"virtio-fs, read-only"| mounts
+  claude <-->|"virtio-fs, 9p on Windows"| project
+  claude ---|"the same, read-only"| mounts
   claude <-->|"vsock"| proxy
   proxy ---> hosts
   proxy --> broker
@@ -56,8 +56,8 @@ proxy in aibox. Apart from that, it only shares folders with your machine.
 With [git](git.md) in the config, a broker adds your git login to the VM's
 git requests, so the login never enters the VM.
 
-aibox runs on Linux with QEMU and on macOS with Virtualization.framework. The
-VM boots in about a second.
+aibox runs on Linux with QEMU, on macOS with Virtualization.framework and
+on Windows with Hyper-V. The VM boots in about a second.
 
 ## Why a VM
 

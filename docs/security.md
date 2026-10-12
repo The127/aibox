@@ -141,11 +141,14 @@ you.
 
 ### The host side
 
-On Linux QEMU runs in a bubblewrap sandbox with no network, no environment
-and no writable file system. It only sees its own program, libraries and
-firmware and a copy of the kernel. Devices, disks and sockets come in as
-open files from aibox. QEMU also filters its own syscalls.
-`aibox run --no-sandbox` runs it without bubblewrap, for debugging.
+On Linux QEMU runs in a bubblewrap sandbox with no network and no writable
+file system. Its only environment variable is `LD_LIBRARY_PATH`, which
+names the folders its libraries are in. It only sees its own program,
+libraries and firmware and a copy of the kernel. Before QEMU starts, aibox
+asks your system's loader which libraries QEMU loads and binds only those
+files. Devices, disks and sockets come in as open files from aibox. QEMU
+also filters its own syscalls. `aibox run --no-sandbox` runs it without
+bubblewrap, for debugging.
 
 Once QEMU runs, aibox locks itself down too. It gives up the right to gain
 new privileges. Landlock rules only let it read `/etc` for DNS and connect

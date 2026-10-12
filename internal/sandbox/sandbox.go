@@ -4,6 +4,8 @@
 package sandbox
 
 import (
+	"path"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -12,17 +14,14 @@ import (
 // bubblewrap makes from the inherited file.
 const Kernel = "/kernel"
 
-// NixStore is where a program from Nix has its libraries and its loader.
-// Bound as Libraries, the store needs no /lib64.
-const NixStore = "/nix/store"
-
 // Spec is what QEMU needs inside the sandbox: the programs and files of
 // the host that are bound in, and the number of the inherited file
-// bubblewrap copies the kernel from.
+// bubblewrap copies the kernel from. Libraries are the loader and the
+// libraries of the program.
 type Spec struct {
 	Bubblewrap string
 	Program    string
-	Libraries  string
+	Libraries  []string
 	Firmware   string
 	KernelFD   int
 }
@@ -32,16 +31,24 @@ type Spec struct {
 // bound read-only at their own paths, so that it starts as on the host.
 func (s Spec) Command(args []string) (string, []string) {
 	wrapped := []string{
-		// every namespace, no terminal, no environment, and QEMU dies with aibox
+		// every namespace, no terminal, no environment but LD_LIBRARY_PATH
+		// below, and QEMU dies with aibox
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
-		"--ro-bind", s.Libraries, s.Libraries,
 	}
 
-	// the loader of the program is named by its /lib64 path, unless the
-	// program is from Nix
-	if s.Libraries != NixStore {
-		wrapped = append(wrapped, "--symlink", strings.TrimPrefix(s.Libraries, "/"), "/lib64")
+	var folders []string
+
+	for _, library := range s.Libraries {
+		wrapped = append(wrapped, "--ro-bind", library, library)
+
+		if folder := path.Dir(library); !slices.Contains(folders, folder) {
+			folders = append(folders, folder)
+		}
 	}
+
+	// the loader in the sandbox has no ld.so.cache from the host, which can name
+	// folders it would not search on its own
+	wrapped = append(wrapped, "--setenv", "LD_LIBRARY_PATH", strings.Join(folders, ":"))
 
 	wrapped = append(wrapped,
 		"--ro-bind", s.Program, s.Program,

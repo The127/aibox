@@ -115,7 +115,7 @@ func TestRunGivesBubblewrapTheKernelToCopy(t *testing.T) {
 	assert.Equal(t, []string{"file ro"}, f.record(t, "bwrap-kernel-kind"))
 }
 
-func TestRunGivesQEMUNoEnvironmentInTheSandbox(t *testing.T) {
+func TestRunGivesQEMUNoEnvironmentButItsLibraryFoldersInTheSandbox(t *testing.T) {
 	// arrange
 	f := fakes(t)
 
@@ -128,7 +128,7 @@ func TestRunGivesQEMUNoEnvironmentInTheSandbox(t *testing.T) {
 	environment := slices.DeleteFunc(f.record(t, "qemu-environment"), func(variable string) bool {
 		return strings.HasPrefix(variable, "AIBOX_FAKE_")
 	})
-	assert.Empty(t, environment)
+	assert.Equal(t, []string{"LD_LIBRARY_PATH=" + filepath.Dir(f.libraries[0])}, environment)
 }
 
 func TestRunWithoutTheSandboxRunsQEMUAlone(t *testing.T) {
@@ -285,7 +285,7 @@ func TestRunBindsTheLibrariesAndFirmwareOfTheOptionsIntoTheSandbox(t *testing.T)
 
 	// assert
 	require.ErrorIs(t, err, launch.ErrNoTerminal)
-	assert.Contains(t, f.record(t, "bwrap"), f.libraries)
+	assert.Contains(t, f.record(t, "bwrap"), f.libraries[0])
 	assert.Contains(t, f.record(t, "bwrap"), f.firmware)
 }
 
@@ -304,22 +304,75 @@ func TestRunStartsTheVirtiofsdOnThePathWhenTheOptionsNameNone(t *testing.T) {
 	assert.Contains(t, f.record(t, "virtiofsd-project.sock"), "--shared-dir=/home/someone/project")
 }
 
-func TestHostFilesOfAQEMUOfTheSystem(t *testing.T) {
+func TestFirmwareOfAQEMUOfTheSystem(t *testing.T) {
 	// act
-	libraries, firmware := launch.HostFiles("/usr/bin/qemu-system-x86_64")
+	firmware := launch.Firmware("/usr/bin/qemu-system-x86_64")
 
 	// assert
-	assert.Equal(t, "/usr/lib64", libraries)
 	assert.Equal(t, "/usr/share/qemu/qboot.rom", firmware)
 }
 
-func TestHostFilesOfAQEMUFromNix(t *testing.T) {
+func TestFirmwareOfAQEMUFromNix(t *testing.T) {
 	// act
-	libraries, firmware := launch.HostFiles("/nix/store/abc-qemu-11.1.1/bin/qemu-system-x86_64")
+	firmware := launch.Firmware("/nix/store/abc-qemu-11.1.1/bin/qemu-system-x86_64")
 
 	// assert
-	assert.Equal(t, sandbox.NixStore, libraries)
 	assert.Equal(t, "/nix/store/abc-qemu-11.1.1/share/qemu/qboot.rom", firmware)
+}
+
+func TestListedAreTheLoaderAndTheFilesTheLoaderFound(t *testing.T) {
+	// arrange
+	list := []byte("\tlinux-vdso.so.1 (0x00007ffd5a1f2000)\n" +
+		"\tlibcapstone.so.5 => /usr/lib/libcapstone.so.5 (0x00007f2c1a400000)\n" +
+		"\tlibc.so.6 => /usr/lib/libc.so.6 (0x00007f2c19e00000)\n" +
+		"\t/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f2c1b6a1000)\n" +
+		"\t (0x0000ffff7f6b0000)\n")
+
+	// act
+	files, err := launch.Listed("/lib64/ld-linux-x86-64.so.2", list)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/lib64/ld-linux-x86-64.so.2",
+		"/usr/lib/libcapstone.so.5",
+		"/usr/lib/libc.so.6",
+		"/usr/lib64/ld-linux-x86-64.so.2",
+	}, files)
+}
+
+func TestListedFailsForALibraryTheLoaderDoesNotFind(t *testing.T) {
+	// arrange
+	list := []byte("\tlibcapstone.so.5 => not found\n")
+
+	// act
+	_, err := launch.Listed("/lib64/ld-linux-x86-64.so.2", list)
+
+	// assert
+	require.ErrorContains(t, err, "libcapstone.so.5")
+}
+
+func TestLibrariesOfAProgramOfTheHost(t *testing.T) {
+	// arrange
+	shell, err := filepath.EvalSymlinks("/bin/sh")
+	if err != nil {
+		t.Skip("the host has no /bin/sh")
+	}
+
+	// act
+	files, err := launch.Libraries(shell)
+
+	// assert
+	if err != nil && strings.Contains(err.Error(), "names no loader") {
+		t.Skip("the host's /bin/sh is static")
+	}
+
+	require.NoError(t, err)
+	assert.Greater(t, len(files), 1)
+
+	for _, file := range files {
+		assert.FileExists(t, file)
+	}
 }
 
 func TestRunFailsBeforeQEMUWithoutTheFirmwareForTheSandbox(t *testing.T) {

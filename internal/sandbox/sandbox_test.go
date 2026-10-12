@@ -12,7 +12,7 @@ func spec() sandbox.Spec {
 	return sandbox.Spec{
 		Bubblewrap: "/usr/bin/bwrap",
 		Program:    "/usr/bin/qemu-system-x86_64",
-		Libraries:  "/usr/lib64",
+		Libraries:  []string{"/lib64/ld-linux-x86-64.so.2", "/usr/lib/libc.so.6", "/usr/lib/libz.so.1"},
 		Firmware:   "/usr/share/qemu/qboot.rom",
 		KernelFD:   5,
 	}
@@ -26,8 +26,10 @@ func TestCommandRunsTheProgramInBubblewrapWithNothingButWhatItNeeds(t *testing.T
 	assert.Equal(t, "/usr/bin/bwrap", program)
 	assert.Equal(t, []string{
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
-		"--ro-bind", "/usr/lib64", "/usr/lib64",
-		"--symlink", "usr/lib64", "/lib64",
+		"--ro-bind", "/lib64/ld-linux-x86-64.so.2", "/lib64/ld-linux-x86-64.so.2",
+		"--ro-bind", "/usr/lib/libc.so.6", "/usr/lib/libc.so.6",
+		"--ro-bind", "/usr/lib/libz.so.1", "/usr/lib/libz.so.1",
+		"--setenv", "LD_LIBRARY_PATH", "/lib64:/usr/lib",
 		"--ro-bind", "/usr/bin/qemu-system-x86_64", "/usr/bin/qemu-system-x86_64",
 		"--ro-bind", "/usr/share/qemu/qboot.rom", "/usr/share/qemu/qboot.rom",
 		"--ro-bind-data", "5", "/kernel",
@@ -50,19 +52,4 @@ func TestCommandSharesNoNetworkAndNoFolderOfTheHost(t *testing.T) {
 		assert.NotEqual(t, "/", arg)
 		assert.NotEqual(t, "/home", arg)
 	}
-}
-
-func TestCommandBindsTheNixStoreForAProgramFromNix(t *testing.T) {
-	// arrange
-	s := spec()
-	s.Program = "/nix/store/abc-qemu/bin/qemu-system-x86_64"
-	s.Libraries = sandbox.NixStore
-	s.Firmware = "/nix/store/abc-qemu/share/qemu/qboot.rom"
-
-	// act
-	_, args := s.Command(nil)
-
-	// assert
-	assert.Equal(t, []string{"--ro-bind", "/nix/store", "/nix/store"}, args[4:7])
-	assert.NotContains(t, args, "/lib64")
 }

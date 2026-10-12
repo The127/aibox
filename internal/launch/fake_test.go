@@ -88,7 +88,7 @@ type fakeProcesses struct {
 	stderr           io.Writer
 	env              []string
 	consoleLog       string
-	libraries        string
+	libraries        []string
 	firmware         string
 	ports            []uint16
 	confinedWith     []uint16
@@ -110,7 +110,6 @@ func fakes(t *testing.T) *fakeProcesses {
 	require.NoError(t, os.Symlink(self, f.virtiofsd))
 	require.NoError(t, os.Symlink(self, f.aibox))
 	require.NoError(t, os.Mkdir(f.records, 0o700))
-	require.NoError(t, os.Mkdir(f.libraries, 0o700))
 	require.NoError(t, os.WriteFile(f.firmware, nil, 0o600))
 	t.Setenv("AIBOX_FAKE_RECORDS", f.records)
 	t.Setenv("AIBOX_FAKE_DIR", dir)
@@ -127,7 +126,7 @@ func fakesIn(dir string) *fakeProcesses {
 		aibox:            filepath.Join(dir, "aibox"),
 		records:          filepath.Join(dir, "records"),
 		consoleLog:       filepath.Join(dir, "console.log"),
-		libraries:        filepath.Join(dir, "lib64"),
+		libraries:        []string{filepath.Join(dir, "libqemu.so")},
 		firmware:         filepath.Join(dir, "qboot.rom"),
 		proxyListener:    make(chan net.Listener, 1),
 		terminalListener: make(chan net.Listener, 1),

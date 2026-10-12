@@ -10,11 +10,8 @@ brew install --cask the127/tap/aibox
 ```
 
 On Linux, Homebrew installs just the binary. Install QEMU, virtiofsd and
-bubblewrap from your distribution, not from Homebrew. aibox binds the
-libraries of QEMU into its sandbox, and it only knows `/usr/lib64` and the
-Nix store. A QEMU from Homebrew has its libraries somewhere else. Ubuntu
-also lets only its own bubblewrap make the namespaces that the sandbox
-needs.
+bubblewrap from your distribution, not from Homebrew. Ubuntu only lets its
+own bubblewrap make the namespaces that the sandbox needs.
 
 ```
 sudo apt install qemu-system-x86 virtiofsd bubblewrap        # Debian, Ubuntu
@@ -43,8 +40,7 @@ aibox needs:
 - virtiofsd on your `PATH` or at `/usr/libexec/virtiofsd`, which is where
   Debian 13, Ubuntu 24.04 and Fedora put it
 
-QEMU and virtiofsd from Nix work too. When QEMU is in `/nix/store`, its
-sandbox binds the store in place of `/usr/lib64`.
+QEMU and virtiofsd from Nix work too.
 
 ## Windows
 

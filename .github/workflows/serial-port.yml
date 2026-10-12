@@ -1,0 +1,77 @@
+# TEMPORARY for issue #130: boots aibox's VM on the runner, whose Linux has
+# no vsock namespaces, so the VM reaches aibox over the virtio serial port.
+# It checks that the port works and measures what it costs. Remove it before
+# the pull request merges.
+name: serial port
+
+on:
+  push:
+    branches: [feat/serial-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: open KVM to the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Ubuntu keeps unprivileged user namespaces from programs without an
+      # AppArmor profile of their own, and bubblewrap needs them
+      - name: install QEMU, virtiofsd and bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 virtiofsd bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: show the kernel
+        run: |
+          uname -r
+          ls /proc/sys/net/vsock/ 2>&1 || true
+      - name: build aibox
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox" ./cmd/aibox
+      - name: download the VM image of the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/image"
+          gh release download --repo The127/aibox --pattern aibox-image_amd64.tar.gz --output - | tar -xz -C "$RUNNER_TEMP/image"
+          ls -l "$RUNNER_TEMP/image"
+      - name: write the config new projects start from
+        run: |
+          mkdir -p ~/.aibox
+          printf 'allow:\n  - preset:github\n' > ~/.aibox/config.yaml
+      - name: time the download on the runner itself
+        run: time git clone --bare --depth 1 https://github.com/torvalds/linux "$RUNNER_TEMP/linux-host.git"
+      - name: boot the VM and run the checks in its shell
+        run: |
+          mkdir -p ~/project
+          cd ~/project
+          cat > "$RUNNER_TEMP/commands" <<'EOF'
+          echo MARK-start
+          time git clone --bare --depth 1 https://github.com/torvalds/linux ~/.cache/linux.git && echo MARK-clone-$((1+1))
+          time (head -c 10000000 /dev/urandom | base64)
+          echo MARK-terminal-$((1+1))
+          exit
+          EOF
+          # the shell needs a terminal, which script gives it. The sleep
+          # keeps the input open until the VM is done
+          (cat "$RUNNER_TEMP/commands"; sleep 900) | script -q -e -c "$RUNNER_TEMP/aibox run --shell --image $RUNNER_TEMP/image" "$RUNNER_TEMP/session.log" > /dev/null
+      - name: show the results
+        if: always()
+        run: |
+          echo '--- console.log'
+          head -5 ~/.aibox/projects/*/console.log || true
+          echo '--- the session, without the terminal test output'
+          grep -a -v -E '^[A-Za-z0-9+/=]{60,}' "$RUNNER_TEMP/session.log" | tail -60 || true
+          grep -a -q MARK-clone-2 "$RUNNER_TEMP/session.log"
+          grep -a -q MARK-terminal-2 "$RUNNER_TEMP/session.log"

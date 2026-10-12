@@ -29,6 +29,7 @@ import (
 	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/vm"
+	"github.com/the127/aibox/internal/vsockns"
 )
 
 // machine is a VM whose kernel and root disk are empty files of the test.
@@ -555,6 +556,48 @@ func cmdlinePort(t *testing.T, f *fakeProcesses, word string) string {
 	t.Fatalf("no %s on the kernel command line", word)
 
 	return ""
+}
+
+func TestRunReachesTheVMOverThePortWithoutVsockNamespaces(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	f.noVsock = true
+	t.Setenv("AIBOX_FAKE_QEMU_PORT", "proxy")
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.Equal(t, []string{"HTTP/1.1 400 Bad Request"}, f.record(t, "port-proxy"))
+	assert.Equal(t, "1", cmdlinePort(t, f, "aibox.proxy"))
+	assert.Equal(t, "2", cmdlinePort(t, f, "aibox.terminal"))
+	assert.Contains(t, f.record(t, "qemu-cmdline"), "aibox.port")
+
+	for _, arg := range f.record(t, "qemu") {
+		assert.NotContains(t, arg, "vsock")
+	}
+
+	// the port takes the place of the vhost device
+	assert.Equal(t, []string{"device", "socket", "file ro", "file ro", "file rw", "socket", "socket", "socket"}, f.record(t, "qemu-fd-kinds"))
+
+	content, err := os.ReadFile(f.consoleLog)
+	require.NoError(t, err)
+	assert.Equal(t, "aibox: the kernel has no vsock network namespaces: they came with Linux 7.0, and this kernel is 6.8.0, so the VM reaches aibox over a virtio serial port\nhello from the console\n", string(content))
+}
+
+func TestRunFailsWhenVsockFailsForAnotherReason(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.OpenVsock = func() (*vsockns.Vsock, error) { return nil, errors.New("the namespace helper failed") }
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.ErrorContains(t, err, "the namespace helper failed")
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 
 func TestRunTellsTheVMTheTerminalPort(t *testing.T) {

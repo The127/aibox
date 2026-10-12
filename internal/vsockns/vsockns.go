@@ -61,8 +61,20 @@ type Vsock struct {
 // Open starts aibox again with the command as a helper in a new user and
 // network namespace, which makes the vsock namespace and sends the device
 // and the listeners back. They keep the namespace alive after the helper
-// has exited.
+// has exited. A kernel without vsock namespaces is ErrNoNamespaces, with
+// the reason.
 func Open(command ...string) (*Vsock, error) {
+	// opening the device makes the kernel load vsock when it comes as a
+	// module, without root. The helper then finds it loaded.
+	if device, err := os.OpenFile(vhostDevice, os.O_RDWR, 0); err == nil {
+		_ = device.Close()
+	}
+
+	// the helper finds this out too, but only its message would come back
+	if _, err := os.Stat(childMode); errors.Is(err, fs.ErrNotExist) {
+		return nil, kernel{sysctl: vsockSysctl, modules: modulesDir, release: release()}.noNamespaces()
+	}
+
 	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("create the socket for the namespace helper: %w", err)
@@ -70,12 +82,6 @@ func Open(command ...string) (*Vsock, error) {
 
 	theirs, ours := os.NewFile(uintptr(pair[0]), "helper"), os.NewFile(uintptr(pair[1]), "helper")
 	defer func() { _ = ours.Close() }()
-
-	// opening the device makes the kernel load vsock when it comes as a
-	// module, without root. The helper then finds it loaded.
-	if device, err := os.OpenFile(vhostDevice, os.O_RDWR, 0); err == nil {
-		_ = device.Close()
-	}
 
 	var stderr bytes.Buffer
 

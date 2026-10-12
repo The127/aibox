@@ -116,11 +116,20 @@ read-only ones as virtio-fs does elsewhere.
 ### The network
 
 All of the VM's traffic goes over vsock to the proxy on your machine. The
-terminal is an SSH session over the same vsock.
+terminal is an SSH session over the same vsock. On a Linux kernel without
+vsock namespaces, a serial port takes the place of vsock, see below.
 
 On Linux each VM gets its own vsock namespace. aibox creates it in an
 unprivileged user namespace, so it doesn't need root. Every VM uses the same
 address, CID 3, and no other process on your machine can connect to it.
+
+Linux has vsock namespaces since 7.0. On an older kernel, or one without
+vsock, the VM has no vsock at all. It reaches aibox over a virtio serial
+port instead. QEMU connects the port to a socket pair, and aibox holds the
+other end. No file on your machine leads to it, so no other process can
+reach the VM. The proxy, the terminal and everything the proxy carries
+share the port, as streams that [yamux](https://github.com/hashicorp/yamux)
+multiplexes on it.
 
 On macOS aibox owns the VM, and only the process that owns a VM can reach
 its vsock. So it doesn't need a namespace.

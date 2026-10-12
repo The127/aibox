@@ -267,7 +267,8 @@ aibox ends, or is killed, the service ends the VM.
 
 ## How it works
 
-The terminal is an SSH session over vsock. Inside the VM, the init runs
+The terminal is an SSH session over vsock, or over a serial port on a Linux
+kernel without vsock namespaces. Inside the VM, the init runs
 Claude Code on a pseudo terminal. aibox connects to it, puts your terminal
 into raw mode and attaches it. When you resize your terminal, the VM gets
 the new size. When Claude Code exits, aibox exits with the same code.

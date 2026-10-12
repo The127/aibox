@@ -232,6 +232,7 @@ dependenciesRules:
         - '**.internal.proxy$'
         - '**.internal.session$'
         - '**.internal.vsockns$'
+        - '**.internal.vport$'
         - '**.internal.sandbox$'
         - '**.internal.confine$'
     shouldNotDependsOn:
@@ -292,6 +293,15 @@ dependenciesRules:
         - 'github.com/urfave/cli/v3'
   # the clipboard reads the clipboard of the host and knows nothing else
   - package: '**.internal.clipboard$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the port carries connections over a virtio serial port and knows
+  # nothing else
+  - package: '**.internal.vport$'
     shouldNotDependsOn:
       internal:
         - '**.internal.**'
@@ -455,6 +465,7 @@ dependenciesRules:
         - '**.internal.vm$'
         - '**.internal.session$'
         - '**.internal.task$'
+        - '**.internal.vport$'
     shouldNotDependsOn:
       internal:
         - '**.cmd.**'

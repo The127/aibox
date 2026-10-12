@@ -11,8 +11,9 @@ aibox assumes the worst. Whatever runs in the VM is under an attacker's
 control, root in the VM included, and it may try bugs in the VM's kernel.
 
 Other programs on your machine can't reach the VM either. On Linux each VM
-has its own vsock namespace, so no other process can connect to it. On macOS
-only aibox can reach its VM's vsock.
+has its own vsock namespace, so no other process can connect to it. On a
+Linux kernel without vsock namespaces, the VM talks to aibox over a serial
+port that only aibox holds. On macOS only aibox can reach its VM's vsock.
 
 Other programs also can't pose as a server you allowed. A server on your
 machine's loopback usually listens on only one address, `127.0.0.1` or
@@ -69,7 +70,7 @@ Everything the VM can reach on your machine goes through one of these.
 |---|---|---|
 | The hypervisor | The VM's CPU, memory and devices | The VM has its own kernel. On Linux it runs on QEMU in a bubblewrap sandbox. On macOS it runs on Virtualization.framework, which aibox can't sandbox. On both, aibox locks itself down once the VM runs. See [The host side](security.md#the-host-side). |
 | The shares | The project, the mounts, your skills, agents and commands, and the VM's home | Your machine enforces the read-only shares. aibox won't start in your home folder or above it, and won't mount your home folder, a folder above it, or a folder in or above `~/.aibox`. See [mounts](config.md#mounts). |
-| The proxy | All network traffic, over vsock | The VM has no network card. The proxy only connects to the allow list and refuses names that lead to your own networks. See [allow](config.md#allow). |
+| The proxy | All network traffic, over vsock or a serial port | The VM has no network card. The proxy only connects to the allow list and refuses names that lead to your own networks. See [allow](config.md#allow). |
 | The git broker | git's requests | The broker adds your login on your machine, only for the repositories and branches the config names. See [Git](git.md). |
 | The key forwarder | Requests to the Claude API | The VM gets a placeholder key. aibox adds the real one. See [API key](tasks.md#api-key). |
 | The IDE bridge | Selections, diffs and errors | With `ide: true`, the bridge passes on only those messages, and only for files in the project. See [In your IDE](usage.md#in-your-ide). |

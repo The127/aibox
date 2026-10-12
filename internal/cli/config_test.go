@@ -178,3 +178,88 @@ func TestRunEditorReportsAnEditorThatFails(t *testing.T) {
 	// assert
 	assert.Error(t, err)
 }
+
+func (f *fixture) writeTemplate(t *testing.T, content string) {
+	t.Helper()
+
+	require.NoError(t, os.WriteFile(filepath.Join(f.aiboxDir, "config.yaml"), []byte(content), 0o600))
+}
+
+func TestANewProjectStartsFromTheTemplate(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeTemplate(t, "# my usual setup\nallow:\n  - api.anthropic.com\n  - preset:go\ncpus: 4\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 4, f.launch.spec.CPUs)
+
+	written, err := os.ReadFile(f.project(t).Config)
+	require.NoError(t, err)
+	assert.Equal(t, "# my usual setup\nallow:\n  - api.anthropic.com\n  - preset:go\ncpus: 4\n", string(written))
+
+	// and keeps its config when the template changes
+	f.writeTemplate(t, "cpus: 8\n")
+	require.NoError(t, f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")))
+	assert.Equal(t, 4, f.launch.spec.CPUs)
+}
+
+func TestConfigEditTemplateOpensTheTemplate(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	template := filepath.Join(f.aiboxDir, "config.yaml")
+
+	// act
+	err := f.configEdit("--template")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, template, f.editor.path)
+	assert.FileExists(t, template, "it starts from the default file")
+	assert.NoDirExists(t, filepath.Join(f.aiboxDir, "projects"), "no project gets a folder for it")
+}
+
+func TestConfigEditTemplateReportsAMistake(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.editor.onEdit = writes("allow:\n  - preset:nothing\n")
+
+	// act
+	err := f.configEdit("--template")
+
+	// assert
+	require.ErrorContains(t, err, "unknown preset")
+}
+
+func TestConfigEditOfANewProjectStartsFromTheTemplate(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeTemplate(t, "memory: 4096\n")
+
+	// act
+	err := f.configEdit()
+
+	// assert
+	require.NoError(t, err)
+
+	written, err := os.ReadFile(f.project(t).Config)
+	require.NoError(t, err)
+	assert.Equal(t, "memory: 4096\n", string(written))
+}
+
+func TestANewProjectDoesNotStartFromATemplateWithAnUnsafeMount(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeTemplate(t, "mounts:\n  - "+f.homeDir+":/opt/home\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, "the template")
+	assert.NoFileExists(t, f.project(t).Config)
+}

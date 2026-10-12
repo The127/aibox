@@ -3,7 +3,8 @@
 Each project has its own config at
 `~/.aibox/projects/<escaped path>/config.yaml`. It lives outside the project
 on purpose, so the VM can't change it. The first `aibox run` writes it, with
-comments and the hosts Claude Code needs.
+comments and the hosts Claude Code needs, or from
+[your own starting config](#your-own-starting-config).
 
 To change it, run:
 
@@ -18,6 +19,24 @@ you about mistakes.
 
 An editor that returns right away, like `code` without `--wait`,
 gets checked before you've made your changes.
+
+## Your own starting config
+
+If you use the same hosts, mounts or memory in most projects, you don't
+have to add them to each one. Write them into a template once:
+
+```
+aibox config edit --template
+```
+
+This opens `~/.aibox/config.yaml`, which starts as a copy of the default
+config. From then on, every new project gets a copy of it, comments
+included, instead of the default. Projects that have a config already keep
+it, and a change to the template doesn't reach them. So each project's
+config still says everything its VM gets.
+
+If the template has a mistake, aibox says so and starts no new project from
+it.
 
 Here is a full example:
 

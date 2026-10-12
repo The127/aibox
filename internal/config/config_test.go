@@ -40,7 +40,7 @@ func TestLoadReadsTheAllowList(t *testing.T) {
 	path := write(t, "allow:\n  - Example.com.\n  - \"*.github.com\"\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestLoadReadsTheMounts(t *testing.T) {
 	path := write(t, "mounts:\n  - "+host("/opt/sdk/go")+":/opt/go\n  - "+host("/home/someone/bin")+":/opt/bin\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestLoadCleansThePathsOfAMount(t *testing.T) {
 	path := write(t, "mounts:\n  - "+host("/opt/sdk//go/")+":/opt/go/\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestLoadExpandsTheHomeInAMount(t *testing.T) {
 	path := write(t, "mounts:\n  - ~/sdk/go:/opt/go\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestLoadAcceptsASpaceInTheHostFolderOfAMount(t *testing.T) {
 	path := write(t, "mounts:\n  - "+host("/opt/my sdk")+":/opt/go\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestLoadRejectsAMountItCannotRead(t *testing.T) {
 			path := write(t, "mounts:\n  - \""+entry+"\"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrBadMount)
@@ -131,7 +131,7 @@ func TestLoadNamesTheMountItRejects(t *testing.T) {
 	path := write(t, "mounts:\n  - /opt/go\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorContains(t, err, "/opt/go")
@@ -158,7 +158,7 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 			path := write(t, "mounts:\n  - "+host("/opt/sdk")+":"+guest+"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrReservedMount)
@@ -172,7 +172,7 @@ func TestLoadAcceptsAMountInsideTheHome(t *testing.T) {
 	path := write(t, "mounts:\n  - "+host("/home/someone/.claude/skills")+":/home/user/.claude/skills\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestLoadRejectsMountsThatOverlap(t *testing.T) {
 			path := write(t, content)
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrMountOverlap)
@@ -214,7 +214,7 @@ func TestLoadRejectsMountsTheKernelCommandLineCannotCarry(t *testing.T) {
 	path := write(t, content.String())
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorIs(t, err, config.ErrCmdlineFull)
@@ -225,7 +225,7 @@ func TestLoadWritesAMountsExampleIntoTheDefaultFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -242,7 +242,7 @@ func TestLoadReadsTheSkills(t *testing.T) {
 			path := write(t, "skills: "+string(skills)+"\n")
 
 			// act
-			cfg, err := config.Load(path)
+			cfg, err := config.Load(path, "")
 
 			// assert
 			require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestLoadLeavesSkillsWithoutAValueAtTheDefault(t *testing.T) {
 	path := write(t, "skills:\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -270,7 +270,7 @@ func TestLoadRejectsSkillsOtherThanAllOrNone(t *testing.T) {
 			path := write(t, "skills: "+text+"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrBadSkills)
@@ -283,7 +283,7 @@ func TestLoadWritesASkillsExampleIntoTheDefaultFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestLoadReadsWhetherTheIDEIsTurnedOn(t *testing.T) {
 			path := write(t, content)
 
 			// act
-			cfg, err := config.Load(path)
+			cfg, err := config.Load(path, "")
 
 			// assert
 			require.NoError(t, err)
@@ -315,7 +315,7 @@ func TestLoadReadsThePath(t *testing.T) {
 	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n  - PATH\n  - DIRENV_PATH\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -341,7 +341,7 @@ func TestLoadRejectsAPathEntryThatIsNeitherAFolderNorAVariable(t *testing.T) {
 			path := write(t, "path:\n  - \""+entry+"\"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrBadPath)
@@ -354,7 +354,7 @@ func TestLoadNamesThePathEntryItRejects(t *testing.T) {
 	path := write(t, "path:\n  - opt/bin\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorContains(t, err, "opt/bin")
@@ -365,7 +365,7 @@ func TestLoadWritesAPathExampleIntoTheDefaultFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -380,7 +380,7 @@ func TestLoadReadsTheEnv(t *testing.T) {
 	path := write(t, "env:\n  - GOFLAGS=-mod=mod\n  - TOKEN=a=b\n  - GITHUB_TOKEN\n  - empty=\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -408,7 +408,7 @@ func TestLoadRejectsAVariableItCannotRead(t *testing.T) {
 			path := write(t, "env:\n  - \""+entry+"\"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrBadVariable)
@@ -423,7 +423,7 @@ func TestLoadRejectsAVariableAiboxSetsItself(t *testing.T) {
 			path := write(t, "env:\n  - "+name+"=x\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrReservedVariable)
@@ -437,7 +437,7 @@ func TestLoadWritesAnEnvExampleIntoTheDefaultFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -460,7 +460,7 @@ func TestLoadWritesTheDefaultFileWhenThereIsNone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -477,11 +477,11 @@ func TestLoadWritesTheDefaultFileWhenThereIsNone(t *testing.T) {
 func TestLoadReadsTheDefaultFileBackAsTheDefault(t *testing.T) {
 	// arrange
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 	require.NoError(t, err)
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -493,7 +493,7 @@ func TestLoadReadsTheDiskSize(t *testing.T) {
 	path := write(t, "disk: 4\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -506,7 +506,7 @@ func TestLoadRejectsADiskSizeBelowOne(t *testing.T) {
 	path := write(t, "disk: 0\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorIs(t, err, config.ErrNotPositive)
@@ -517,7 +517,7 @@ func TestLoadRejectsADiskSizeThatDoesNotFitAFile(t *testing.T) {
 	path := write(t, "disk: 1048577\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorIs(t, err, config.ErrDiskTooLarge)
@@ -530,7 +530,7 @@ func TestLoadAcceptsTheSmallestAndLargestSizes(t *testing.T) {
 			path := write(t, content)
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.NoError(t, err)
@@ -543,7 +543,7 @@ func TestLoadWritesTheDiskKeyAsAnExample(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -558,7 +558,7 @@ func TestLoadReadsMemoryAndCPUs(t *testing.T) {
 	path := write(t, "allow: []\nmemory: 4096\ncpus: 4\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -573,7 +573,7 @@ func TestLoadLeavesMemoryAndCPUsNilWhenNotGiven(t *testing.T) {
 	path := write(t, "allow: []\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -588,7 +588,7 @@ func TestLoadRejectsMemoryOrCPUsBelowOne(t *testing.T) {
 			path := write(t, content)
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrNotPositive)
@@ -601,7 +601,7 @@ func TestLoadWritesTheSizeKeysAsExamples(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -616,7 +616,7 @@ func TestLoadKeepsAnExistingFile(t *testing.T) {
 	path := write(t, "allow: []\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -634,7 +634,7 @@ func TestLoadTreatsAFileWithoutSettingsAsEmpty(t *testing.T) {
 			path := write(t, content)
 
 			// act
-			cfg, err := config.Load(path)
+			cfg, err := config.Load(path, "")
 
 			// assert
 			require.NoError(t, err)
@@ -648,7 +648,7 @@ func TestLoadRejectsABrokenFile(t *testing.T) {
 	path := write(t, "allow: [unclosed\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorContains(t, err, path)
@@ -659,7 +659,7 @@ func TestLoadRejectsAnUnknownKey(t *testing.T) {
 	path := write(t, "alow:\n  - example.com\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorContains(t, err, "alow")
@@ -670,7 +670,7 @@ func TestLoadStoresEntriesInOneForm(t *testing.T) {
 	path := write(t, "allow:\n  - EXAMPLE.com:443\n  - \"[::1]:8443\"\n  - Git.Example.:22\n  - \"*.GitHub.com\"\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -682,7 +682,7 @@ func TestLoadExpandsAPreset(t *testing.T) {
 	path := write(t, "allow:\n  - preset:go\n  - example.com\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -699,7 +699,7 @@ func TestLoadExpandsTheDockerPreset(t *testing.T) {
 	path := write(t, "allow:\n  - preset:docker\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -711,7 +711,7 @@ func TestLoadRejectsAnUnknownPreset(t *testing.T) {
 	path := write(t, "allow:\n  - preset:rust\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorIs(t, err, config.ErrUnknownPreset)
@@ -732,7 +732,7 @@ func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {
 			path := write(t, "allow:\n  - \""+entry+"\"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrBadHost)
@@ -745,7 +745,7 @@ func TestLoadAcceptsTheSmallestAndLargestPort(t *testing.T) {
 	path := write(t, "allow:\n  - example.com:1\n  - example.com:65535\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -821,7 +821,7 @@ func TestLoadRejectsAnEntryForLocalhost(t *testing.T) {
 			path := write(t, "allow:\n  - "+entry+"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrLocalhost)
@@ -836,7 +836,7 @@ func TestLoadRejectsAnUnspecifiedAddress(t *testing.T) {
 			path := write(t, "allow:\n  - "+entry+"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrUnspecified)
@@ -849,7 +849,7 @@ func TestLoadRejectsAPortOnBothAddressesOfTheLoopback(t *testing.T) {
 	path := write(t, "allow:\n  - 127.0.0.1:8123\n  - \"[::1]:8123\"\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorIs(t, err, config.ErrLoopbackTwice)
@@ -860,7 +860,7 @@ func TestLoadAcceptsTheSameLoopbackEntryTwice(t *testing.T) {
 	path := write(t, "allow:\n  - 127.0.0.1:8123\n  - 127.0.0.1:8123\n  - \"[::1]:8080\"\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.NoError(t, err)
@@ -873,7 +873,7 @@ func TestLoadRejectsTheProxyPortOnTheLoopback(t *testing.T) {
 			path := write(t, "allow:\n  - "+entry+"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrProxyPort)
@@ -886,7 +886,7 @@ func TestLoadAcceptsTheProxyPortElsewhere(t *testing.T) {
 	path := write(t, "allow:\n  - proxy.example:3128\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.NoError(t, err)
@@ -905,7 +905,7 @@ func TestLoadRejectsLoopbackPortsTheKernelCommandLineCannotCarry(t *testing.T) {
 	path := write(t, content.String())
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	assert.ErrorIs(t, err, config.ErrCmdlineFull)
@@ -945,4 +945,70 @@ func TestAllows(t *testing.T) {
 			assert.Equal(t, test.want, allowed)
 		})
 	}
+}
+
+func TestEnsureDefaultStartsFromTheTemplate(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.yaml")
+	require.NoError(t, os.WriteFile(template, []byte("# mine\nallow:\n  - preset:go\nmemory: 4096\n"), 0o600))
+	path := filepath.Join(dir, "config.yaml")
+
+	// act
+	cfg, err := config.Load(path, template)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 4096, *cfg.Memory)
+
+	written, err := os.ReadFile(path) //nolint:gosec // a temp file of the test
+	require.NoError(t, err)
+	assert.Equal(t, "# mine\nallow:\n  - preset:go\nmemory: 4096\n", string(written), "the comments come along")
+}
+
+func TestEnsureDefaultLeavesAConfigThatIsThere(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.yaml")
+	require.NoError(t, os.WriteFile(template, []byte("memory: 4096\n"), 0o600))
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("cpus: 4\n"), 0o600))
+
+	// act
+	err := config.EnsureDefault(path, template)
+
+	// assert
+	require.NoError(t, err)
+	written, err := os.ReadFile(path) //nolint:gosec // a temp file of the test
+	require.NoError(t, err)
+	assert.Equal(t, "cpus: 4\n", string(written))
+}
+
+func TestEnsureDefaultRefusesATemplateWithAMistake(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	template := filepath.Join(dir, "template.yaml")
+	require.NoError(t, os.WriteFile(template, []byte("allow:\n  - preset:nothing\n"), 0o600))
+	path := filepath.Join(dir, "config.yaml")
+
+	// act
+	err := config.EnsureDefault(path, template)
+
+	// assert
+	require.ErrorIs(t, err, config.ErrUnknownPreset)
+	assert.ErrorContains(t, err, "the template "+template)
+	assert.NoFileExists(t, path, "no project starts from it")
+}
+
+func TestEnsureDefaultWithoutATemplateWritesTheDefault(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	// act
+	cfg, err := config.Load(path, filepath.Join(dir, "none.yaml"))
+
+	// assert
+	require.NoError(t, err)
+	assert.True(t, cfg.Allow.Allows("api.anthropic.com", "443"))
 }

@@ -317,23 +317,3 @@ func TestListShowsThePathsOfTheProjects(t *testing.T) {
 	assert.Contains(t, f.stdout.String(), gone+" (the folder is gone)\n")
 	assert.Contains(t, f.stdout.String(), "-from-an-older-aibox (folder "+old.Dir+", its path is known after its next run)\n")
 }
-
-func TestResetAndRemoveRefuseAFolderAnotherPathShares(t *testing.T) {
-	// arrange
-	f := newProjectsFixture(t)
-	other := f.cwd + "-other"
-	require.NoError(t, os.WriteFile(f.p.Path, []byte(other+"\n"), 0o600))
-
-	for _, command := range []string{"reset", "remove"} {
-		t.Run(command, func(t *testing.T) {
-			// act
-			err := f.projects("y\n", command)
-
-			// assert
-			require.ErrorIs(t, err, errSharedFolder)
-			assert.ErrorContains(t, err, other)
-			assert.FileExists(t, f.p.State)
-			assert.FileExists(t, f.p.Config)
-		})
-	}
-}

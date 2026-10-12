@@ -42,7 +42,6 @@ var (
 	errNeedsYes       = errors.New("without a terminal to ask, pass --yes")
 	errNotConfirmed   = errors.New("nothing changed")
 	errStillThere     = errors.New("a new run or task of the project started meanwhile, so its folder stays")
-	errSharedFolder   = errors.New("the folder aibox keeps for this project is that of another path too, see https://github.com/The127/aibox/issues/142")
 	errNoProjectLock  = errors.New("the lock of the project is no plain file")
 )
 
@@ -230,8 +229,7 @@ func runRemove(deps dependencies, path string, yes bool) error {
 }
 
 // existingProject returns the folders of the project at path, or
-// errNoProject when aibox keeps no folder for it. It refuses a folder
-// whose path file names another path, which shares the folder's name.
+// errNoProject when aibox keeps no folder for it.
 func existingProject(aibox, path string) (project.Project, error) {
 	p, err := project.At(filepath.Join(aibox, "projects"), path)
 	if err != nil {
@@ -240,11 +238,6 @@ func existingProject(aibox, path string) (project.Project, error) {
 
 	if _, err := os.Lstat(p.Dir); errors.Is(err, fs.ErrNotExist) {
 		return project.Project{}, fmt.Errorf("%w: %s", errNoProject, path)
-	}
-
-	written, err := os.ReadFile(p.Path)
-	if err == nil && strings.TrimSpace(string(written)) != filepath.Clean(path) {
-		return project.Project{}, fmt.Errorf("%w: %s", errSharedFolder, strings.TrimSpace(string(written)))
 	}
 
 	return p, nil

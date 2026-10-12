@@ -2,17 +2,17 @@
 package project
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+	"strings"
 )
 
 // ErrRelativePath is returned for a project path that is not absolute.
 var ErrRelativePath = errors.New("project path is not absolute")
-
-var notAlphanumeric = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
 // Project is the folder aibox keeps for one project. Dir is that folder.
 // Home is the home folder of the VM, Config the config file, Log the log of
@@ -31,9 +31,54 @@ type Project struct {
 	Path       string
 }
 
-// Escape turns a project path into a folder name.
+// maxName is the longest name a folder may have on Linux, macOS and
+// Windows, in bytes.
+const maxName = 255
+
+// Escape turns a project path into a folder name. Letters and digits stay,
+// a separator becomes -, and every other byte becomes _ and its two hex
+// digits, _ too. So - and _ never stand for themselves, and no two paths
+// get the same name. A name that would be too long for a folder is cut,
+// and ends in _h and the SHA-256 of the path instead, which no escape
+// makes.
 func Escape(path string) string {
-	return notAlphanumeric.ReplaceAllString(path, "-")
+	pieces := make([]string, 0, len(path))
+	length := 0
+
+	for _, b := range []byte(path) {
+		var piece string
+
+		switch {
+		case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+			piece = string(b)
+		case b == filepath.Separator:
+			piece = "-"
+		default:
+			piece = fmt.Sprintf("_%02x", b)
+		}
+
+		pieces = append(pieces, piece)
+		length += len(piece)
+	}
+
+	if length <= maxName {
+		return strings.Join(pieces, "")
+	}
+
+	sum := sha256.Sum256([]byte(path))
+	tail := "_h" + hex.EncodeToString(sum[:])
+
+	var name strings.Builder
+
+	for _, piece := range pieces {
+		if name.Len()+len(piece)+len(tail) > maxName {
+			break
+		}
+
+		name.WriteString(piece)
+	}
+
+	return name.String() + tail
 }
 
 // At returns the folders for the project at path below base, without

@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugelgupf/p9/fsimpl/templatefs"
-	"github.com/hugelgupf/p9/p9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,20 +36,6 @@ func (c *fed) Close() error {
 
 	return nil
 }
-
-// fedListener is a listener whose connections the test hands it.
-type fedListener struct{ *fed }
-
-func (l fedListener) Accept() (net.Conn, error) {
-	conn, ok := <-l.conns
-	if !ok {
-		return nil, net.ErrClosed
-	}
-
-	return conn, nil
-}
-
-func (fedListener) Addr() net.Addr { return nil }
 
 func within(t *testing.T, done <-chan struct{}, what string) {
 	t.Helper()
@@ -105,52 +89,4 @@ func TestServeConsoleReportsAPipeThatClosedBeforeTheVMConnected(t *testing.T) {
 
 	// assert
 	within(t, gone, "the close was not reported")
-}
-
-// root is a share with nothing in it.
-type root struct {
-	p9.DefaultWalkGetAttr
-	templatefs.NoopFile
-}
-
-func (root) Attach() (p9.File, error) { return root{}, nil }
-
-func (root) GetAttr(p9.AttrMask) (p9.QID, p9.AttrMask, p9.Attr, error) {
-	return p9.QID{Type: p9.TypeDir}, p9.AttrMask{Mode: true}, p9.Attr{Mode: p9.ModeDirectory | 0o755}, nil
-}
-
-func TestServeSharesServesEachConnectionOfTheGuest(t *testing.T) {
-	t.Parallel()
-
-	// arrange
-	l := fedListener{newFed()}
-	served := make(chan struct{})
-
-	go func() {
-		defer close(served)
-
-		serveShares(l, root{})
-	}()
-
-	// act: two mounts, each over a connection of its own
-	for range 2 {
-		hostSide, guestSide := net.Pipe()
-		l.conns <- hostSide
-
-		client, err := p9.NewClient(guestSide)
-		require.NoError(t, err)
-
-		f, err := client.Attach("")
-		require.NoError(t, err)
-
-		qid, _, _, err := f.GetAttr(p9.AttrMaskAll)
-		require.NoError(t, err)
-		assert.Equal(t, p9.TypeDir, qid.Type)
-
-		require.NoError(t, client.Close())
-	}
-
-	// assert
-	require.NoError(t, l.Close())
-	within(t, served, "serveShares did not end with its listener")
 }

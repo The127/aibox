@@ -82,6 +82,28 @@ dependenciesRules:
         - '**.internal.vhd$'
         - '**.internal.ninefs$'
         - '**.internal.hvservice$'
+        - '**.internal.hvsock$'
+        - '**.internal.hvshares$'
+        - '**.internal.appcontainer$'
+    shouldNotDependsOn:
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvsock listens on the sockets of a VM and knows nothing of aibox
+  - package: '**.internal.hvsock$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # hvshares is the helper that serves the shares of a VM on Windows
+  - package: '**.internal.hvshares$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.appcontainer$'
+        - '**.internal.hvchild$'
+        - '**.internal.hvsock$'
+        - '**.internal.ninefs$'
     shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
@@ -368,6 +390,7 @@ dependenciesRules:
         - '**.internal.hvinstall$'
         - '**.internal.hvserver$'
         - '**.internal.hvlaunch$'
+        - '**.internal.hvshares$'
   # the forwarder adds the API key to the requests of the VM and knows
   # nothing else
   - package: '**.internal.anthropic$'

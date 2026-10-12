@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/the127/aibox/internal/hvinstall"
 	"github.com/the127/aibox/internal/hvserver"
+	"github.com/the127/aibox/internal/hvshares"
 )
 
 // platformCommands are the commands only this kind of host has: the
@@ -63,5 +65,9 @@ func platformCommands(deps dependencies) []*cli.Command {
 			Hidden: true,
 			Action: func(context.Context, *cli.Command) error { return hvserver.Run() },
 		}},
+	}, {
+		Name:   hvshares.Command,
+		Hidden: true,
+		Action: func(context.Context, *cli.Command) error { return hvshares.Serve(os.Stdin, os.Stdout) },
 	}}
 }

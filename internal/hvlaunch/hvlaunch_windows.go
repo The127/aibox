@@ -13,9 +13,12 @@ import (
 	"github.com/Microsoft/go-winio/pkg/guid"
 	"golang.org/x/sys/windows"
 
+	"github.com/the127/aibox/internal/appcontainer"
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/hvservice"
+	"github.com/the127/aibox/internal/hvshares"
+	"github.com/the127/aibox/internal/hvsock"
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/ninefs"
 	"github.com/the127/aibox/internal/vm"
@@ -42,6 +45,9 @@ var (
 	// ErrStartedOver is a guest that connected again, after it started
 	// over.
 	ErrStartedOver = errors.New("the guest started over")
+	// ErrSharesGone is a helper that served the folders of the VM and
+	// ended, after which the VM has them no more.
+	ErrSharesGone = errors.New("the helper that serves the folders of the VM ended")
 )
 
 // Backend runs the VM through the service. BootTimeout is how long the
@@ -53,15 +59,24 @@ type Backend struct {
 	SessionEndDelay time.Duration
 	PowerOffWait    time.Duration
 
-	// dial connects to the service, listen listens on a port of the VM and
+	// dial connects to the service, listen listens on a port of the VM,
 	// console takes the pipe of its console under the handle the service
-	// put into this process, which the tests fake
+	// put into this process and shares serves the folders of the VM from a
+	// helper in the job, which the tests fake
 	dial    func(ctx context.Context) (net.Conn, error)
 	listen  func(vm guid.GUID, port uint32) (net.Listener, error)
 	console func(handle uint64) consoleSource
+	shares  func(ctx context.Context, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error)
 }
 
 var _ backend.Backend = Backend{}
+
+// helper is a helper of the run, which ends with Close, and which is Done
+// when it ended before.
+type helper interface {
+	io.Closer
+	Done() <-chan struct{}
+}
 
 // NewBackend returns the Backend with its default timeouts.
 func NewBackend() Backend {
@@ -70,8 +85,9 @@ func NewBackend() Backend {
 		SessionEndDelay: host.DefaultSessionEndDelay,
 		PowerOffWait:    host.DefaultPowerOffWait,
 		dial:            hvservice.Dial,
-		listen:          listenVM,
+		listen:          hvsock.Listen,
 		console:         consoleOf,
+		shares:          startShares,
 	}
 }
 
@@ -115,13 +131,18 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		return fmt.Errorf("the kernel command line is %d bytes, more than the %d the kernel takes: fewer mounts would make it shorter", len(cmdline), hvservice.MaxCmdline)
 	}
 
-	fs, err := ninefs.New(sharesOf(m.Shares), ninefs.Owner{UID: vm.GuestUID, GID: vm.GuestGID})
+	// the helper of the shares finds out only once the VM is made
+	if err := checkShares(m.Shares); err != nil {
+		return err
+	}
+
+	// the helpers of the run end with it, or with aibox, however it ends
+	job, err := appcontainer.NewJob()
 	if err != nil {
 		return err
 	}
 
-	// after the listener of the shares, which the defers below close first
-	defer func() { _ = fs.Close() }()
+	defer func() { _ = job.Close() }()
 
 	state, err := openState(m.State)
 	if err != nil {
@@ -171,14 +192,17 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	gone := serveConsole(console, host.ConsoleLog(log))
 
-	sharesListener, err := b.listen(id, sharesPort)
+	shares, err := b.shares(ctx, job, spec.Stderr, hvshares.Config{
+		VM:     id,
+		Port:   sharesPort,
+		Shares: sharesOf(m.Shares),
+		Owner:  ninefs.Owner{UID: vm.GuestUID, GID: vm.GuestGID},
+	})
 	if err != nil {
 		return err
 	}
 
-	defer func() { _ = sharesListener.Close() }()
-
-	go serveShares(sharesListener, fs)
+	defer func() { _ = shares.Close() }()
 
 	proxyListener, err := b.listen(id, proxyPort)
 	if err != nil {
@@ -220,7 +244,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		}
 	}
 
-	vmErr := b.wait(ctx, gone, terminal, s.stop)
+	vmErr := b.wait(ctx, gone, shares.Done(), terminal, s.stop)
 
 	// the VM is gone, so Hyper-V has let go of the console, whose last
 	// lines may still be on their way into the log: they are what explains
@@ -245,7 +269,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 // wait waits for the VM to be gone by itself, and stops it when the
 // context ends, the guest does not connect in time, starts over or the VM
 // stays up after the session.
-func (b Backend) wait(ctx context.Context, gone <-chan struct{}, terminal *host.Watched, stop func() error) error {
+func (b Backend) wait(ctx context.Context, gone, sharesGone <-chan struct{}, terminal *host.Watched, stop func() error) error {
 	boot := time.NewTimer(b.BootTimeout)
 	defer boot.Stop()
 
@@ -269,6 +293,8 @@ func (b Backend) wait(ctx context.Context, gone <-chan struct{}, terminal *host.
 			return stop()
 		case <-terminal.Again:
 			return errors.Join(ErrStartedOver, stop())
+		case <-sharesGone:
+			return errors.Join(ErrSharesGone, stop())
 		case <-boot.C:
 			return errors.Join(fmt.Errorf("%w in %v", ErrNoBoot, b.BootTimeout), stop())
 		case <-ctx.Done():
@@ -354,3 +380,31 @@ func openLog(path string) (io.WriteCloser, error) {
 type nopCloser struct{ io.Writer }
 
 func (nopCloser) Close() error { return nil }
+
+// startShares starts the helper that serves the folders of the VM: aibox
+// itself, under the command of the helper.
+func startShares(ctx context.Context, job *appcontainer.Job, stderr io.Writer, c hvshares.Config) (helper, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("find aibox for the helper: %w", err)
+	}
+
+	return hvshares.Start(ctx, self, job, stderr, c)
+}
+
+// checkShares refuses a share whose folder is none, before the run makes
+// anything for the VM.
+func checkShares(shares []vm.Share) error {
+	for _, s := range shares {
+		info, err := os.Stat(s.Dir)
+		if err != nil {
+			return fmt.Errorf("share %s: %w", s.Tag, err)
+		}
+
+		if !info.IsDir() {
+			return fmt.Errorf("share %s: %s is no folder", s.Tag, s.Dir)
+		}
+	}
+
+	return nil
+}

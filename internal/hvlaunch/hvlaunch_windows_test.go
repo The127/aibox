@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,9 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/the127/aibox/internal/appcontainer"
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/host"
 	"github.com/the127/aibox/internal/hvservice"
+	"github.com/the127/aibox/internal/hvshares"
+	"github.com/the127/aibox/internal/hvsock"
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/vhd"
 )
@@ -113,6 +117,9 @@ type fixture struct {
 	service *fakeService
 	console *fed
 	spec    backend.Spec
+	// shared is what the helper of the shares was given
+	shared       *hvshares.Config
+	sharesHelper *fakeHelper
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -129,8 +136,9 @@ func newFixture(t *testing.T) *fixture {
 	}
 
 	f := &fixture{
-		service: &fakeService{state: filepath.Join(dir, "state.ext4")},
-		console: newFed(),
+		sharesHelper: &fakeHelper{done: make(chan struct{})},
+		service:      &fakeService{state: filepath.Join(dir, "state.ext4")},
+		console:      newFed(),
 		spec: backend.Spec{
 			Image:      image,
 			State:      filepath.Join(dir, "state.ext4"),
@@ -157,7 +165,12 @@ func newFixture(t *testing.T) *fixture {
 				return nil, err
 			}
 
-			return &closing{Listener: l, closed: make(chan struct{})}, nil
+			return hvsock.Closing(l), nil
+		},
+		shares: func(_ context.Context, _ *appcontainer.Job, _ io.Writer, c hvshares.Config) (helper, error) {
+			f.shared = &c
+
+			return f.sharesHelper, nil
 		},
 		console: func(handle uint64) consoleSource {
 			if handle != aConsoleHandle {
@@ -196,6 +209,10 @@ func TestRunStopsAVMWhoseGuestNeverConnects(t *testing.T) {
 	is, err := vhd.IsDynamic(f.spec.State)
 	require.NoError(t, err)
 	assert.True(t, is, "the state disk is a dynamic VHD")
+
+	require.NotNil(t, f.shared, "a helper serves the shares")
+	assert.Equal(t, uint32(sharesPort), f.shared.Port)
+	assert.NotEmpty(t, f.shared.Shares)
 }
 
 func TestRunEndsWhenTheVMIsGone(t *testing.T) {
@@ -343,5 +360,57 @@ func TestRunRefusesACommandLineTheKernelWouldCut(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "fewer mounts")
+	assert.Empty(t, f.service.asked())
+}
+
+// fakeHelper is a helper of the run, which ends when done is closed.
+type fakeHelper struct {
+	done chan struct{}
+}
+
+func (h *fakeHelper) Close() error          { return nil }
+func (h *fakeHelper) Done() <-chan struct{} { return h.done }
+
+func TestRunStopsTheVMWhenTheHelperOfTheSharesEnds(t *testing.T) {
+	t.Parallel()
+
+	// arrange: a VM that runs, with a console that runs
+	f := newFixture(t)
+	f.backend.BootTimeout = time.Minute
+
+	ran := make(chan error, 1)
+
+	go func() { ran <- f.backend.Run(t.Context(), f.spec) }()
+
+	hyperV, guest := net.Pipe()
+	f.service.onStop = func() { _ = guest.Close() }
+	f.console.conns <- hyperV
+
+	// act
+	close(f.sharesHelper.done)
+
+	// assert
+	select {
+	case err := <-ran:
+		assert.ErrorIs(t, err, ErrSharesGone)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run outlived the helper of the shares")
+	}
+
+	assert.Contains(t, f.service.asked(), hvservice.OpStop)
+}
+
+func TestRunRefusesAShareThatIsNoFolderBeforeItMakesAnything(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t)
+	f.spec.Mounts = []backend.Mount{{Host: filepath.Join(t.TempDir(), "none"), Guest: "/opt/none"}}
+
+	// act
+	err := f.backend.Run(t.Context(), f.spec)
+
+	// assert
+	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Empty(t, f.service.asked())
 }

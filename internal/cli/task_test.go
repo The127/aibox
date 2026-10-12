@@ -541,8 +541,22 @@ func TestTaskCleansTheErrorOfTheVM(t *testing.T) {
 }
 
 func TestTaskQuotesThePathInTheFetchCommand(t *testing.T) {
-	assert.Equal(t, "/a/b-1.bundle", shellQuote("/a/b-1.bundle"))
-	assert.Equal(t, `'/a b/it'\''s'`, shellQuote("/a b/it's"))
+	assert.Equal(t, "/a/b-1.bundle", quoteFor("linux", "/a/b-1.bundle"))
+	assert.Equal(t, `'/a b/it'\''s'`, quoteFor("darwin", "/a b/it's"))
+}
+
+func TestTaskQuotesThePathInTheFetchCommandForEveryShellOfWindows(t *testing.T) {
+	for path, want := range map[string]string{
+		`C:\Users\me\.aibox\tasks\x\changes.bundle`: "C:/Users/me/.aibox/tasks/x/changes.bundle",
+		`C:\Users\Jo Doe\.aibox\changes.bundle`:     `"C:/Users/Jo Doe/.aibox/changes.bundle"`,
+		`C:\Users\jo's\.aibox\changes.bundle`:       `"C:/Users/jo's/.aibox/changes.bundle"`,
+		`C:\Users\100%\.aibox\changes.bundle`:       `'C:/Users/100%/.aibox/changes.bundle'`,
+		`C:\Users\it's $me\.aibox\changes.bundle`:   `'C:/Users/it''s $me/.aibox/changes.bundle'`,
+		`C:\Users\“Jo’s”\.aibox\changes.bundle`:     `'C:/Users/“Jo’’s”/.aibox/changes.bundle'`,
+		`\\server\share\.aibox\changes.bundle`:      "//server/share/.aibox/changes.bundle",
+	} {
+		assert.Equal(t, want, quoteFor("windows", path), path)
+	}
 }
 
 func TestTaskCleansWhatTheVMPrints(t *testing.T) {

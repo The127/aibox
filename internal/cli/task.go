@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -862,15 +863,51 @@ func cut(text string, n int) string {
 	return strings.ToValidUTF8(text[:n], "") + "..."
 }
 
-// shellQuote quotes the path for a shell, unless it needs no quotes.
+// shellQuote quotes the path for the shells of the system, unless it needs
+// no quotes.
 func shellQuote(path string) string {
-	if !strings.ContainsFunc(path, func(r rune) bool {
-		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-", r)
-	}) {
-		return path
+	return quoteFor(runtime.GOOS, path)
+}
+
+// quoteFor quotes the path for the shells of goos. On Windows the person
+// may paste the command into PowerShell, cmd.exe or Git Bash, which share
+// no quotes but double quotes, and those only for a path without $, `, %
+// and !, which each of them reads in double quotes too, and without the
+// typographic double quotes, which PowerShell takes for double quotes.
+// Git takes the path with forward slashes, which none of them reads.
+func quoteFor(goos, path string) string {
+	if goos != "windows" {
+		if !needsQuotes(path, "") {
+			return path
+		}
+
+		return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 	}
 
-	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+	path = strings.ReplaceAll(path, `\`, "/")
+
+	switch {
+	case !needsQuotes(path, ":"):
+		return path
+	case !strings.ContainsAny(path, "$`%!“”„"):
+		return `"` + path + `"`
+	default:
+		// a path the shells share no quotes for, as PowerShell quotes it:
+		// it ends a quote at any of its single quotes, unless doubled
+		for _, quote := range []string{"'", "‘", "’", "‚", "‛"} {
+			path = strings.ReplaceAll(path, quote, quote+quote)
+		}
+
+		return "'" + path + "'"
+	}
+}
+
+// needsQuotes tells whether the path has a character beyond those no shell
+// reads, and the extra ones.
+func needsQuotes(path, extra string) bool {
+	return strings.ContainsFunc(path, func(r rune) bool {
+		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-"+extra, r)
+	})
 }
 
 func short(commit string) string {

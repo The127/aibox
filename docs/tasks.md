@@ -201,6 +201,11 @@ task's ID. That way you can tell tasks apart when they share a log. `vm`
 lines come from the VM and are only what the task claims. `aibox` lines come
 from aibox on your machine.
 
+On Windows the fetch command names the bundle with forward slashes, and
+quotes it only as PowerShell, cmd.exe and Git Bash all read it, so you can
+paste it into any of them. A path with `$`, `` ` ``, `%` or `!` in it has
+no quotes all three read, so then the command is quoted for PowerShell.
+
 ### Reviewing the commits
 
 Treat the commits like a pull request from a stranger until you've read

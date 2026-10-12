@@ -28,12 +28,9 @@ const (
 	// holds a shared lock on while it runs, and that remove takes alone,
 	// so that it removes no folder of a task that runs.
 	tasksLockFile = "tasks.lock"
-	// credentialsFile is where Claude Code on Linux keeps its token, in
+	// credentialsFile is where Claude Code on Linux keeps its login, in
 	// .claude in the home folder.
 	credentialsFile = ".credentials.json"
-	// accountFile is where Claude Code keeps the account of the login, in
-	// the home folder, and its other state, the MCP servers among it.
-	accountFile = ".claude.json"
 )
 
 var (
@@ -398,11 +395,10 @@ func removeState(p project.Project) error {
 }
 
 // clearHome removes what the home folder of the project holds, apart from
-// the login of Claude Code unless logout says to remove that too. The
-// login is the token and the file of the account, which Claude Code needs
-// both of. It keeps them only where they are plain files in plain
-// folders, since the VM writes the home and may have put a link there. It
-// works in a root, so that no link leads it out of the home.
+// the login of Claude Code unless logout says to remove that too. It
+// keeps the login only where it is a plain file in a plain folder, since
+// the VM writes the home and may have put a link there. It works in a
+// root, so that no link leads it out of the home.
 func clearHome(p project.Project, logout bool) error {
 	home, err := os.OpenRoot(p.Home)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -422,8 +418,7 @@ func clearHome(p project.Project, logout bool) error {
 
 		switch dir {
 		case ".":
-			return entry.Name() == ".claude" && entry.IsDir() ||
-				entry.Name() == accountFile && entry.Type().IsRegular()
+			return entry.Name() == ".claude" && entry.IsDir()
 		case ".claude":
 			return entry.Name() == credentialsFile && entry.Type().IsRegular()
 		}

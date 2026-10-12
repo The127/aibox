@@ -74,10 +74,10 @@ func TestResetClearsTheVMButKeepsTheLogin(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.NoFileExists(t, f.p.State)
+	assert.NoFileExists(t, filepath.Join(f.p.Home, ".claude.json"))
 	assert.NoFileExists(t, filepath.Join(f.p.Home, ".claude", "settings.json"))
 	assert.NoDirExists(t, filepath.Join(f.p.Home, ".local"))
 	assert.FileExists(t, filepath.Join(f.p.Home, ".claude", credentialsFile))
-	assert.FileExists(t, filepath.Join(f.p.Home, accountFile))
 	assert.FileExists(t, f.p.Config)
 	assert.FileExists(t, f.p.Log)
 	assert.FileExists(t, filepath.Join(f.p.Dir, "tasks", "20261012-100000-abcdef", "result.json"))
@@ -94,7 +94,6 @@ func TestResetLogoutClearsTheLoginToo(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.NoDirExists(t, filepath.Join(f.p.Home, ".claude"))
-	assert.NoFileExists(t, filepath.Join(f.p.Home, accountFile))
 	assert.DirExists(t, f.p.Home)
 	assert.NoFileExists(t, f.p.State)
 	assert.FileExists(t, f.p.Config)
@@ -150,7 +149,7 @@ func TestResetChangesNothingUnlessConfirmed(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, errNotConfirmed)
 	assert.FileExists(t, f.p.State)
-	assert.FileExists(t, filepath.Join(f.p.Home, ".local", "bin", "tool"))
+	assert.FileExists(t, filepath.Join(f.p.Home, ".claude.json"))
 }
 
 func TestResetWithoutATerminalNeedsYes(t *testing.T) {
@@ -181,7 +180,7 @@ func TestResetRefusesAProjectThatRuns(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, errProjectRuns)
 	assert.FileExists(t, f.p.State)
-	assert.FileExists(t, filepath.Join(f.p.Home, ".local", "bin", "tool"))
+	assert.FileExists(t, filepath.Join(f.p.Home, ".claude.json"))
 }
 
 func TestResetOfAProjectAiboxKeepsNothingFor(t *testing.T) {

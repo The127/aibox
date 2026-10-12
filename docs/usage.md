@@ -67,15 +67,12 @@ aibox projects reset
 
 This clears the VM's home folder and deletes its state disk. The next run
 makes a new disk, at the size [`disk`](config.md#disk) says. Your config,
-the logs and the tasks stay, and so does Claude Code's login. The login is
-two files, `~/.claude/.credentials.json` and `~/.claude.json`, and the
-second one also holds Claude Code's MCP servers and other settings. They
-stay too.
+the logs and the tasks stay, and so does Claude Code's login.
 
-If you think a session was steered, add `--logout`. Then both files go.
-The VM can write them, so a steered session could have added an MCP server
-that runs at every start, or put someone else's login there, and your next
-sessions would work in their account.
+If you think a session was steered, add `--logout`. Then the login goes
+too. The VM can write the login file, so a steered session could have put
+someone else's login there, and your next sessions would work in their
+account.
 
 aibox asks before it changes anything. Without a terminal, pass `--yes`.
 It refuses while the project runs.

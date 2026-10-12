@@ -544,6 +544,8 @@ func Load(path, template string) (Config, error) {
 // mistake, so that no project starts from it. Two aibox started at once
 // for a new project then both read the same file.
 func EnsureDefault(path, template string) error {
+	// a project that has its config needs no template, and one with a
+	// mistake must not keep it from starting
 	if _, err := os.Lstat(path); err == nil {
 		return nil
 	}
@@ -553,23 +555,30 @@ func EnsureDefault(path, template string) error {
 		return err
 	}
 
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the path is the project's config file
-	if errors.Is(err, fs.ErrExist) {
-		return nil
-	}
-
+	// written beside path and linked to it whole, so that an aibox that
+	// starts meanwhile reads it complete or not at all, and the first link
+	// wins
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+"-*")
 	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	if _, err := io.WriteString(file, text); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
+	_, err = io.WriteString(tmp, text)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+
+	if err == nil {
+		err = os.Link(tmp.Name(), path)
+	}
+
+	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	return file.Close()
+	return nil
 }
 
 // startingText is the text a new config starts from: the template's, or

@@ -249,3 +249,17 @@ func TestConfigEditOfANewProjectStartsFromTheTemplate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "memory: 4096\n", string(written))
 }
+
+func TestANewProjectDoesNotStartFromATemplateWithAnUnsafeMount(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	f.writeTemplate(t, "mounts:\n  - "+f.homeDir+":/opt/home\n")
+
+	// act
+	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
+
+	// assert
+	require.ErrorIs(t, err, errUnsafeMount)
+	assert.ErrorContains(t, err, "the template")
+	assert.NoFileExists(t, f.project(t).Config)
+}

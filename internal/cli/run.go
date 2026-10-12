@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -720,15 +721,32 @@ func refuseUnsafeFolder(cwd, home, aibox string) error {
 	return nil
 }
 
-// loadConfig returns the config in the file at path, or an error when one of
-// its mounts is unsafe.
 // templateFile is the config new projects start from, in the aibox folder.
 func templateFile(aibox string) string {
 	return filepath.Join(aibox, "config.yaml")
 }
 
+// loadConfig returns the config in the file at path, or an error when one of
+// its mounts is unsafe. A new project's config starts from the template,
+// which has to pass the same checks before it is copied.
 func loadConfig(deps dependencies, path, aibox string) (config.Config, error) {
-	cfg, err := config.Load(path, templateFile(aibox))
+	template := templateFile(aibox)
+
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Lstat(template); err == nil {
+			if _, err := checkedConfig(deps, template, "", aibox); err != nil {
+				return config.Config{}, fmt.Errorf("the template: %w", err)
+			}
+		}
+	}
+
+	return checkedConfig(deps, path, template, aibox)
+}
+
+// checkedConfig loads the config at path, starting it from template, and
+// refuses its unsafe mounts.
+func checkedConfig(deps dependencies, path, template, aibox string) (config.Config, error) {
+	cfg, err := config.Load(path, template)
 	if err != nil {
 		return config.Config{}, err
 	}

@@ -54,6 +54,9 @@ People ask for a config file in the repository, like a dev container's
   in one session and take effect at the next start. A task's commits could
   carry one too, and you'd merge it with the rest of the change.
 
+Your [starting config](config.md#your-own-starting-config) for new
+projects, `~/.aibox/config.yaml`, is out of reach of the VM too.
+
 aibox reads the config once, when it starts. Nothing the VM does while it
 runs changes what it gets. To change the config, run `aibox config edit` on
 your machine.

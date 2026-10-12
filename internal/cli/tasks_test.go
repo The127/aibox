@@ -233,6 +233,21 @@ func TestCleanRemovesOnlyTheInputsOfOldTasks(t *testing.T) {
 	assert.DirExists(t, filepath.Join(f.tasks, "20200101-000000-aaaaaa"))
 }
 
+func TestCleanWithoutAnAgeCleansATaskWithATimeAfterNow(t *testing.T) {
+	// arrange
+	f := newTasksFixture(t)
+	f.ended(t, "ended")
+	later := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(f.tasks, "ended"), later, later))
+
+	// act
+	err := f.clean()
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(f.tasks, "ended", "share", task.InputBundle))
+}
+
 func TestCleanRefusesANegativeAge(t *testing.T) {
 	// act
 	err := newTasksFixture(t).clean("--older-than", "-1h")

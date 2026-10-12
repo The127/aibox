@@ -32,14 +32,24 @@ init arch=vm-arch:
 
 # build the VM image into out/
 [linux]
-image: init
+image: image-kernel image-root
+
+# build the kernels of the VM image for amd64 into out/
+[linux]
+image-kernel:
+    miso build -f image/kernel.Imagefile -o out image
+
+# build the root disk of the VM image for amd64 into out/
+[linux]
+image-root: init
     miso build -o out image
 
 # build the VM image for arm64 into out/, with Apple's container tool until miso runs on macOS
 [macos]
 image: init
     rm -rf out/build
-    container build --file image/Containerfile --target out --output type=local,dest=out/build --cpus 8 --memory 8g image
+    container build --file image/kernel.Containerfile --target out --output type=local,dest=out/build/kernel --cpus 8 --memory 8g image
+    container build --file image/Containerfile --target out --output type=local,dest=out/build/root --cpus 8 --memory 8g image
     @# the tool puts its files in folders of its own below the destination
     for f in vmlinuz os.ext4; do \
       found=$(find out/build -type f -name "$f"); \
@@ -49,8 +59,21 @@ image: init
     rm -rf out/build
 
 # build the VM image for arm64 into out/ with docker, as the release does on an arm64 Linux runner
-image-docker-arm64: (init "arm64")
-    docker build --file image/Containerfile --target out --output type=local,dest=out image
+image-docker-arm64: image-docker-arm64-kernel image-docker-arm64-root
+
+# build the kernel of the VM image for arm64 into out/ with docker
+image-docker-arm64-kernel: (docker-build "kernel.Containerfile" "vmlinuz")
+
+# build the root disk of the VM image for arm64 into out/ with docker
+image-docker-arm64-root: (init "arm64") (docker-build "Containerfile" "os.ext4")
+
+# docker writes into a folder of its own, so that a build leaves the other files in out/ as they are
+[private]
+docker-build file output:
+    rm -rf out/docker
+    docker build --file image/{{file}} --target out --output type=local,dest=out/docker image
+    mv out/docker/{{output}} out/
+    rm -rf out/docker
 
 # vmlinuz-hyperv goes in on amd64 only, since only Windows on amd64 boots it.
 # COPYFILE_DISABLE, since tar of macOS would add the extended attributes as ._ files

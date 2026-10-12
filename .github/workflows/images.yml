@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# The kernels take most of the time, so they come from a cache when their
+# build files are the same and Debian sid still has the same kernel source.
+# A kernel built anew is saved under the version it says it was built from,
+# so a cached kernel is never older than its name, even when sid moves on
+# during the build.
+
 jobs:
   amd64:
     runs-on: ubuntu-latest
@@ -39,7 +45,31 @@ jobs:
           sha256sum --ignore-missing -c checksums.txt
           sudo apt-get update
           sudo apt-get install -y ./miso_*_linux_amd64.deb
-      - run: just image
+      - name: find the kernel source of Debian sid
+        id: source
+        run: |
+          package=$(grep -om1 'linux-source-[0-9.]*[0-9]' image/kernel.Imagefile)
+          echo "version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[0]')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        id: kernel
+        with:
+          path: |
+            out/vmlinuz
+            out/vmlinuz-hyperv
+          key: kernel-amd64-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config', 'image/kernel-hyperv.config') }}-${{ steps.source.outputs.version }}
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        run: just image-kernel
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        id: built
+        run: echo "version=$(hack/kernel-source-version.sh out/vmlinuz out/vmlinuz-hyperv)" >> "$GITHUB_OUTPUT"
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            out/vmlinuz
+            out/vmlinuz-hyperv
+          key: kernel-amd64-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config', 'image/kernel-hyperv.config') }}-${{ steps.built.outputs.version }}
+      - run: just image-root
       - run: just image-archive amd64
       - uses: actions/upload-artifact@v7
         with:
@@ -57,7 +87,27 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: extractions/setup-just@v4
-      - run: just image-docker-arm64
+      - name: find the kernel source of Debian sid
+        id: source
+        run: |
+          package=$(grep -om1 'linux-source-[0-9.]*[0-9]' image/kernel.Containerfile)
+          echo "version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[0]')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        id: kernel
+        with:
+          path: out/vmlinuz
+          key: kernel-arm64-${{ hashFiles('image/kernel.Containerfile', 'image/check-kernel-config', 'image/vz-arm64.config', 'image/kernel-arm64.config') }}-${{ steps.source.outputs.version }}
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        run: just image-docker-arm64-kernel
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        id: built
+        run: echo "version=$(hack/kernel-source-version.sh out/vmlinuz)" >> "$GITHUB_OUTPUT"
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/vmlinuz
+          key: kernel-arm64-${{ hashFiles('image/kernel.Containerfile', 'image/check-kernel-config', 'image/vz-arm64.config', 'image/kernel-arm64.config') }}-${{ steps.built.outputs.version }}
+      - run: just image-docker-arm64-root
       - run: just image-archive arm64
       - uses: actions/upload-artifact@v7
         with:

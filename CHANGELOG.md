@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/The127/aibox/compare/v1.6.0...v1.6.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* bind the libraries QEMU loads, wherever the distribution puts them ([#127](https://github.com/The127/aibox/issues/127)) ([38aae58](https://github.com/The127/aibox/commit/38aae58d1572f2e990c767ab36b9f5fabd085451))
+
 ## [1.6.0](https://github.com/The127/aibox/compare/v1.5.0...v1.6.0) (2026-10-11)
 
 

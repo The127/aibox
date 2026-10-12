@@ -24,7 +24,7 @@ func document() hcs.Document {
 		ShouldTerminateOnLastHandleClosed: true,
 		VirtualMachine: hcs.VirtualMachine{
 			StopOnReset: true,
-			Chipset: hcs.Chipset{LinuxKernelDirect: hcs.LinuxKernelDirect{
+			Chipset: hcs.Chipset{UseUtc: true, LinuxKernelDirect: hcs.LinuxKernelDirect{
 				KernelFilePath: `C:\Users\me\.aibox\image\vmlinuz`,
 				KernelCmdLine:  "console=ttyS0 root=/dev/sda ro",
 			}},
@@ -65,6 +65,7 @@ const golden = `{
   "VirtualMachine": {
     "StopOnReset": true,
     "Chipset": {
+      "UseUtc": true,
       "LinuxKernelDirect": {
         "KernelFilePath": "C:\\Users\\me\\.aibox\\image\\vmlinuz",
         "KernelCmdLine": "console=ttyS0 root=/dev/sda ro"

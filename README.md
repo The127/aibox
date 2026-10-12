@@ -110,6 +110,11 @@ This boots the VM with `my-app` at `/project` and starts Claude Code in it.
 The first run downloads the VM image, which is about 150 MB, unless your
 package ships it. Log in to Claude Code like you would on your machine.
 
+You log in once for each project, because each project has a VM home of its
+own. aibox doesn't copy the login from one project to another. That would
+mean aibox handles your login, and Anthropic's terms don't allow anyone but
+you to do that.
+
 The first run also writes a config for the project. It only allows the hosts
 Claude Code needs. To allow more, run:
 

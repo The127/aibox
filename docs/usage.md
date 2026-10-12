@@ -9,7 +9,12 @@ aibox run
 
 aibox boots the VM, mounts the project at `/project` and starts Claude Code
 there. Log in like you would on your machine. aibox keeps the login for the
-next run.
+next run in this project.
+
+Each project has a VM home of its own, so you log in once for each project.
+aibox doesn't copy the login from one project to another. That would mean
+aibox handles your login, and Anthropic's terms don't allow anyone but you to
+do that.
 
 aibox won't start in your home folder or above it, because the VM would see
 all your files.
@@ -30,7 +35,7 @@ path:
 | File | What's in it |
 |---|---|
 | `config.yaml` | The [project config](config.md). |
-| `home/` | The VM's home folder, so Claude Code's login and `~/.claude` survive restarts. |
+| `home/` | The VM's home folder, so Claude Code's login and `~/.claude` survive restarts. Other projects don't see them. |
 | `state.ext4` | A disk for the VM's `/usr/local` and `~/.cache`. |
 | `console.log` | The kernel and init messages of the last run. |
 | `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. |

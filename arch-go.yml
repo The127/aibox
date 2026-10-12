@@ -209,13 +209,30 @@ dependenciesRules:
         - '**.cmd.**'
       external:
         - 'github.com/urfave/cli/v3'
-  # the IDEs are read from the lock files of Claude Code, and nothing else
-  # of aibox is needed for that
-  - package: '**.internal.ide$'
+  # realpath follows every link of a path, as the system does, and knows
+  # nothing of aibox
+  - package: '**.internal.realpath$'
     shouldNotDependsOn:
       internal:
         - '**.internal.**'
         - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # testlink makes links for tests and knows nothing of aibox
+  - package: '**.internal.testlink$'
+    shouldNotDependsOn:
+      internal:
+        - '**.internal.**'
+        - '**.cmd.**'
+      external:
+        - 'github.com/urfave/cli/v3'
+  # the IDEs are read from the lock files of Claude Code, and nothing else
+  # of aibox is needed for that but where a path leads
+  - package: '**.internal.ide$'
+    shouldOnlyDependsOn:
+      internal:
+        - '**.internal.realpath$'
+    shouldNotDependsOn:
       external:
         - 'github.com/urfave/cli/v3'
   # the clipboard reads the clipboard of the host and knows nothing else
@@ -326,6 +343,7 @@ dependenciesRules:
         - '**.internal.gitbroker$'
         - '**.internal.filelock$'
         - '**.internal.ide$'
+        - '**.internal.realpath$'
         - '**.internal.clipboard$'
         - '**.internal.fence$'
         - '**.internal.vm$'

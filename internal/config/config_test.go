@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,6 +14,16 @@ import (
 
 	"github.com/the127/aibox/internal/config"
 )
+
+// host is the Unix path p as an absolute folder of this host: on Windows,
+// on drive C.
+func host(p string) string {
+	if runtime.GOOS == "windows" {
+		return `C:` + filepath.FromSlash(p)
+	}
+
+	return p
+}
 
 // write puts a config file with the content into a temp folder.
 func write(t *testing.T, content string) string {
@@ -38,31 +49,34 @@ func TestLoadReadsTheAllowList(t *testing.T) {
 
 func TestLoadReadsTheMounts(t *testing.T) {
 	// arrange
-	path := write(t, "mounts:\n  - /opt/sdk/go:/opt/go\n  - /home/someone/bin:/opt/bin\n")
+	path := write(t, "mounts:\n  - "+host("/opt/sdk/go")+":/opt/go\n  - "+host("/home/someone/bin")+":/opt/bin\n")
 
 	// act
 	cfg, err := config.Load(path)
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []config.Mount{{Host: "/opt/sdk/go", Guest: "/opt/go"}, {Host: "/home/someone/bin", Guest: "/opt/bin"}}, cfg.Mounts)
+	assert.Equal(t, []config.Mount{{Host: host("/opt/sdk/go"), Guest: "/opt/go"}, {Host: host("/home/someone/bin"), Guest: "/opt/bin"}}, cfg.Mounts)
 }
 
 func TestLoadCleansThePathsOfAMount(t *testing.T) {
 	// arrange
-	path := write(t, "mounts:\n  - /opt/sdk//go/:/opt/go/\n")
+	path := write(t, "mounts:\n  - "+host("/opt/sdk//go/")+":/opt/go/\n")
 
 	// act
 	cfg, err := config.Load(path)
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []config.Mount{{Host: "/opt/sdk/go", Guest: "/opt/go"}}, cfg.Mounts)
+	assert.Equal(t, []config.Mount{{Host: host("/opt/sdk/go"), Guest: "/opt/go"}}, cfg.Mounts)
 }
 
 func TestLoadExpandsTheHomeInAMount(t *testing.T) {
 	// arrange
-	t.Setenv("HOME", "/home/someone")
+	home := host("/home/someone")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
 	path := write(t, "mounts:\n  - ~/sdk/go:/opt/go\n")
 
 	// act
@@ -70,19 +84,19 @@ func TestLoadExpandsTheHomeInAMount(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []config.Mount{{Host: "/home/someone/sdk/go", Guest: "/opt/go"}}, cfg.Mounts)
+	assert.Equal(t, []config.Mount{{Host: filepath.Join(home, "sdk", "go"), Guest: "/opt/go"}}, cfg.Mounts)
 }
 
 func TestLoadAcceptsASpaceInTheHostFolderOfAMount(t *testing.T) {
 	// arrange
-	path := write(t, "mounts:\n  - /opt/my sdk:/opt/go\n")
+	path := write(t, "mounts:\n  - "+host("/opt/my sdk")+":/opt/go\n")
 
 	// act
 	cfg, err := config.Load(path)
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []config.Mount{{Host: "/opt/my sdk", Guest: "/opt/go"}}, cfg.Mounts)
+	assert.Equal(t, []config.Mount{{Host: host("/opt/my sdk"), Guest: "/opt/go"}}, cfg.Mounts)
 }
 
 func TestLoadRejectsAMountItCannotRead(t *testing.T) {
@@ -141,7 +155,7 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 	for name, guest := range tests {
 		t.Run(name, func(t *testing.T) {
 			// arrange
-			path := write(t, "mounts:\n  - /opt/sdk:"+guest+"\n")
+			path := write(t, "mounts:\n  - "+host("/opt/sdk")+":"+guest+"\n")
 
 			// act
 			_, err := config.Load(path)
@@ -155,21 +169,21 @@ func TestLoadRejectsAMountOnAPathTheVMNeeds(t *testing.T) {
 
 func TestLoadAcceptsAMountInsideTheHome(t *testing.T) {
 	// arrange
-	path := write(t, "mounts:\n  - /home/someone/.claude/skills:/home/user/.claude/skills\n")
+	path := write(t, "mounts:\n  - "+host("/home/someone/.claude/skills")+":/home/user/.claude/skills\n")
 
 	// act
 	cfg, err := config.Load(path)
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, []config.Mount{{Host: "/home/someone/.claude/skills", Guest: "/home/user/.claude/skills"}}, cfg.Mounts)
+	assert.Equal(t, []config.Mount{{Host: host("/home/someone/.claude/skills"), Guest: "/home/user/.claude/skills"}}, cfg.Mounts)
 }
 
 func TestLoadRejectsMountsThatOverlap(t *testing.T) {
 	tests := map[string]string{
-		"the same path twice":    "mounts:\n  - /opt/a:/opt/go\n  - /opt/b:/opt/go\n",
-		"one inside the other":   "mounts:\n  - /opt/a:/opt\n  - /opt/b:/opt/go\n",
-		"one containing another": "mounts:\n  - /opt/b:/opt/go\n  - /opt/a:/opt\n",
+		"the same path twice":    "mounts:\n  - " + host("/opt/a") + ":/opt/go\n  - " + host("/opt/b") + ":/opt/go\n",
+		"one inside the other":   "mounts:\n  - " + host("/opt/a") + ":/opt\n  - " + host("/opt/b") + ":/opt/go\n",
+		"one containing another": "mounts:\n  - " + host("/opt/b") + ":/opt/go\n  - " + host("/opt/a") + ":/opt\n",
 	}
 
 	for name, content := range tests {
@@ -194,7 +208,7 @@ func TestLoadRejectsMountsTheKernelCommandLineCannotCarry(t *testing.T) {
 	content.WriteString("mounts:\n")
 
 	for i := range 10 {
-		fmt.Fprintf(&content, "  - /opt/sdk%d:/opt/%s%d\n", i, strings.Repeat("x", 100), i)
+		fmt.Fprintf(&content, "  - %s:/opt/%s%d\n", host(fmt.Sprintf("/opt/sdk%d", i)), strings.Repeat("x", 100), i)
 	}
 
 	path := write(t, content.String())
@@ -452,9 +466,12 @@ func TestLoadWritesTheDefaultFileWhenThereIsNone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.Default(), cfg)
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	// Windows has no such modes, the ACL of the home folder keeps it
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 }
 
 func TestLoadReadsTheDefaultFileBackAsTheDefault(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -155,9 +156,12 @@ func TestFetchUnpacksTheImageOfTheRelease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "nothing but the image is left")
 
-	info, err := os.Stat(dir)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm(), "as just install-image makes it")
+	// Windows has no such modes
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm(), "as just install-image makes it")
+	}
 }
 
 func TestFetchUnpacksTheKernelForHyperV(t *testing.T) {

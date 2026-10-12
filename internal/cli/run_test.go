@@ -376,7 +376,7 @@ func TestRunRefusesToRunAsRoot(t *testing.T) {
 func TestRunRefusesToRunInTheRootFolder(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	f.cwd = "/"
+	f.cwd = rootOf(t.TempDir())
 
 	// act
 	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
@@ -1407,7 +1407,7 @@ func TestRunWhenAMountedPathIsAFile(t *testing.T) {
 func TestRunRefusesAMountOfTheRootFolder(t *testing.T) {
 	// arrange
 	f := newFixture(t)
-	f.writeConfig(t, "mounts:\n  - /:/mnt/host\n")
+	f.writeConfig(t, "mounts:\n  - "+rootOf(t.TempDir())+":/mnt/host\n")
 
 	// act
 	err := f.run("--image", writeImage(t, t.TempDir(), "vmlinuz", "os.ext4"))
@@ -1719,4 +1719,10 @@ func TestRunReturnsTheLaunchError(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, f.launch.err)
+}
+
+// rootOf is the root of the file system the path is on: / or, on
+// Windows, the root of its drive.
+func rootOf(path string) string {
+	return filepath.VolumeName(path) + string(filepath.Separator)
 }

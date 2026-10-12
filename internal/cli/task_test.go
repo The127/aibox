@@ -187,11 +187,15 @@ func (f *taskFixture) succeeds(t *testing.T) {
 func (f *taskFixture) taskDir(t *testing.T) string {
 	t.Helper()
 
-	dirs, err := filepath.Glob(filepath.Join(f.project(t).Dir, "tasks", "*"))
+	// the lock beside the folder matches the pattern too
+	locks, err := filepath.Glob(filepath.Join(f.project(t).Dir, "tasks", "*"+lockSuffix))
 	require.NoError(t, err)
-	require.Len(t, dirs, 1)
+	require.Len(t, locks, 1)
 
-	return dirs[0]
+	dir := strings.TrimSuffix(locks[0], lockSuffix)
+	require.DirExists(t, dir)
+
+	return dir
 }
 
 // stamped matches lines of the task in dir in a row, all with the label,
@@ -781,6 +785,12 @@ func TestTaskStartsFromTheCommitOfFrom(t *testing.T) {
 	refs := f.git(t, "for-each-ref")
 	f.succeeds(t)
 
+	// the repository the bundle comes from is in the folder of the task, or
+	// on Windows in the temporary folder
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp)
+
 	// act
 	err := f.task("--from", "start", "fix it")
 
@@ -790,6 +800,10 @@ func TestTaskStartsFromTheCommitOfFrom(t *testing.T) {
 	assert.Contains(t, f.stderr.String(), "starts from refs/tags/start ("+short(f.base)+")")
 	assert.Equal(t, refs, f.git(t, "for-each-ref"))
 	assert.NoDirExists(t, filepath.Join(f.taskDir(t), "input.git"))
+
+	left, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, left, "the repository of the bundle is gone")
 }
 
 func TestTaskStartsFromHEAD(t *testing.T) {
@@ -877,7 +891,7 @@ func TestATaskHoldsItsLockWhileItRuns(t *testing.T) {
 	var lockErr error
 
 	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
-		_, lockErr = lockTask(filepath.Dir(spec.Task), 0, false)
+		_, lockErr = lockTask(filepath.Dir(spec.Task), 0)
 
 		return errors.New("stop")
 	}
@@ -888,7 +902,7 @@ func TestATaskHoldsItsLockWhileItRuns(t *testing.T) {
 	// assert
 	require.ErrorIs(t, lockErr, filelock.ErrLocked)
 
-	lock, err := lockTask(f.taskDir(t), 0, false)
+	lock, err := lockTask(f.taskDir(t), 0)
 	require.NoError(t, err, "the lock outlives the task")
 	require.NoError(t, lock.Close())
 }

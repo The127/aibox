@@ -245,7 +245,11 @@ Each task has a folder `tasks/<start time>-<id>` in the project's folder in
 | `console.log` | The kernel and init messages of the VM. |
 | `proxy.log` | Every host and port the proxy connected to or refused for the task, once, with the time it first happened. When the task ends, a summary says how often and when last. A killed aibox writes no summary. aibox writes this file, not the VM. It shows the name the VM asked for, not what went through. |
 | `share/` | The prompt, the settings and the bundle of the start commit with its full history, until `aibox tasks clean` removes it. |
-| `lock` | Locked while the task runs, so `aibox tasks clean` leaves the task alone. |
+
+Next to the folder, `tasks/<start time>-<id>.lock` is locked while the task
+runs, so `aibox tasks clean` leaves the task alone. `aibox tasks clean --all`
+removes it with the folder, so use that rather than removing a folder by
+hand.
 
 aibox exits with 1 when the task didn't finish. That happens when Claude
 Code failed or ran out of time, a step in the VM failed, the VM was stopped,
@@ -335,6 +339,11 @@ aibox checks what comes back:
 aibox opens the result files before the VM starts. Once the VM runs, aibox
 locks itself down and can't open files anymore. For the same reason a task
 can't remove its input bundle when it ends, so `aibox tasks clean` does that
-later. Each task locks a file in its folder while it runs, and the folder
-only gets its name once it holds the lock. That's how `aibox tasks clean`
-knows to leave a running task alone.
+later. Each task locks a file next to its folder while it runs, and makes
+the folder only once it holds the lock. That's how `aibox tasks clean`
+knows to leave a running task alone. The lock is next to the folder, not
+in it, because Windows can't remove a folder that holds an open file.
+aibox 1.6 and before kept the lock in the folder, and doesn't see one next
+to it, so don't run `aibox tasks clean` of an older aibox while a task of a
+newer one runs. A lock whose folder never got made, by a task that failed
+to start, goes with the next `aibox tasks clean` a minute later.

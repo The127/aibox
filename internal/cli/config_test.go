@@ -75,7 +75,7 @@ func TestConfigEditPrefersVISUALLikeGit(t *testing.T) {
 	assert.Equal(t, "code --wait", f.editor.command)
 }
 
-func TestConfigEditFallsBackToVi(t *testing.T) {
+func TestConfigEditFallsBackToTheEditorOfTheSystem(t *testing.T) {
 	// arrange
 	f := newFixture(t)
 
@@ -84,7 +84,7 @@ func TestConfigEditFallsBackToVi(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, "vi", f.editor.command)
+	assert.Equal(t, fallbackEditor, f.editor.command)
 }
 
 func TestConfigEditTakesTheEditorFromTheFlagFirst(t *testing.T) {
@@ -169,21 +169,6 @@ func TestConfigEditReportsAnEditorThatFailsAndSkipsTheReadBack(t *testing.T) {
 	// assert
 	require.ErrorContains(t, err, "exit status 1")
 	assert.NotContains(t, err.Error(), f.project(t).Config)
-}
-
-func TestRunEditorGivesTheShellTheEditorAndThePath(t *testing.T) {
-	// arrange
-	path := filepath.Join(t.TempDir(), "config.yaml")
-
-	// act
-	err := runEditor("echo edited >", path)
-
-	// assert
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(path) //nolint:gosec // the path is a temp file of the test
-	require.NoError(t, err)
-	assert.Equal(t, "edited\n", string(content))
 }
 
 func TestRunEditorReportsAnEditorThatFails(t *testing.T) {

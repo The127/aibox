@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -257,7 +258,11 @@ func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func parseMount(text string) (Mount, error) {
-	host, guest, ok := strings.Cut(text, ":")
+	// a volume, C: or \\server\share on Windows, is the only colon a host
+	// folder has; a guest path has none
+	volume := filepath.VolumeName(text)
+	host, guest, ok := strings.Cut(text[len(volume):], ":")
+	host = volume + host
 	if !ok || strings.Contains(guest, ":") || !cmdlineSafe(guest) {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrBadMount)
 	}
@@ -267,11 +272,12 @@ func parseMount(text string) (Mount, error) {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, err)
 	}
 
-	if !filepath.IsAbs(host) || !filepath.IsAbs(guest) {
+	// the guest path is one of the VM, a Linux path, whatever the host
+	if !filepath.IsAbs(host) || !path.IsAbs(guest) {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrBadMount)
 	}
 
-	mount := Mount{Host: filepath.Clean(host), Guest: filepath.Clean(guest)}
+	mount := Mount{Host: filepath.Clean(host), Guest: path.Clean(guest)}
 	if mount.reserved() {
 		return Mount{}, fmt.Errorf("mounts entry %q: %w", text, ErrReservedMount)
 	}
@@ -287,10 +293,10 @@ func cmdlineSafe(text string) bool {
 	})
 }
 
-func expandHome(path string) (string, error) {
-	rest, ok := strings.CutPrefix(path, "~/")
-	if !ok {
-		return path, nil
+func expandHome(folder string) (string, error) {
+	// ~\ on Windows too, where \ parts folders as / does
+	if len(folder) < 2 || folder[0] != '~' || folder[1] != '/' && folder[1] != filepath.Separator {
+		return folder, nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -298,7 +304,7 @@ func expandHome(path string) (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(home, rest), nil
+	return filepath.Join(home, folder[2:]), nil
 }
 
 // reserved tells whether the mount hides something the VM needs.
@@ -535,11 +541,11 @@ func parsePathEntry(text string) (string, error) {
 		return text, nil
 	}
 
-	if !filepath.IsAbs(text) || filepath.Clean(text) == "/" || strings.Contains(text, ":") || strings.ContainsFunc(text, unicode.IsControl) {
+	if !path.IsAbs(text) || path.Clean(text) == "/" || strings.Contains(text, ":") || strings.ContainsFunc(text, unicode.IsControl) {
 		return "", fmt.Errorf("path entry %q: %w", text, ErrBadPath)
 	}
 
-	return filepath.Clean(text), nil
+	return path.Clean(text), nil
 }
 
 // fitsCmdline fails when the mounts together are too much for the kernel

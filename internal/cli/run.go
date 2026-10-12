@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -27,6 +28,7 @@ import (
 	"github.com/the127/aibox/internal/machine"
 	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/proxy"
+	"github.com/the127/aibox/internal/realpath"
 	"github.com/the127/aibox/internal/vm"
 )
 
@@ -616,7 +618,8 @@ func pathFolders(entries []string, lookup func(string) (string, bool)) ([]string
 	var folders []string
 
 	for _, entry := range entries {
-		if filepath.IsAbs(entry) {
+		// folders of the VM, Linux paths, whatever the host
+		if path.IsAbs(entry) {
 			folders = appendFolder(folders, entry)
 
 			continue
@@ -628,8 +631,8 @@ func pathFolders(entries []string, lookup func(string) (string, bool)) ([]string
 		}
 
 		for _, folder := range strings.Split(value, ":") {
-			if filepath.IsAbs(folder) && filepath.Clean(folder) != "/" {
-				folders = appendFolder(folders, filepath.Clean(folder))
+			if path.IsAbs(folder) && path.Clean(folder) != "/" {
+				folders = appendFolder(folders, path.Clean(folder))
 			}
 		}
 	}
@@ -671,7 +674,7 @@ func environment(variables []config.Variable, lookup func(string) (string, bool)
 // refuseUnsafeFolder is errNotAProject when the folder is the root, the
 // home directory or above it, or above the aibox folder.
 func refuseUnsafeFolder(cwd, home, aibox string) error {
-	if holds(cwd, "/") {
+	if isRoot(cwd) {
 		return fmt.Errorf("%w, not the root of the file system", errNotAProject)
 	}
 
@@ -712,7 +715,7 @@ func loadConfig(deps dependencies, path, aibox string) (config.Config, error) {
 func refuseUnsafeMounts(mounts []config.Mount, home, aibox string) error {
 	for _, mount := range mounts {
 		switch {
-		case holds(mount.Host, "/"):
+		case isRoot(mount.Host):
 			return fmt.Errorf("mount %s: %w, %s is the root of the file system", mount.Guest, errUnsafeMount, mount.Host)
 		case holds(mount.Host, home):
 			return fmt.Errorf("mount %s: %w, %s holds the home directory %s", mount.Guest, errUnsafeMount, mount.Host, home)
@@ -726,7 +729,7 @@ func refuseUnsafeMounts(mounts []config.Mount, home, aibox string) error {
 	return nil
 }
 
-// holds tells whether the folder is the one at path or holds it. It
+// holds tells whether the folder is the one at name or holds it. It
 // compares files, not names, since a folder has more names than one: a
 // symlink, another case where the file system tells no case apart, a
 // firmlink of macOS or a bind mount. The folder holds the path when the
@@ -734,21 +737,28 @@ func refuseUnsafeMounts(mounts []config.Mount, home, aibox string) error {
 // the same file. So /System/Volumes/Data of a Mac holds /Users/you, though
 // .. of /Users is /. A path that does not exist yet stands for the first
 // folder above it that does. A symlink in the folder that leads to the
-// path makes it refused too, which errs on the safe side.
-func holds(folder, path string) bool {
-	path = resolved(path)
+// path makes it refused too, which errs on the safe side. The folder must
+// be absolute: on Windows C: alone is the folder the drive is at, and
+// folders joined to it would be relative to that.
+func holds(folder, name string) bool {
+	name = realpath.Resolved(name)
 
-	target, err := os.Stat(path)
-	for err != nil && path != filepath.Dir(path) {
-		path = filepath.Dir(path)
-		target, err = os.Stat(path)
+	target, err := os.Stat(name)
+	for err != nil && name != filepath.Dir(name) {
+		name = filepath.Dir(name)
+		target, err = os.Stat(name)
 	}
 
 	if err != nil {
 		return false
 	}
 
-	names := strings.Split(strings.Trim(path, "/"), "/")
+	// the folders of the path after its volume, C: or \\server\share on
+	// Windows, where \ and / both part them
+	names := strings.FieldsFunc(name[len(filepath.VolumeName(name)):], func(r rune) bool {
+		return r == '/' || r == filepath.Separator
+	})
+
 	for i := range len(names) + 1 {
 		info, err := os.Stat(filepath.Join(append([]string{folder}, names[i:]...)...))
 		if err == nil && os.SameFile(info, target) {
@@ -759,14 +769,13 @@ func holds(folder, path string) bool {
 	return false
 }
 
-// resolved is the path with its symlinks followed, or the path as it is
-// when that fails, for example because it does not exist yet.
-func resolved(path string) string {
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		return target
-	}
+// isRoot tells whether the folder is the root of a file system: / or, on
+// Windows, the root of any drive or share, as / names only the drive
+// aibox runs on there.
+func isRoot(folder string) bool {
+	resolved := realpath.Resolved(folder)
 
-	return filepath.Clean(path)
+	return filepath.Dir(resolved) == resolved || holds(folder, "/")
 }
 
 // defaultImage is the folder of the image that this aibox uses. An image a

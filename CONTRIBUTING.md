@@ -40,8 +40,8 @@ On macOS, building aibox also needs the Xcode command line tools for cgo.
 `just build` signs the binary with the entitlement Virtualization.framework
 asks for. A build without cgo runs no VM on macOS and says so.
 
-On Windows, aibox builds and the tests of the host side run with `go build`
-and `go test`, as the ci does. The VM runs on Hyper-V through the service
+On Windows, aibox builds with `go build` and every test runs with
+`go test`, as the ci does. The VM runs on Hyper-V through the service
 of aibox, which `aibox service install` from an elevated prompt puts in
 place; the ci has no Hyper-V, so what needs a VM is tested by hand.
 

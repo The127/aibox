@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/the127/aibox/internal/realpath"
 )
 
 // maxLockBytes is more than a lock file ever needs, a few hundred bytes, so
@@ -65,7 +67,7 @@ func Find(dir, project string) ([]IDE, error) {
 		return nil, fmt.Errorf("read the lock files of the IDEs: %w", err)
 	}
 
-	project = resolved(project)
+	project = realpath.Resolved(project)
 
 	var all []found
 
@@ -181,14 +183,4 @@ func closest(folders []string, project string) int {
 	}
 
 	return best
-}
-
-// resolved is the path with its symlinks followed, or the path as it is
-// when that fails.
-func resolved(path string) string {
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		return target
-	}
-
-	return filepath.Clean(path)
 }

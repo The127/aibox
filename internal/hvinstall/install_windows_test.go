@@ -3,7 +3,6 @@ package hvinstall
 import (
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,13 +17,21 @@ import (
 
 // isMe tells an owner that is whoever runs the test, who stands for the
 // Administrator an install would run as.
+// It asks Windows who owns a folder the test makes: an elevated
+// Administrator's folders belong to the Administrators, not to them.
 func isMe(t *testing.T) func(*windows.SID) bool {
 	t.Helper()
 
-	me, err := user.Current()
+	probe := filepath.Join(t.TempDir(), "probe")
+	require.NoError(t, os.Mkdir(probe, 0o750))
+
+	sd, err := windows.GetNamedSecurityInfo(probe, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	require.NoError(t, err)
 
-	return func(owner *windows.SID) bool { return owner.String() == me.Uid }
+	mine, _, err := sd.Owner()
+	require.NoError(t, err)
+
+	return func(owner *windows.SID) bool { return owner.Equals(mine) }
 }
 
 // daclOf is the access list of the folder, as SDDL. It leaves out AI,

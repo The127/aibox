@@ -37,8 +37,12 @@ func sshHome(t *testing.T, hosts ...string) string {
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "known_hosts"), []byte(lines), 0o600))
 
+	// USERPROFILE, which Windows and its ssh take the home from
 	t.Setenv("HOME", home)
-	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("USERPROFILE", home)
+	// an agent that is not there, rather than none: on Windows ssh asks
+	// the agent of the system without one, which may hold keys of its own
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(home, "no-agent"))
 
 	return dir
 }
@@ -119,6 +123,16 @@ func serveAgent(t *testing.T, keys ...ed25519.PrivateKey) string {
 	socket := filepath.Join(dir, "s")
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
+
+	serveAgentOn(t, listener, keyring)
+
+	return socket
+}
+
+// serveAgentOn serves an SSH agent with the keyring on the listener, until
+// the test ends.
+func serveAgentOn(t *testing.T, listener net.Listener, keyring agent.Agent) {
+	t.Helper()
 	t.Cleanup(func() { _ = listener.Close() })
 
 	go func() {
@@ -131,8 +145,6 @@ func serveAgent(t *testing.T, keys ...ed25519.PrivateKey) string {
 			go func() { _ = agent.ServeAgent(keyring, conn) }()
 		}
 	}()
-
-	return socket
 }
 
 func loadKeys(t *testing.T, config string) *gitconfig.SSHKeys {

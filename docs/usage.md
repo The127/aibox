@@ -158,6 +158,13 @@ the VM, which runs amd64 Linux.
 You can only run one `aibox run` per project at a time on Windows too.
 Hyper-V keeps the state disk open while the VM runs.
 
+The project's folder in `~/.aibox/projects` is named after the path as
+Windows spells it, so `cd c:\users\me\repo` and `cd C:\Users\me\repo` are
+the same project. A junction, a symlink, a `subst` drive or a mapped
+drive leads to the project it points to; on a mapped drive `Z:\repo` that's
+`\\server\share\repo`. That's unlike Linux and macOS, where a project you
+reach through a symlink is a project of its own.
+
 The state disk, `state.ext4`, is a dynamic VHD on Windows, the kind of
 disk Hyper-V attaches, which takes up space as the VM fills it. The VM
 sees the same disk as on Linux.

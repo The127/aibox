@@ -6,6 +6,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/the127/aibox/internal/realpath"
 )
 
 // vmProject is where the project is in the VM.
@@ -50,13 +52,13 @@ func (p paths) toHost(vm string) (string, bool) {
 // folder above it that does. A symlink that leads nowhere is refused,
 // since the IDE would create the file it leads to.
 func (p paths) inside(host string) bool {
-	project, err := filepath.EvalSymlinks(p.host)
+	project, err := realpath.Of(p.host)
 	if err != nil {
 		return false
 	}
 
 	for name := host; ; name = filepath.Dir(name) {
-		if resolved, err := filepath.EvalSymlinks(name); err == nil {
+		if resolved, err := realpath.Of(name); err == nil {
 			rest, err := filepath.Rel(project, resolved)
 
 			return err == nil && rest != ".." && !strings.HasPrefix(rest, ".."+string(filepath.Separator))
@@ -81,7 +83,7 @@ func (p paths) toVM(host string) (string, bool) {
 	// the IDE may name the project by the path its symlinks lead to
 	rest, ok := below(p.host, host)
 	if !ok {
-		resolved, err := filepath.EvalSymlinks(p.host)
+		resolved, err := realpath.Of(p.host)
 		if rest, ok = below(resolved, host); err != nil || !ok {
 			return "", false
 		}

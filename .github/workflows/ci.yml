@@ -55,11 +55,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
-      # the cli, config, gitconfig, image and project still take paths as
-      # Unix paths, and their tests with them, until aibox runs a VM on
-      # Windows
-      - run: go test -race $(go list ./... | grep -v -e internal/cli -e internal/config -e internal/gitconfig -e internal/image -e internal/project)
-        shell: bash
+      - run: go test -race ./...
 
   # builds the Nix package of the release in nix/release.json, which checks
   # its hashes

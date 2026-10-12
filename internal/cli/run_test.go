@@ -92,6 +92,7 @@ func newFixture(t *testing.T) *fixture {
 		homeDir:         func() (string, error) { return f.homeDir, nil },
 		uid:             func() int { return 1234 },
 		stdinIsTerminal: func() bool { return true },
+		stderrWidth:     func() (int, bool) { return 0, false },
 		stdin:           strings.NewReader(""),
 		lookupEnv:       func(string) (string, bool) { return "", false },
 		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
@@ -1567,7 +1568,8 @@ func TestRunPassesTheAllowListToTheProxy(t *testing.T) {
 	assert.True(t, f.launch.spec.Proxy.Allow("example.com", "443"))
 	assert.False(t, f.launch.spec.Proxy.Allow("example.com", "80"))
 	assert.False(t, f.launch.spec.Proxy.Allow("api.anthropic.com", "443"))
-	assert.Contains(t, f.launch.spec.Proxy.Hint, f.project(t).Config)
+	assert.Equal(t, "Add it to "+f.project(t).Config+" to allow it.", f.launch.spec.Proxy.Hint("example.com:443"))
+	assert.Equal(t, "Add it to "+f.project(t).Config+" to allow it. preset:go allows it.", f.launch.spec.Proxy.Hint("proxy.golang.org:443"))
 }
 
 func TestRunWritesTheDefaultConfigForANewProject(t *testing.T) {

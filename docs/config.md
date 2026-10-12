@@ -88,6 +88,41 @@ These are the presets:
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
 
+When the proxy refuses a host that a preset allows, its message names the
+preset.
+
+### Suggesting presets
+
+A new config doesn't know which tools your project uses. To find out, run
+this in the project folder:
+
+```
+aibox config suggest
+```
+
+aibox looks at the names of the files in the folder and suggests the
+tools they point to, with the files that show each one and the hosts of
+its preset. It asks for each tool before it adds its preset to `allow`. Start aibox again for them to apply. Without a
+terminal to ask, or when `allow` isn't a list with one entry per line, it
+only prints the lines to add with `aibox config edit`.
+
+| Preset | Files |
+|---|---|
+| `preset:go` | `go.mod`, `go.work` |
+| `preset:npm` | `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` |
+| `preset:pypi` | `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, `Pipfile`, `uv.lock`, `poetry.lock` |
+| `preset:cargo` | `Cargo.toml`, `Cargo.lock` |
+
+A project may come from a stranger, so it must not pick its own
+permissions. That's why aibox only reads the names of plain files, and only
+in the top folder, and never what's in them. It only ever suggests these
+presets, never a host, a port, a mount or a variable from the project.
+`preset:github` and `preset:docker` are never suggested. A git remote or a
+`Dockerfile` doesn't mean the VM needs them.
+
+Note that anyone can upload files to package registries, so a program in
+the VM can send data there too. Only add a preset the project needs.
+
 ## Ports on your machine
 
 Some servers only listen on your machine's loopback, like a local MCP

@@ -64,16 +64,16 @@ func projectsCommand(deps dependencies) *cli.Command {
 				&cli.BoolFlag{Name: "logout", Usage: "clear the login too"},
 				yes,
 			},
-			Action: func(_ context.Context, cmd *cli.Command) error {
-				return runReset(deps, cmd.Bool("logout"), cmd.Bool("yes"))
+			Action: func(ctx context.Context, cmd *cli.Command) error {
+				return runReset(ctx, deps, cmd.Bool("logout"), cmd.Bool("yes"))
 			},
 		}, {
 			Name:      "remove",
 			Usage:     "remove everything aibox keeps for the project in the current folder, or at the path",
 			ArgsUsage: "[path]",
 			Flags:     []cli.Flag{yes},
-			Action: func(_ context.Context, cmd *cli.Command) error {
-				return runRemove(deps, cmd.Args().First(), cmd.Bool("yes"))
+			Action: func(ctx context.Context, cmd *cli.Command) error {
+				return runRemove(ctx, deps, cmd.Args().First(), cmd.Bool("yes"))
 			},
 		}},
 	}
@@ -124,7 +124,7 @@ func runList(deps dependencies) error {
 	return nil
 }
 
-func runReset(deps dependencies, logout, yes bool) error {
+func runReset(ctx context.Context, deps dependencies, logout, yes bool) error {
 	cwd, aibox, err := folders(deps)
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func runReset(deps dependencies, logout, yes bool) error {
 		cleared = "its home folder with the login, and its state disk"
 	}
 
-	if err := confirm(deps, fmt.Sprintf("Start the VM of %s over? This clears %s.", cwd, cleared), yes); err != nil {
+	if err := confirm(ctx, deps, fmt.Sprintf("Start the VM of %s over? This clears %s.", cwd, cleared), yes); err != nil {
 		return err
 	}
 
@@ -164,7 +164,7 @@ func runReset(deps dependencies, logout, yes bool) error {
 	return nil
 }
 
-func runRemove(deps dependencies, path string, yes bool) error {
+func runRemove(ctx context.Context, deps dependencies, path string, yes bool) error {
 	cwd, aibox, err := folders(deps)
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func runRemove(deps dependencies, path string, yes bool) error {
 		return err
 	}
 
-	if err := confirm(deps, fmt.Sprintf("Remove everything aibox keeps for %s? That is its config, the VM's home folder with the login, the state disk, the logs and the tasks.", path), yes); err != nil {
+	if err := confirm(ctx, deps, fmt.Sprintf("Remove everything aibox keeps for %s? That is its config, the VM's home folder with the login, the state disk, the logs and the tasks.", path), yes); err != nil {
 		return err
 	}
 
@@ -245,7 +245,7 @@ func existingProject(aibox, path string) (project.Project, error) {
 
 // confirm asks the question on the terminal, unless yes says it needn't,
 // and fails with errNotConfirmed unless the answer is yes.
-func confirm(deps dependencies, question string, yes bool) error {
+func confirm(ctx context.Context, deps dependencies, question string, yes bool) error {
 	if yes {
 		return nil
 	}
@@ -256,9 +256,9 @@ func confirm(deps dependencies, question string, yes bool) error {
 
 	_, _ = fmt.Fprintf(deps.stderr, "%s [y/N] ", question)
 
-	answer, err := bufio.NewReader(deps.stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("read the answer: %w", err)
+	answer, err := readAnswer(ctx, bufio.NewReader(deps.stdin))
+	if err != nil {
+		return err
 	}
 
 	switch strings.ToLower(strings.TrimSpace(answer)) {
@@ -267,6 +267,33 @@ func confirm(deps dependencies, question string, yes bool) error {
 	}
 
 	return errNotConfirmed
+}
+
+// readAnswer reads a line from answers, until Ctrl-C ends ctx. The end of
+// the input is an empty answer.
+func readAnswer(ctx context.Context, answers *bufio.Reader) (string, error) {
+	type read struct {
+		line string
+		err  error
+	}
+
+	done := make(chan read, 1)
+
+	go func() {
+		line, err := answers.ReadString('\n')
+		done <- read{line, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-done:
+		if r.err != nil && !errors.Is(r.err, io.EOF) {
+			return "", fmt.Errorf("read the answer: %w", r.err)
+		}
+
+		return r.line, nil
+	}
 }
 
 // lockRun takes the lock of the project that aibox run holds, and, for a

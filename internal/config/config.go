@@ -56,6 +56,10 @@ var ErrLoopbackTwice = errors.New("the VM has one loopback address, so allow the
 // import.
 const proxyPort = "3128"
 
+// ErrNoAllowList is a config without a list of allow entries in the plain
+// form, one per line, that AddPresets can add to.
+var ErrNoAllowList = errors.New("the config has no allow list with one entry per line")
+
 // ErrUnknownPreset is a preset entry that names no known preset.
 var ErrUnknownPreset = errors.New("unknown preset")
 
@@ -137,8 +141,92 @@ var presets = map[string][]string{
 	"docker": {"registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudfront.docker.com"},
 }
 
+// markers maps a preset name to the names of files that show a project
+// needs it, in the project's top folder. github and docker have none: a
+// git remote or a Dockerfile doesn't say that the VM needs them.
+var markers = map[string][]string{
+	"go":    {"go.mod", "go.work"},
+	"npm":   {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"},
+	"pypi":  {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile", "uv.lock", "poetry.lock"},
+	"cargo": {"Cargo.toml", "Cargo.lock"},
+}
+
+// titles are the names of the tools of the presets markers knows, as
+// people call them.
+var titles = map[string]string{
+	"go":    "Go",
+	"npm":   "npm",
+	"pypi":  "Python",
+	"cargo": "Rust",
+}
+
 func presetNames() []string {
 	return slices.Sorted(maps.Keys(presets))
+}
+
+// Suggestion is a preset that files of a project show it needs: the name
+// of its tool, the files that show it, by the names in markers, and the
+// hosts the preset allows.
+type Suggestion struct {
+	Preset string
+	Tool   string
+	Files  []string
+	Hosts  []string
+}
+
+// Suggest returns the presets the file names show a project needs, which
+// allow doesn't allow yet. It compares the names exactly, and gives back
+// only names and hosts of its own, none of the names it was given.
+func Suggest(files []string, allow Hosts) []Suggestion {
+	var suggestions []Suggestion
+
+	for _, name := range slices.Sorted(maps.Keys(markers)) {
+		found := slices.DeleteFunc(slices.Clone(markers[name]), func(marker string) bool {
+			return !slices.Contains(files, marker)
+		})
+
+		if len(found) > 0 && !allowsAll(allow, presets[name]) {
+			suggestions = append(suggestions, Suggestion{Preset: name, Tool: titles[name], Files: found, Hosts: presets[name]})
+		}
+	}
+
+	return suggestions
+}
+
+// Markers are the names of all files Suggest looks for.
+func Markers() []string {
+	var names []string
+
+	for _, name := range slices.Sorted(maps.Keys(markers)) {
+		names = append(names, markers[name]...)
+	}
+
+	return names
+}
+
+func allowsAll(allow Hosts, hosts []string) bool {
+	return !slices.ContainsFunc(hosts, func(host string) bool {
+		e, err := parseEntry(host)
+
+		return err != nil || !slices.Contains(allow, e.String())
+	})
+}
+
+// PresetFor returns the preset that allows host on port, if one does.
+func PresetFor(host, port string) (string, bool) {
+	host = normalize(host)
+
+	for _, name := range presetNames() {
+		if slices.ContainsFunc(presets[name], func(text string) bool {
+			e, err := parseEntry(text)
+
+			return err == nil && e.matches(host, port)
+		}) {
+			return name, true
+		}
+	}
+
+	return "", false
 }
 
 // Config holds the settings of one project. Memory and CPUs are nil when
@@ -794,4 +882,94 @@ func (h Hosts) Allows(host, port string) bool {
 // are case-insensitive and example.com. is the same name as example.com.
 func normalize(host string) string {
 	return strings.ToLower(strings.TrimRight(host, "."))
+}
+
+// AddPresets adds an entry for each preset to the allow list of the config
+// in content, after its last entry, with its indent and its line ending. It
+// changes no other line, so that the comments stay as they are. It returns
+// ErrNoAllowList when the list isn't one entry per line, which it sees
+// when the result doesn't allow exactly what content did and the presets.
+func AddPresets(content []byte, names []string) ([]byte, error) {
+	before, err := parse(content)
+	if err != nil {
+		return nil, err
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(content, &doc); err != nil {
+		return nil, err
+	}
+
+	last, err := lastAllowEntry(&doc)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.SplitAfter(string(content), "\n")
+	if last.Line > len(lines) {
+		return nil, ErrNoAllowList
+	}
+
+	at := lines[last.Line-1]
+	indent := at[:len(at)-len(strings.TrimLeft(at, " "))]
+
+	ending := "\n"
+	if strings.HasSuffix(at, "\r\n") {
+		ending = "\r\n"
+	}
+
+	if !strings.HasSuffix(at, "\n") {
+		lines[last.Line-1] += ending
+	}
+
+	added := make([]string, 0, len(names))
+	entries := slices.Clone(before.Allow)
+
+	for _, name := range names {
+		added = append(added, indent+"- preset:"+name+ending)
+		entries = append(entries, "preset:"+name)
+	}
+
+	want, err := expand(entries)
+	if err != nil {
+		return nil, err
+	}
+
+	text := strings.Join(slices.Insert(lines, last.Line, added...), "")
+
+	after, err := parse([]byte(text))
+	if err != nil || !slices.Equal(after.Allow, want) {
+		return nil, ErrNoAllowList
+	}
+
+	return []byte(text), nil
+}
+
+// lastAllowEntry is the last entry of the allow list of the document, when
+// the list is one entry per line.
+func lastAllowEntry(doc *yaml.Node) (*yaml.Node, error) {
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, ErrNoAllowList
+	}
+
+	fields := doc.Content[0].Content
+	for i := 0; i+1 < len(fields); i += 2 {
+		if fields[i].Value != "allow" {
+			continue
+		}
+
+		list := fields[i+1]
+		if list.Kind != yaml.SequenceNode || list.Style&yaml.FlowStyle != 0 || len(list.Content) == 0 {
+			return nil, ErrNoAllowList
+		}
+
+		last := list.Content[len(list.Content)-1]
+		if last.Kind != yaml.ScalarNode || last.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
+			return nil, ErrNoAllowList
+		}
+
+		return last, nil
+	}
+
+	return nil, ErrNoAllowList
 }

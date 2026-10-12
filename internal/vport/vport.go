@@ -90,15 +90,16 @@ func (d *Dialer) Dial(service uint32) (net.Conn, error) {
 }
 
 // Listen opens the side of the host on the port and returns a listener for
-// each service, in their order. The port closes when every listener is
-// closed.
-func Listen(port io.ReadWriteCloser, services ...uint32) ([]net.Listener, error) {
+// each service, in their order. The VM may have at most maxStreams streams
+// open at once, and a stream beyond them is closed at once. The port closes
+// when every listener is closed.
+func Listen(port io.ReadWriteCloser, maxStreams uint64, services ...uint32) ([]net.Listener, error) {
 	session, err := yamux.Server(port, config())
 	if err != nil {
 		return nil, err
 	}
 
-	m := &mux{session: session, open: len(services), byService: map[uint32]*listener{}}
+	m := &mux{session: session, open: len(services), byService: map[uint32]*listener{}, maxStreams: maxStreams}
 	listeners := make([]net.Listener, len(services))
 
 	for i, service := range services {
@@ -114,11 +115,13 @@ func Listen(port io.ReadWriteCloser, services ...uint32) ([]net.Listener, error)
 
 // mux hands each stream of the session to the listener of its service.
 type mux struct {
-	session   *yamux.Session
-	byService map[uint32]*listener
+	session    *yamux.Session
+	byService  map[uint32]*listener
+	maxStreams uint64
 
-	mu   sync.Mutex
-	open int
+	mu      sync.Mutex
+	open    int
+	streams uint64
 }
 
 func (m *mux) route() {
@@ -128,10 +131,51 @@ func (m *mux) route() {
 			return
 		}
 
+		if !m.take() {
+			_ = stream.Close()
+
+			continue
+		}
+
 		// the VM may be slow to say what it wants, or never say it, which
 		// must not hold up its other streams
-		go m.hand(stream)
+		go m.hand(&counted{Stream: stream, mux: m})
 	}
+}
+
+// take counts a stream of the VM, unless it has the most it may have.
+func (m *mux) take() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.streams >= m.maxStreams {
+		return false
+	}
+
+	m.streams++
+
+	return true
+}
+
+func (m *mux) release() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.streams--
+}
+
+// counted is a stream that counts as open until it is closed.
+type counted struct {
+	*yamux.Stream
+	mux  *mux
+	once sync.Once
+}
+
+func (c *counted) Close() error {
+	err := c.Stream.Close()
+	c.once.Do(c.mux.release)
+
+	return err
 }
 
 // headerPatience is how long a stream may take to name its service. The
@@ -139,7 +183,7 @@ func (m *mux) route() {
 // hold its memory in aibox until the VM ends.
 const headerPatience = 10 * time.Second
 
-func (m *mux) hand(stream *yamux.Stream) {
+func (m *mux) hand(stream *counted) {
 	var service uint32
 
 	_ = stream.SetReadDeadline(time.Now().Add(headerPatience))

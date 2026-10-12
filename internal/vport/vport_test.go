@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	proxy    uint32 = 1
-	terminal uint32 = 2
-	timeout         = 5 * time.Second
+	proxy      uint32 = 1
+	terminal   uint32 = 2
+	timeout           = 5 * time.Second
+	maxStreams        = 100
 )
 
 // connect joins the side of the VM and the side of the host over a pipe
@@ -33,7 +34,7 @@ func connect(t *testing.T) (*vport.Dialer, []net.Listener) {
 	dialer, err := vport.NewDialer(vmSide)
 	require.NoError(t, err)
 
-	listeners, err := vport.Listen(hostSide, proxy, terminal)
+	listeners, err := vport.Listen(hostSide, maxStreams, proxy, terminal)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -126,7 +127,7 @@ func TestDialOfAnUnknownServiceGetsClosed(t *testing.T) {
 func TestAStreamThatNeverSaysItsServiceHoldsUpNoOther(t *testing.T) {
 	// arrange
 	vmSide, hostSide := net.Pipe()
-	listeners, err := vport.Listen(hostSide, proxy)
+	listeners, err := vport.Listen(hostSide, maxStreams, proxy)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listeners[0].Close() })
 
@@ -151,10 +152,43 @@ func TestAStreamThatNeverSaysItsServiceHoldsUpNoOther(t *testing.T) {
 	received(t, toProxy)
 }
 
+func TestAStreamBeyondTheMostGetsClosedUntilOneCloses(t *testing.T) {
+	// arrange
+	vmSide, hostSide := net.Pipe()
+	listeners, err := vport.Listen(hostSide, 1, proxy)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listeners[0].Close() })
+
+	dialer, err := vport.NewDialer(vmSide)
+	require.NoError(t, err)
+
+	first, err := dialer.Dial(proxy)
+	require.NoError(t, err)
+
+	host := received(t, accept(listeners[0]))
+
+	// act
+	beyond, err := dialer.Dial(proxy)
+	require.NoError(t, err)
+	require.NoError(t, beyond.SetReadDeadline(time.Now().Add(timeout)))
+	_, beyondErr := beyond.Read(make([]byte, 1))
+
+	require.NoError(t, host.Close())
+	require.NoError(t, first.Close())
+
+	toProxy := accept(listeners[0])
+	_, err = dialer.Dial(proxy)
+	require.NoError(t, err)
+
+	// assert
+	require.ErrorIs(t, beyondErr, io.EOF)
+	received(t, toProxy)
+}
+
 func TestClosingEveryListenerClosesThePort(t *testing.T) {
 	// arrange
 	vmSide, hostSide := net.Pipe()
-	listeners, err := vport.Listen(hostSide, proxy, terminal)
+	listeners, err := vport.Listen(hostSide, maxStreams, proxy, terminal)
 	require.NoError(t, err)
 
 	// act
@@ -175,7 +209,7 @@ func TestClosingEveryListenerClosesThePort(t *testing.T) {
 func TestAcceptEndsWhenThePortCloses(t *testing.T) {
 	// arrange
 	vmSide, hostSide := net.Pipe()
-	listeners, err := vport.Listen(hostSide, proxy)
+	listeners, err := vport.Listen(hostSide, maxStreams, proxy)
 	require.NoError(t, err)
 
 	// act

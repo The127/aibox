@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -46,6 +47,10 @@ const (
 
 // ErrNoNamespaces is a kernel without vsock network namespaces.
 var ErrNoNamespaces = errors.New("the kernel has no vsock network namespaces")
+
+// ErrNotLoaded is a kernel that would have vsock namespaces with vsock
+// loaded. It is an ErrNoNamespaces too.
+var ErrNotLoaded = fmt.Errorf("%w: vsock is not loaded", ErrNoNamespaces)
 
 // Vsock is what a VM and aibox talk over: the vhost-vsock device, opened in
 // the namespace, and the listeners the VM reaches aibox on, with their
@@ -331,18 +336,27 @@ type kernel struct {
 // noNamespaces tells why the kernel has no vsock namespaces and what
 // helps: a newer kernel, loading vsock, or a kernel built with it.
 func (k kernel) noNamespaces() error {
-	if _, err := os.Stat(k.sysctl); err == nil {
+	if _, err := os.Stat(k.sysctl); err == nil || olderThan7(k.release) {
 		return fmt.Errorf("%w: they came with Linux 7.0, and this kernel is %s", ErrNoNamespaces, k.release)
 	}
 
 	switch has, known := k.hasModule("vhost_vsock"); {
 	case !known:
-		return fmt.Errorf("%w: vsock is not loaded. If the kernel has it as a module, load it with: sudo modprobe vhost_vsock. Otherwise the kernel needs CONFIG_VSOCKETS and CONFIG_VHOST_VSOCK", ErrNoNamespaces)
+		return fmt.Errorf("%w. If the kernel has it as a module, load it with: sudo modprobe vhost_vsock. Otherwise the kernel needs CONFIG_VSOCKETS and CONFIG_VHOST_VSOCK", ErrNotLoaded)
 	case has:
-		return fmt.Errorf("%w: vsock is not loaded. Load it with: sudo modprobe vhost_vsock", ErrNoNamespaces)
+		return fmt.Errorf("%w. Load it with: sudo modprobe vhost_vsock", ErrNotLoaded)
 	default:
 		return fmt.Errorf("%w: the kernel was built without vsock. It needs CONFIG_VSOCKETS and CONFIG_VHOST_VSOCK", ErrNoNamespaces)
 	}
+}
+
+// olderThan7 tells whether the release, like 6.12.1, is of a Linux before
+// 7.0. A release it cannot read counts as not older.
+func olderThan7(release string) bool {
+	major, _, _ := strings.Cut(release, ".")
+	n, err := strconv.Atoi(major)
+
+	return err == nil && n < 7
 }
 
 // hasModule tells whether the kernel has the module, from the list of its

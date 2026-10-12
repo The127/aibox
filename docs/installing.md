@@ -46,6 +46,8 @@ have vsock as a module. aibox opens `/dev/vhost-vsock` to make the kernel
 load it. If that doesn't work, load it with `sudo modprobe vhost_vsock`.
 On an older kernel, or one without vsock, the VM reaches aibox over a
 virtio serial port instead. The first line of `console.log` then says why.
+When loading vsock would give the VM vsock, aibox also tells you in the
+terminal.
 See [The network](security.md#the-network).
 
 ## Windows

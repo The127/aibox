@@ -807,6 +807,19 @@ func openLink(options Options) (*link, error) {
 
 	notice := fmt.Sprintf("%v, so the VM reaches aibox over a virtio serial port", err)
 
+	// only root can load vsock, so the person is told how
+	if errors.Is(err, vsockns.ErrNotLoaded) {
+		_, _ = fmt.Fprintf(options.Stderr, "aibox: %v. Until then the VM reaches aibox over a serial port\n", err)
+	}
+
+	// a stream on the port is no file of aibox, so the VM gets the limit
+	// of open files of aibox as the most streams it may have open, as over
+	// vsock
+	var files unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &files); err != nil {
+		return nil, fmt.Errorf("read the limit of open files: %w", err)
+	}
+
 	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("create the socket of the port: %w", err)
@@ -814,7 +827,7 @@ func openLink(options Options) (*link, error) {
 
 	ours, qemus := os.NewFile(uintptr(pair[0]), "port"), os.NewFile(uintptr(pair[1]), "port")
 
-	listeners, err := vport.Listen(ours, proxyService, terminalService)
+	listeners, err := vport.Listen(ours, files.Cur, proxyService, terminalService)
 	if err != nil {
 		_ = ours.Close()
 		_ = qemus.Close()

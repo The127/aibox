@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -584,6 +585,39 @@ func TestRunReachesTheVMOverThePortWithoutVsockNamespaces(t *testing.T) {
 	content, err := os.ReadFile(f.consoleLog)
 	require.NoError(t, err)
 	assert.Equal(t, "aibox: the kernel has no vsock network namespaces: they came with Linux 7.0, and this kernel is 6.8.0, so the VM reaches aibox over a virtio serial port\nhello from the console\n", string(content))
+}
+
+func TestRunSaysHowToLoadVsockWhenItWouldHelp(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	stderr := &syncBuffer{}
+	f.stderr = stderr
+	options := f.options()
+	options.OpenVsock = func() (*vsockns.Vsock, error) {
+		return nil, fmt.Errorf("%w. Load it with: sudo modprobe vhost_vsock", vsockns.ErrNotLoaded)
+	}
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.Contains(t, stderr.String(), "aibox: the kernel has no vsock network namespaces: vsock is not loaded. Load it with: sudo modprobe vhost_vsock. Until then the VM reaches aibox over a serial port\n")
+}
+
+func TestRunSaysNothingOfVsockOnAKernelBefore7(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	stderr := &syncBuffer{}
+	f.stderr = stderr
+	f.noVsock = true
+
+	// act
+	err := launch.Run(context.Background(), machine(t), f.options())
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.NotContains(t, stderr.String(), "vsock")
 }
 
 func TestRunFailsWhenVsockFailsForAnotherReason(t *testing.T) {

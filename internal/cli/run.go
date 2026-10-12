@@ -127,6 +127,14 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
 
+	// git in the VM reads the files of the project as git on the host wrote
+	// them, with the line endings the config of the host chose; without it,
+	// every file differs from the repository in the VM. A task clones the
+	// repository in the VM, which writes them as the VM's git does.
+	if value := deps.gitAutoCRLF(cwd); value != "" {
+		r.env = addAutoCRLF(r.env, value)
+	}
+
 	shareClaudeSetup(home, r.project.Home, r.config, deps.stderr)
 
 	if r.config.IDE {
@@ -535,6 +543,48 @@ func routeGit(env []string, remotes []config.GitRemote, loopback []uint16) ([]st
 	}
 
 	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", count)), nil
+}
+
+// autoCRLF is the setting of git for the line endings of the files.
+const autoCRLF = "core.autocrlf"
+
+// addAutoCRLF adds core.autocrlf to the git config the variables give git
+// in the VM, after the settings already there, such as those of routeGit.
+// One the variables set already wins, since the person set it on purpose,
+// and so does a count git would refuse, which the person fixes.
+func addAutoCRLF(env []string, value string) []string {
+	count := 0
+	set := map[int]bool{}
+
+	for _, variable := range env {
+		if n, ok := strings.CutPrefix(variable, "GIT_CONFIG_COUNT="); ok {
+			var err error
+			if count, err = strconv.Atoi(n); err != nil || count < 0 {
+				return env
+			}
+		}
+
+		if entry, ok := strings.CutPrefix(variable, "GIT_CONFIG_KEY_"); ok {
+			n, key, _ := strings.Cut(entry, "=")
+			// section and variable names are the same in any case
+			if i, err := strconv.Atoi(n); err == nil && strings.EqualFold(key, autoCRLF) {
+				set[i] = true
+			}
+		}
+	}
+
+	for i := range set {
+		if i < count {
+			return env
+		}
+	}
+
+	env = slices.DeleteFunc(slices.Clone(env), func(variable string) bool { return strings.HasPrefix(variable, "GIT_CONFIG_COUNT=") })
+
+	return append(env,
+		fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", count, autoCRLF),
+		fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", count, value),
+		fmt.Sprintf("GIT_CONFIG_COUNT=%d", count+1))
 }
 
 // gitLogins asks git on the host for its login for each remote, before the

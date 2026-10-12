@@ -97,6 +97,7 @@ func newFixture(t *testing.T) *fixture {
 		stdin:           strings.NewReader(""),
 		lookupEnv:       func(string) (string, bool) { return "", false },
 		gitIdentity:     func(string) gitconfig.Identity { return gitconfig.Identity{} },
+		gitAutoCRLF:     func(string) string { return "" },
 		gitLogin: func(context.Context, string) (gitconfig.Login, error) {
 			return gitconfig.Login{Username: "someone", Password: "host-token"}, nil
 		},
@@ -1823,4 +1824,126 @@ func TestRunReturnsTheLaunchError(t *testing.T) {
 // Windows, the root of its drive.
 func rootOf(path string) string {
 	return filepath.VolumeName(path) + string(filepath.Separator)
+}
+
+func TestRunGivesGitTheLineEndingsOfTheHost(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.deps.gitAutoCRLF = func(dir string) string {
+		assert.Equal(t, f.cwd, dir)
+
+		return "true"
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"GIT_CONFIG_KEY_0=core.autocrlf", "GIT_CONFIG_VALUE_0=true", "GIT_CONFIG_COUNT=1",
+	}, f.launch.spec.Env)
+}
+
+func TestRunGivesGitNoLineEndingsWhenTheHostHasNone(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Empty(t, f.launch.spec.Env)
+}
+
+func TestAddAutoCRLFComesAfterTheRemotes(t *testing.T) {
+	// arrange
+	env, err := routeGit([]string{"FOO=bar"}, []config.GitRemote{{Remote: "github.com/owner/repo", Fetch: true}}, nil)
+	require.NoError(t, err)
+
+	// act
+	env = addAutoCRLF(env, "true")
+
+	// assert
+	assert.Equal(t, []string{"GIT_CONFIG_KEY_3=core.autocrlf", "GIT_CONFIG_VALUE_3=true", "GIT_CONFIG_COUNT=4"}, env[len(env)-3:])
+	assert.Equal(t, 1, countPrefix(env, "GIT_CONFIG_COUNT="))
+	assert.Equal(t, "FOO=bar", env[0])
+}
+
+func TestAddAutoCRLFLeavesTheSettingOfThePersonAlone(t *testing.T) {
+	// arrange
+	env := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.autoCRLF", "GIT_CONFIG_VALUE_0=false"}
+
+	// act
+	got := addAutoCRLF(env, "true")
+
+	// assert
+	assert.Equal(t, env, got)
+}
+
+func TestAddAutoCRLFLeavesACountGitWouldRefuseAlone(t *testing.T) {
+	// arrange
+	env := []string{"GIT_CONFIG_COUNT=many"}
+
+	// act
+	got := addAutoCRLF(env, "true")
+
+	// assert
+	assert.Equal(t, env, got)
+}
+
+func TestGitInTheVMTakesTheLineEndingsOfAddAutoCRLF(t *testing.T) {
+	// arrange
+	env, err := routeGit(nil, []config.GitRemote{{Remote: "github.com/owner/repo", Fetch: true}}, nil)
+	require.NoError(t, err)
+
+	env = addAutoCRLF(env, "input")
+
+	// act
+	cmd := exec.Command("git", "config", "--get", "core.autocrlf")
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")...)
+	out, err := cmd.Output()
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "input", strings.TrimSpace(string(out)))
+}
+
+// countPrefix is how many of the variables start with the prefix.
+func countPrefix(env []string, prefix string) int {
+	n := 0
+
+	for _, variable := range env {
+		if strings.HasPrefix(variable, prefix) {
+			n++
+		}
+	}
+
+	return n
+}
+
+func TestAddAutoCRLFReadsAHugeCountAtOnce(t *testing.T) {
+	// arrange: a count the person set, which git refuses
+	env := []string{"GIT_CONFIG_COUNT=99999999999"}
+
+	// act
+	got := addAutoCRLF(env, "true")
+
+	// assert
+	assert.Equal(t, []string{"GIT_CONFIG_KEY_99999999999=core.autocrlf", "GIT_CONFIG_VALUE_99999999999=true", "GIT_CONFIG_COUNT=100000000000"}, got)
+}
+
+func TestAddAutoCRLFAddsToASettingOfThePersonPastTheCount(t *testing.T) {
+	// arrange: a key past the count, which git doesn't read
+	env := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=user.name", "GIT_CONFIG_VALUE_0=me", "GIT_CONFIG_KEY_1=core.autocrlf"}
+
+	// act
+	got := addAutoCRLF(env, "true")
+
+	// assert
+	assert.Equal(t, []string{"GIT_CONFIG_KEY_1=core.autocrlf", "GIT_CONFIG_VALUE_1=true", "GIT_CONFIG_COUNT=2"}, got[len(got)-3:])
 }

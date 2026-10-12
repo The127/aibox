@@ -1,4 +1,5 @@
-// Package gitconfig carries the git identity of the host into the VM.
+// Package gitconfig carries the git identity and settings of the host into
+// the VM.
 package gitconfig
 
 import (
@@ -17,6 +18,14 @@ type Identity struct {
 // command that runs git, as exec.Command does.
 func Read(dir string, command func(name string, args ...string) *exec.Cmd) Identity {
 	return Identity{Name: get(dir, "user.name", command), Email: get(dir, "user.email", command)}
+}
+
+// AutoCRLF returns how git converts line endings in dir on the host, the
+// value of core.autocrlf, or empty when git has none or is not installed.
+// Git for Windows sets it in the config of the system, which the VM has
+// no copy of.
+func AutoCRLF(dir string, command func(name string, args ...string) *exec.Cmd) string {
+	return get(dir, "core.autocrlf", command)
 }
 
 func get(dir, key string, command func(name string, args ...string) *exec.Cmd) string {

@@ -2,6 +2,7 @@ package gitconfig_test
 
 import (
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,4 +55,41 @@ func TestReadIsEmptyWithoutAnIdentity(t *testing.T) {
 
 	// assert
 	assert.Equal(t, gitconfig.Identity{}, identity)
+}
+
+func TestAutoCRLFFollowsWhatGitUsesInTheFolder(t *testing.T) {
+	// arrange: the config of the system, as Git for Windows writes it, and
+	// a repository that says otherwise
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	system := filepath.Join(t.TempDir(), "gitconfig")
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	set(t, "--file", system, "core.autocrlf", "true")
+
+	plain := t.TempDir()
+	repo := t.TempDir()
+	require.NoError(t, git("-C", repo, "init", "-q"))
+	require.NoError(t, git("-C", repo, "config", "core.autocrlf", "input"))
+
+	// act
+	fromSystem := gitconfig.AutoCRLF(plain, exec.Command)
+	fromRepo := gitconfig.AutoCRLF(repo, exec.Command)
+
+	// assert
+	assert.Equal(t, "true", fromSystem)
+	assert.Equal(t, "input", fromRepo)
+}
+
+func TestAutoCRLFIsEmptyWhenGitHasNone(t *testing.T) {
+	// arrange
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	// act
+	value := gitconfig.AutoCRLF(t.TempDir(), exec.Command)
+
+	// assert
+	assert.Empty(t, value)
 }

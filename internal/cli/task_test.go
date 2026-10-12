@@ -210,6 +210,24 @@ func stamped(dir, label string, lines ...string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^` + strings.Join(lines, "\n") + `$`)
 }
 
+func TestTaskGivesGitNotTheLineEndingsOfTheHost(t *testing.T) {
+	// arrange: the VM clones the repository itself, as git in the VM
+	// writes it
+	f := newTaskFixture(t)
+	f.deps.gitAutoCRLF = func(string) string { return "true" }
+	f.succeeds(t)
+
+	// act
+	err := f.task("fix", "the bug")
+
+	// assert
+	require.NoError(t, err)
+
+	for _, variable := range f.launch.spec.Env {
+		assert.NotContains(t, variable, "core.autocrlf")
+	}
+}
+
 func TestTaskSharesTheTaskAndNotTheProject(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)

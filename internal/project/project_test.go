@@ -58,6 +58,13 @@ func TestOpen(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "proxy.log"), p.Log)
 	assert.Equal(t, filepath.Join(dir, "console.log"), p.ConsoleLog)
 	assert.Equal(t, filepath.Join(dir, "state.ext4"), p.State)
+	assert.Equal(t, filepath.Join(dir, "path"), p.Path)
+
+	// the path goes into its file, since the name of the folder doesn't
+	// give it back
+	written, err := os.ReadFile(p.Path)
+	require.NoError(t, err)
+	assert.Equal(t, path+"\n", string(written))
 
 	// Windows has no such modes, the ACL of the home folder keeps it
 	if runtime.GOOS != "windows" {
@@ -126,4 +133,26 @@ func TestOpenWhenBaseIsAFile(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, filepath.Join(base, escaped, "home"))
+}
+
+func TestAtCreatesNothing(t *testing.T) {
+	// arrange
+	base := t.TempDir()
+	path, escaped := aProject()
+
+	// act
+	p, err := project.At(base, path)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, project.In(filepath.Join(base, escaped)), p)
+	assert.NoDirExists(t, p.Dir)
+}
+
+func TestAtRelativePath(t *testing.T) {
+	// act
+	_, err := project.At(t.TempDir(), "repos/aibox")
+
+	// assert
+	assert.ErrorIs(t, err, project.ErrRelativePath)
 }

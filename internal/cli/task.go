@@ -155,7 +155,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 		return err
 	}
 
-	r, err := openProjectRun(ctx, deps, cmd, cwd, aibox)
+	r, err := openProjectRun(ctx, deps, cmd, cwd, aibox, lockTasksOf)
 	if err != nil {
 		return err
 	}

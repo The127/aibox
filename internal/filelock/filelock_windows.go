@@ -14,8 +14,12 @@ import (
 // as flock does.
 const lockOffset = 1 << 62
 
-func lock(file *os.File, wait bool) error {
-	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+func lock(file *os.File, exclusive, wait bool) error {
+	var flags uint32
+	if exclusive {
+		flags |= windows.LOCKFILE_EXCLUSIVE_LOCK
+	}
+
 	if !wait {
 		flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
 	}

@@ -121,8 +121,10 @@ has the details.
   and the authors of the commits come from the VM.
 - What the VM leaves for the next `aibox run`. The VM's home folder and
   state disk stay between runs, so a steered session can leave something
-  behind for the next one, like a line in `~/.claude/CLAUDE.md`. Tasks get a
-  new home and state disk each time.
+  behind for the next one, like a line in `~/.claude/CLAUDE.md`.
+  `aibox projects reset --logout` clears both. See
+  [Starting over](usage.md#starting-over). Tasks get a new home and state
+  disk each time.
 - What the VM shows in your terminal. With `aibox run` its output reaches
   your terminal as it is, escape sequences included.
 - Force pushes to an allowed branch, and the CI a pushed branch starts.

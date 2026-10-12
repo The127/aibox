@@ -145,7 +145,8 @@ between runs. The default is 16. The disk only takes up space on your
 machine as it fills.
 
 The size is fixed when the first run creates the disk. Changing it
-later has no effect.
+later has no effect, until you start the VM over with
+[`aibox projects reset`](usage.md#starting-over), which makes a new disk.
 
 ## mounts
 

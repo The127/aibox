@@ -176,6 +176,22 @@ func TestARenameMovesAFileToAnotherFolder(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, "src", "main.go"))
 }
 
+func TestARenameTakesANameOfOneCharacter(t *testing.T) {
+	t.Parallel()
+
+	// arrange: a name of one character makes a buffer shorter than the
+	// structure Windows wants
+	dir := tree(t)
+	src := walk(t, mount(t, dir), "src")
+
+	// act
+	err := src.RenameAt("main.go", src, "b")
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, "src", "b"))
+}
+
 func TestSetAttrTruncatesAndSetsTheTimeOfModification(t *testing.T) {
 	t.Parallel()
 
@@ -219,6 +235,22 @@ func TestAHardLinkIsTheSameFile(t *testing.T) {
 	b, err := os.Stat(filepath.Join(dir, "linked.go"))
 	require.NoError(t, err)
 	assert.True(t, os.SameFile(a, b))
+}
+
+func TestAHardLinkTakesANameOfOneCharacter(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	dir := tree(t)
+	root := mount(t, dir)
+	f := walk(t, root, "src", "main.go")
+
+	// act
+	err := root.Link(f, "h")
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, "h"))
 }
 
 func TestAReadOnlyShareRefusesEveryChange(t *testing.T) {

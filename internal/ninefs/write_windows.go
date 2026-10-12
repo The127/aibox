@@ -231,14 +231,19 @@ func setName(h windows.Handle, class, flags uint32, dir windows.Handle, name str
 
 	u = u[:len(u)-1]
 
+	// FILE_RENAME_INFORMATION and FILE_LINK_INFORMATION, whose name runs on
+	// past the one character the structure declares
 	type header struct {
 		Flags          uint32
 		RootDirectory  windows.Handle
 		FileNameLength uint32
+		FileName       [1]uint16
 	}
 
-	nameAt := unsafe.Offsetof(header{}.FileNameLength) + unsafe.Sizeof(uint32(0))
-	buf := make([]byte, nameAt+uintptr(len(u))*2)
+	// Windows refuses a buffer shorter than the structure with its padding,
+	// and a name of one character makes a shorter one
+	nameAt := unsafe.Offsetof(header{}.FileName)
+	buf := make([]byte, max(nameAt+uintptr(len(u))*2, unsafe.Sizeof(header{})))
 
 	hdr := (*header)(unsafe.Pointer(&buf[0])) //nolint:gosec // the buffer starts with the header
 	hdr.Flags = flags

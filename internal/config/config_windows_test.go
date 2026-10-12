@@ -31,7 +31,7 @@ func TestLoadReadsAMountOfAWindowsFolder(t *testing.T) {
 				path := write(t, "mounts:\n  - "+quote+written+":/opt/go"+quote+"\n")
 
 				// act
-				cfg, err := config.Load(path)
+				cfg, err := config.Load(path, "")
 
 				// assert
 				require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestLoadRejectsAWindowsMountItCannotRead(t *testing.T) {
 			path := write(t, "mounts:\n  - '"+entry+"'\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			assert.ErrorIs(t, err, config.ErrBadMount)
@@ -72,8 +72,8 @@ func TestLoadReadsThePathAsFoldersOfTheVM(t *testing.T) {
 	backslashes := write(t, "path:\n  - '\\opt\\go\\bin'\n")
 
 	// act
-	cfg, err := config.Load(accepted)
-	_, backslashesErr := config.Load(backslashes)
+	cfg, err := config.Load(accepted, "")
+	_, backslashesErr := config.Load(backslashes, "")
 
 	// assert
 	require.NoError(t, err)

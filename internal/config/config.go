@@ -519,9 +519,9 @@ func Default() Config {
 }
 
 // Load returns the config in the file at path. When there is no file, it
-// writes the default one first.
-func Load(path string) (Config, error) {
-	if err := EnsureDefault(path); err != nil {
+// writes one first, as EnsureDefault does.
+func Load(path, template string) (Config, error) {
+	if err := EnsureDefault(path, template); err != nil {
 		return Config{}, err
 	}
 
@@ -538,9 +538,21 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// EnsureDefault creates the default file at path unless one exists. Two
-// aibox started at once for a new project then both read the same file.
-func EnsureDefault(path string) error {
+// EnsureDefault creates the file at path unless one exists: a copy of the
+// file at template, the person's own config for new projects, or the
+// default one when there is no template. It refuses a template with a
+// mistake, so that no project starts from it. Two aibox started at once
+// for a new project then both read the same file.
+func EnsureDefault(path, template string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return nil
+	}
+
+	text, err := startingText(template)
+	if err != nil {
+		return err
+	}
+
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the path is the project's config file
 	if errors.Is(err, fs.ErrExist) {
 		return nil
@@ -550,7 +562,6 @@ func EnsureDefault(path string) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	text := strings.Replace(defaultFile, "PRESETS", strings.Join(presetNames(), ", "), 1)
 	if _, err := io.WriteString(file, text); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
@@ -559,6 +570,27 @@ func EnsureDefault(path string) error {
 	}
 
 	return file.Close()
+}
+
+// startingText is the text a new config starts from: the template's, or
+// the default one when template is empty or names no file.
+func startingText(template string) (string, error) {
+	if template != "" {
+		content, err := os.ReadFile(template) //nolint:gosec // the person's template
+		if err == nil {
+			if _, err := parse(content); err != nil {
+				return "", fmt.Errorf("the template %s: %w", template, err)
+			}
+
+			return string(content), nil
+		}
+
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("read the template: %w", err)
+		}
+	}
+
+	return strings.Replace(defaultFile, "PRESETS", strings.Join(presetNames(), ", "), 1), nil
 }
 
 func parse(content []byte) (Config, error) {

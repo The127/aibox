@@ -33,7 +33,7 @@ func TestDefaultFileNamesEveryPreset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := Load(path)
+	_, err := Load(path, "")
 
 	// assert
 	require.NoError(t, err)

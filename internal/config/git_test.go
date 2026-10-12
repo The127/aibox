@@ -16,7 +16,7 @@ func TestLoadReadsTheGitRemotes(t *testing.T) {
 	path := write(t, "git:\n  - remote: GitHub.com/Owner/Repo.git\n    fetch: true\n    push:\n      - aibox/*\n      - feature/login\n  - remote: gitlab.example.com/group/sub/module\n    fetch: true\n")
 
 	// act
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestLoadRejectsARemoteThatIsNotHostAndPath(t *testing.T) {
 			path := write(t, "git:\n  - remote: \""+remote+"\"\n    fetch: true\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			require.ErrorIs(t, err, config.ErrBadRemote)
@@ -63,7 +63,7 @@ func TestLoadRejectsAPushPatternThatIsNoBranch(t *testing.T) {
 			path := write(t, "git:\n  - remote: github.com/owner/repo\n    push:\n      - \""+pattern+"\"\n")
 
 			// act
-			_, err := config.Load(path)
+			_, err := config.Load(path, "")
 
 			// assert
 			require.ErrorIs(t, err, config.ErrBadBranchPattern)
@@ -76,7 +76,7 @@ func TestLoadRejectsAGitEntryThatAllowsNothing(t *testing.T) {
 	path := write(t, "git:\n  - remote: github.com/owner/repo\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.ErrorIs(t, err, config.ErrNothingAllowed)
@@ -87,7 +87,7 @@ func TestLoadRejectsARemoteNamedTwice(t *testing.T) {
 	path := write(t, "git:\n  - remote: github.com/owner/repo\n    fetch: true\n  - remote: GitHub.com/owner/repo.git\n    fetch: true\n")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.ErrorIs(t, err, config.ErrRemoteTwice)
@@ -98,7 +98,7 @@ func TestLoadWritesAGitExampleIntoTheDefaultFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 
 	// act
-	_, err := config.Load(path)
+	_, err := config.Load(path, "")
 
 	// assert
 	require.NoError(t, err)

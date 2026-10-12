@@ -24,9 +24,10 @@ func configCommand(deps dependencies) *cli.Command {
 			Usage: "open the config file in the editor, like git: $VISUAL, then $EDITOR, then " + fallbackEditor,
 			Flags: []cli.Flag{
 				&cli.StringFlag{Name: "editor", Usage: "the editor to use instead, run through the shell, so it may have arguments"},
+				&cli.BoolFlag{Name: "template", Usage: "edit ~/.aibox/config.yaml instead, the config new projects start from"},
 			},
 			Action: func(_ context.Context, cmd *cli.Command) error {
-				return editConfig(deps, cmd.String("editor"))
+				return editConfig(deps, cmd.String("editor"), cmd.Bool("template"))
 			},
 		}, {
 			Name:  "suggest",
@@ -38,37 +39,46 @@ func configCommand(deps dependencies) *cli.Command {
 	}
 }
 
-func editConfig(deps dependencies, editor string) error {
-	cwd, err := deps.getwd()
+func editConfig(deps dependencies, editor string, template bool) error {
+	cwd, aibox, err := folders(deps)
 	if err != nil {
-		return fmt.Errorf("find the current folder: %w", err)
-	}
-
-	aibox, err := deps.aiboxDir()
-	if err != nil {
-		return fmt.Errorf("find the aibox folder: %w", err)
-	}
-
-	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
-	if err != nil {
-		return fmt.Errorf("open the project folder: %w", err)
-	}
-
-	// a new project gets the default file to start from, and a file that
-	// does not parse is what the editor is for
-	if err := config.EnsureDefault(p.Config); err != nil {
 		return err
+	}
+
+	path := templateFile(aibox)
+
+	// a new template starts from the default file, and a new project from
+	// the template. A file that does not parse is what the editor is for.
+	if template {
+		if err := os.MkdirAll(aibox, 0o700); err != nil {
+			return fmt.Errorf("create %s: %w", aibox, err)
+		}
+
+		if err := config.EnsureDefault(path, ""); err != nil {
+			return err
+		}
+	} else {
+		p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
+		if err != nil {
+			return fmt.Errorf("open the project folder: %w", err)
+		}
+
+		if err := config.EnsureDefault(p.Config, path); err != nil {
+			return err
+		}
+
+		path = p.Config
 	}
 
 	if editor == "" {
 		editor = chooseEditor(deps.lookupEnv)
 	}
 
-	if err := deps.edit(editor, p.Config); err != nil {
+	if err := deps.edit(editor, path); err != nil {
 		return fmt.Errorf("%s: %w", editor, err)
 	}
 
-	_, err = loadConfig(deps, p.Config, aibox)
+	_, err = loadConfig(deps, path, aibox)
 
 	return err
 }

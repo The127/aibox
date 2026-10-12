@@ -722,8 +722,13 @@ func refuseUnsafeFolder(cwd, home, aibox string) error {
 
 // loadConfig returns the config in the file at path, or an error when one of
 // its mounts is unsafe.
+// templateFile is the config new projects start from, in the aibox folder.
+func templateFile(aibox string) string {
+	return filepath.Join(aibox, "config.yaml")
+}
+
 func loadConfig(deps dependencies, path, aibox string) (config.Config, error) {
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, templateFile(aibox))
 	if err != nil {
 		return config.Config{}, err
 	}

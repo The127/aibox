@@ -86,6 +86,7 @@ var errZone = errors.New("an address with a zone")
 const (
 	reasonNotAllowed = "is not on the allow list"
 	reasonNotPublic  = "resolves only to addresses inside the host's own networks"
+	reasonZone       = "is an address with a zone, which leads to the host's own links"
 )
 
 // notPublic are IPv4 ranges that IsGlobalUnicast counts as public but
@@ -182,6 +183,12 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	upstream, err := connect(ctx, host, port, options)
 	if errors.Is(err, errNotPublic) {
 		refuse(conn, target, reasonNotPublic, options)
+
+		return
+	}
+
+	if errors.Is(err, errZone) {
+		refuse(conn, target, reasonZone, options)
 
 		return
 	}

@@ -81,7 +81,7 @@ Everything the VM can reach on your machine goes through one of these.
 | The terminal | What Claude Code shows you | `aibox run` passes the VM's terminal straight through. |
 | The ports | Connections from your machine to servers in the VM | aibox listens only on `127.0.0.1`, only on the ports the config lists, and only with `aibox run`. The VM only connects them to its own loopback. See [ports](config.md#ports). |
 | A task's results | The bundle, the logs and `result.json` | For `aibox task`, aibox checks each file and the bundle, and strips control characters before text reaches your terminal. See [How a task runs](tasks.md#how-a-task-runs). |
-| Your project folder | What the VM writes | aibox doesn't check it. Treat it like a pull request from a stranger. See [What the VM writes](what-the-vm-writes.md). |
+| Your project folder | What the VM writes | aibox doesn't stop it. After `aibox run` it lists the files that programs on your machine run without asking and that changed. Treat the rest like a pull request from a stranger too. See [What the VM writes](what-the-vm-writes.md). |
 
 ## Attacks and what stops them
 

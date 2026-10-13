@@ -488,3 +488,24 @@ other address. The ports close when the session ends.
 aibox locks itself down once the VM runs, so it can't open a port after
 that. That's why the ports come from the config and can't follow what the
 VM opens.
+
+## watch
+
+When an `aibox run` session ends, aibox tells you which files the VM may
+have changed that programs on your machine run without asking, like
+`.git/config` or `.envrc`. It always checks
+[these files](what-the-vm-writes.md#what-aibox-checks-for-you). If your
+project has more of them, add them:
+
+```yaml
+watch:
+  - Makefile
+  - .github/workflows
+```
+
+An entry is a file or a folder of the project, written with `/`. For a
+folder, aibox checks every file in it. aibox refuses an absolute path, one
+that leads out of the project with `..`, and `.`, the whole project.
+
+See [What the VM writes](what-the-vm-writes.md#what-aibox-checks-for-you)
+for what the check catches and what it doesn't.

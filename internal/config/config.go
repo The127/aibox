@@ -86,6 +86,9 @@ var ErrMountOverlap = errors.New("mounts overlap")
 // settings other than all or none.
 var ErrBadShare = errors.New("must be all or none")
 
+// ErrBadWatch is a watch entry that is not a path inside the project.
+var ErrBadWatch = errors.New("must be a path inside the project, like Makefile or .github/workflows")
+
 // ErrBadPath is a path entry that is neither an absolute folder without a
 // colon nor the name of a variable.
 var ErrBadPath = errors.New("must be an absolute folder without a colon, or the name of a variable")
@@ -312,6 +315,9 @@ type Config struct {
 	Git []GitRemote `yaml:"git"`
 	// Ports are servers in the VM that the host reaches on its loopback.
 	Ports []Port `yaml:"ports"`
+	// Watch are files and folders of the project, with slashes, that aibox
+	// run checks for changes besides the ones it always checks.
+	Watch []string `yaml:"watch"`
 }
 
 // Port is a port on the loopback of the host whose connections go to a
@@ -650,6 +656,14 @@ allow:
 # ports:
 #   - 5173
 #   - 8080:3000
+
+# Files and folders of the project that programs on this machine run, which
+# aibox run checks besides the ones it always checks, like .git/config,
+# .git/hooks, .envrc, package.json and .idea. When the session ends, aibox
+# tells you which of them the VM may have changed. For example:
+# watch:
+#   - Makefile
+#   - .github/workflows
 `
 
 // DefaultMaxConnections is how many connections the proxy serves at once
@@ -827,11 +841,31 @@ func parse(content []byte) (Config, error) {
 		cfg.Path[i] = cleaned
 	}
 
+	for i, entry := range cfg.Watch {
+		cleaned, err := parseWatchEntry(entry)
+		if err != nil {
+			return Config{}, err
+		}
+
+		cfg.Watch[i] = cleaned
+	}
+
 	if err := fitsCmdline(cfg); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+func parseWatchEntry(text string) (string, error) {
+	cleaned := path.Clean(filepath.ToSlash(text))
+
+	// . would be the whole project, .git/objects included
+	if !filepath.IsLocal(filepath.FromSlash(text)) || cleaned == "." || strings.ContainsFunc(text, unicode.IsControl) {
+		return "", fmt.Errorf("watch entry %q: %w", text, ErrBadWatch)
+	}
+
+	return cleaned, nil
 }
 
 func parsePathEntry(text string) (string, error) {

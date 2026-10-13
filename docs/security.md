@@ -51,8 +51,8 @@ To report a vulnerability, see
 ## What aibox does not protect
 
 - What the VM writes into the project. That includes `.git`, and files that
-  tools on your machine run without asking. Read
-  [What the VM writes](what-the-vm-writes.md).
+  tools on your machine run without asking. aibox only tells you which of
+  those changed. Read [What the VM writes](what-the-vm-writes.md).
 - What you allow. The VM can reach every host on the allow list and every
   port of your machine the list names. It can use every secret in `env` and
   push to every branch the `git` list names. A subscription token goes into

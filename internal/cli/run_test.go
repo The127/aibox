@@ -644,6 +644,7 @@ func TestRunDownloadsTheImageOfItsReleaseWhenItIsMissing(t *testing.T) {
 	assert.Equal(t, []fetch{{version: "v0.2.0", arch: runtime.GOARCH, digest: "the digest", dir: dir}}, f.fetched)
 	assert.Equal(t, dir, f.launch.spec.Image)
 	assert.NoDirExists(t, old, "the image of the release before is gone")
+	assert.Contains(t, f.stderr.String(), "aibox: downloading the VM image of v0.2.0\n")
 }
 
 func TestRunUsesTheImageOfItsReleaseItDownloadedBefore(t *testing.T) {
@@ -709,7 +710,7 @@ func TestRunSaysNothingWhenNoPackageInstalledAnImage(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Len(t, f.fetched, 1)
-	assert.NotContains(t, f.stderr.String(), "VM image")
+	assert.NotContains(t, f.stderr.String(), "holds no complete VM image")
 }
 
 func TestRunPrefersTheImageGivenToTheOneAPackageInstalled(t *testing.T) {

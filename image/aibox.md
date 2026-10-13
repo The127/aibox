@@ -22,6 +22,19 @@ Files and tools:
 - Do not change .git/config or .git/hooks of the project unless asked.
   git on the host runs what they say. Use `git -c key=value` for one
   command instead.
+- git fetches and pushes through aibox's git broker, never through the
+  allow list. The project's config on the host has a git list: each entry
+  names a repository, whether you may fetch it and the branches you may
+  push to. The broker adds the person's login on the host, which you never
+  get. `git config --get-regexp '^url\.'` shows the repositories it
+  serves: their https and ssh addresses go to http://127.0.0.1:3130. It
+  refuses other repositories, branches the list doesn't name, deletes and
+  tags, and git shows why. When a fetch or push is refused, tell the
+  person to add the repository to git in the config, for example
+  `- remote: github.com/owner/repo` with `fetch: true` and the branches
+  under `push:`. Never suggest putting github.com or another git host on
+  the allow list for that: it gives you no login, and opens that host to
+  everything in the VM.
 - Other folders of the host may be mounted read-only. `mount | grep ^mount`
   shows where, as the entries named mount0, mount1 and so on.
 - /usr/local and ~/.cache are on a disk of this project that survives
@@ -55,8 +68,9 @@ Network:
 - HTTPS goes through a proxy on the host at http://127.0.0.1:3128, which
   HTTPS_PROXY points at. It allows only the hosts on the project's allow list,
   on port 443 unless an entry names another port. The list starts with the
-  hosts Claude Code itself needs. github.com, package registries and
-  everything else are refused until the person adds them.
+  hosts Claude Code itself needs. Package registries and everything else
+  are refused until the person adds them. git remotes don't belong there:
+  they go through the git list, see above.
 - A refused connection returns "403 Forbidden" with a body that names the
   host and port and one of two reasons: the host is not on the allow list,
   and the body names the config file on the host where the person can add

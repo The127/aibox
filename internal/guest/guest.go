@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -670,6 +671,12 @@ func setup(sys System) (*os.File, Options, error) {
 	}
 
 	for _, m := range options.Mounts {
+		if options.Task {
+			if err := ownAbove(sys, m.Path); err != nil {
+				return console, options, err
+			}
+		}
+
 		if err := mountShare(m.Tag, m.Path, readOnlyShare); err != nil {
 			return console, options, err
 		}
@@ -833,6 +840,12 @@ func mountState(sys System, device string, task bool) error {
 
 		if err := sys.Own(source); err != nil {
 			return fmt.Errorf("make %s: %w", source, err)
+		}
+
+		if task {
+			if err := ownAbove(sys, d.target); err != nil {
+				return err
+			}
 		}
 
 		if err := sys.Mount(source, d.target, "", syscall.MS_BIND, ""); err != nil {
@@ -1196,6 +1209,27 @@ func writePrompts(sys System, hyperV bool) error {
 	for _, p := range []struct{ path, image, host string }{{prompt, imagePrompt, host}, {taskPrompt, imageTaskPrompt, taskHost}} {
 		if err := sys.Join(p.path, p.image, p.host); err != nil {
 			return fmt.Errorf("write the system prompt %s: %w", p.path, err)
+		}
+	}
+
+	return nil
+}
+
+// ownAbove gives the user the folders between the home and the target, top
+// down, which the mount on the target would otherwise make as root. In a
+// task the home is on the disk of the VM, where the user then could write
+// in none of them, such as ~/.claude above the skills. In aibox run the
+// home is shared from the host, which makes them the person's anyway.
+func ownAbove(sys System, target string) error {
+	var above []string
+
+	for dir := path.Dir(target); strings.HasPrefix(dir, home+"/"); dir = path.Dir(dir) {
+		above = append([]string{dir}, above...)
+	}
+
+	for _, dir := range above {
+		if err := sys.Own(dir); err != nil {
+			return fmt.Errorf("make %s: %w", dir, err)
 		}
 	}
 

@@ -485,8 +485,8 @@ watch:
 ```
 
 An entry is a file or a folder of the project, written with `/`. For a
-folder, aibox checks every file in it. aibox refuses an absolute path and
-one that leads out of the project with `..`.
+folder, aibox checks every file in it. aibox refuses an absolute path, one
+that leads out of the project with `..`, and `.`, the whole project.
 
 See [What the VM writes](what-the-vm-writes.md#what-aibox-checks-for-you)
 for what the check catches and what it doesn't.

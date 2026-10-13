@@ -32,8 +32,8 @@ VM may have changed:
 
 ```
 aibox: the VM may have changed files that programs on this machine run. Read them before you run anything here:
-  changed  .git/config
-  added    .git/hooks/pre-commit
+  changed    .git/config
+  added      .git/hooks/pre-commit
 ```
 
 It checks `.git/config`, `.git/hooks`, `.envrc`, `lefthook.yml`, `justfile`,
@@ -45,18 +45,30 @@ whether the VM or a program on your machine changed a file. Your IDE
 rewrites `.idea/workspace.xml` while the project is open, so that file
 shows up often. Look at it anyway, it can hold run configurations.
 
-It doesn't cover everything either. A file that isn't on the list, like a
-script your build calls, isn't checked. And aibox only tells you when the
-session ends. If you use git or run the project on your machine while the
-session runs, nothing warns you.
+It doesn't cover everything either:
+
+- A file that isn't on the list, like a script your build calls, isn't
+  checked.
+- aibox only compares the start and the end of the session. A change the
+  VM takes back before the end doesn't show up. Nor does anything when
+  aibox itself is killed or you close the terminal.
+- If you use git or run the project on your machine while the session
+  runs, nothing warns you.
+- In a linked worktree or a submodule, `.git` is a file that names the
+  repository folder somewhere else. aibox checks that file, but not the
+  folder it names.
 
 ### How it works
 
-Right before the VM starts, aibox hashes every file under the paths on the
-list. When the VM stops, it hashes them again and prints what was added,
-changed or removed. It reads no link and follows none, so a link the VM
-put there counts as a change. aibox prints a name with characters your
-terminal would act on in quotes.
+Right before the VM starts, aibox records every file under the paths on
+the list, with its content and its permissions. When the VM stops, it does
+the same again and prints what was added, changed or removed. Making a hook
+executable counts as a change, since git only runs a hook that is.
+
+aibox doesn't follow links. A link on the list, or on the way to an entry
+of `watch`, counts as a change itself when it appears. A file aibox can't
+read is listed as `unreadable`, every time. aibox prints a name with
+characters your terminal would act on in quotes.
 
 ## What to do
 

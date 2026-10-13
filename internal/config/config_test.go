@@ -367,6 +367,8 @@ func TestLoadRejectsAWatchEntryOutsideTheProject(t *testing.T) {
 		"above":             "../other",
 		"above in disguise": "scripts/../../other",
 		"empty":             "",
+		"the project":       ".",
+		"the project again": "scripts/..",
 		"control character": "Makefile\\u0001",
 	}
 

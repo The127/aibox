@@ -832,11 +832,14 @@ func parse(content []byte) (Config, error) {
 }
 
 func parseWatchEntry(text string) (string, error) {
-	if !filepath.IsLocal(filepath.FromSlash(text)) || strings.ContainsFunc(text, unicode.IsControl) {
+	cleaned := path.Clean(filepath.ToSlash(text))
+
+	// . would be the whole project, .git/objects included
+	if !filepath.IsLocal(filepath.FromSlash(text)) || cleaned == "." || strings.ContainsFunc(text, unicode.IsControl) {
 		return "", fmt.Errorf("watch entry %q: %w", text, ErrBadWatch)
 	}
 
-	return path.Clean(filepath.ToSlash(text)), nil
+	return cleaned, nil
 }
 
 func parsePathEntry(text string) (string, error) {

@@ -62,6 +62,7 @@ func (b Backend) prepare(spec backend.Spec) (vm.Machine, Options, error) {
 		RemoveState: spec.RemoveState,
 		ConsoleLog:  spec.ConsoleLog,
 		Ports:       spec.Ports,
+		Read:        spec.Read,
 		Proxy:       spec.Proxy,
 		Env:         spec.Env,
 		OnPaste:     spec.OnPaste,

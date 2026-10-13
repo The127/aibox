@@ -2,8 +2,9 @@
 
 // Package seatbelt takes from the aibox process on macOS what it no longer
 // needs once the VM runs, as confine does with Landlock on Linux: the file
-// system but for the resolver files, TCP but for connecting to the allowed
-// ports, and starting programs. It uses the sandbox of macOS, Seatbelt.
+// system but for the resolver files and the folders it reads after the
+// session, TCP but for connecting to the allowed ports, and starting
+// programs. It uses the sandbox of macOS, Seatbelt.
 package seatbelt
 
 /*
@@ -23,14 +24,16 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unsafe"
 )
 
 // Profile is the sandbox of the process: nothing but what the proxy and the
-// terminal need once the VM runs. Ports are the TCP ports the proxy may
-// connect to. Files aibox opened before keep working.
-func Profile(ports []uint16) string {
+// terminal need once the VM runs, and what aibox reads after the session.
+// Ports are the TCP ports the proxy may connect to, and read the folders
+// aibox may read. Files aibox opened before keep working.
+func Profile(ports []uint16, read []string) string {
 	var b strings.Builder
 
 	b.WriteString("(version 1)\n(deny default)\n")
@@ -60,14 +63,30 @@ func Profile(ports []uint16) string {
 		fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"*:%d\"))\n", port)
 	}
 
+	for _, dir := range read {
+		fmt.Fprintf(&b, "(allow file-read* (subpath %s))\n", quote(dir))
+	}
+
 	return b.String()
 }
 
 // Apply confines the whole process for good, every thread of it. It must
 // run after every child of the process has started, because children
-// inherit it.
-func Apply(ports []uint16) error {
-	return ApplyProfile(Profile(ports))
+// inherit it. Read are the folders aibox still reads after the session.
+func Apply(ports []uint16, read []string) error {
+	// the sandbox compares the path a file really has
+	resolved := make([]string, 0, len(read))
+
+	for _, dir := range read {
+		dir, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return err
+		}
+
+		resolved = append(resolved, dir)
+	}
+
+	return ApplyProfile(Profile(ports, resolved))
 }
 
 // WriteProfile is a sandbox that allows everything but writing files

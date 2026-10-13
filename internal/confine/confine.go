@@ -2,8 +2,9 @@
 
 // Package confine takes from the aibox process what it no longer needs
 // once the VM runs: new privileges, the file system but for the resolver
-// files, TCP but for connecting to the allowed ports, and the syscalls that
-// reach into the kernel, other processes or namespaces.
+// files and the folders it reads after the session, TCP but for connecting
+// to the allowed ports, and the syscalls that reach into the kernel, other
+// processes or namespaces.
 package confine
 
 import (
@@ -37,30 +38,30 @@ const (
 )
 
 // Apply confines the process and all its threads. Ports are the TCP ports
-// it may still connect to. It must run after every child of the process
-// has started, because children inherit it. A program built with cgo
-// cannot reach its other threads and gets an error; aibox is built without
-// cgo.
-func Apply(ports []uint16) error {
-	return apply(ports, allThreads)
+// it may still connect to, and read the folders it may still read. It must
+// run after every child of the process has started, because children
+// inherit it. A program built with cgo cannot reach its other threads and
+// gets an error; aibox is built without cgo.
+func Apply(ports []uint16, read []string) error {
+	return apply(ports, read, allThreads)
 }
 
 // ApplyToThread confines the calling thread alone, for a test binary built
 // with cgo. Everything the thread starts inherits it.
-func ApplyToThread(ports []uint16) error {
-	return apply(ports, thisThread)
+func ApplyToThread(ports []uint16, read []string) error {
+	return apply(ports, read, thisThread)
 }
 
 type restrict func(trap, a1, a2, a3 uintptr) error
 
-func apply(ports []uint16, on restrict) error {
+func apply(ports []uint16, read []string, on restrict) error {
 	// Landlock and seccomp need this, and a setuid program could not give
 	// the process anything any more
 	if err := on(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); err != nil {
 		return fmt.Errorf("set no new privileges: %w", err)
 	}
 
-	if err := landlock(ports, on); err != nil {
+	if err := landlock(ports, read, on); err != nil {
 		return err
 	}
 
@@ -92,10 +93,10 @@ func thisThread(trap, a1, a2, a3 uintptr) error {
 	return nil
 }
 
-// landlock leaves reading the resolver files and connecting to the ports,
-// and to the DNS port, because the resolver falls back to TCP for large
-// answers.
-func landlock(ports []uint16, on restrict) error {
+// landlock leaves reading the resolver files and the folders of read, and
+// connecting to the ports, and to the DNS port, because the resolver falls
+// back to TCP for large answers.
+func landlock(ports []uint16, read []string, on restrict) error {
 	abi, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
 	if errno != 0 || abi < abiNetwork {
 		return errNoLandlock
@@ -119,7 +120,7 @@ func landlock(ports []uint16, on restrict) error {
 
 	defer func() { _ = unix.Close(int(ruleset)) }()
 
-	for _, dir := range readableDirs() {
+	for _, dir := range append(readableDirs(), read...) {
 		if err := allowReading(int(ruleset), dir); err != nil {
 			return err
 		}

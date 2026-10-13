@@ -28,21 +28,21 @@ import (
 // and then tries one thing after another, reporting each as a line
 // "name: ok", "name: EACCES", "name: EPERM" or "name: <error>".
 func TestMain(m *testing.M) {
-	if len(os.Args) > 4 && os.Args[1] == "probe" {
-		os.Exit(probe(os.Args[2], os.Args[3], os.Args[4]))
+	if len(os.Args) > 5 && os.Args[1] == "probe" {
+		os.Exit(probe(os.Args[2], os.Args[3], os.Args[4], os.Args[5]))
 	}
 
 	os.Exit(m.Run())
 }
 
-func probe(allowedPort, otherPort, file string) int {
+func probe(allowedPort, otherPort, file, readable string) int {
 	// the test binary is built with cgo for the race detector, so only the
 	// calling thread can be confined
 	runtime.LockOSThread()
 
 	allowed, _ := strconv.Atoi(allowedPort)
 
-	if err := confine.ApplyToThread([]uint16{uint16(allowed)}); err != nil { //nolint:gosec // a port fits
+	if err := confine.ApplyToThread([]uint16{uint16(allowed)}, []string{readable}); err != nil { //nolint:gosec // a port fits
 		fmt.Println("apply:", err)
 
 		return 1
@@ -57,7 +57,20 @@ func probe(allowedPort, otherPort, file string) int {
 	_, err = os.ReadFile(file) //nolint:gosec // the path comes from the test
 	report("read own file", err)
 
-	created, err := os.Create(file + ".new") //nolint:gosec // the probe tries what the confinement should stop
+	_, err = os.ReadDir(readable)
+	report("list a readable folder", err)
+
+	_, err = os.ReadFile(filepath.Join(readable, "justfile")) //nolint:gosec // the probe tries what the confinement should stop
+	report("read a file of a readable folder", err)
+
+	_, err = os.ReadFile(filepath.Join(readable, "out")) //nolint:gosec // the probe tries what the confinement should stop
+	report("read through a link out of a readable folder", err)
+
+	created, err := os.Create(filepath.Join(readable, "new")) //nolint:gosec // the probe tries what the confinement should stop
+	report("create a file in a readable folder", err)
+	closeIfOpen(created, err)
+
+	created, err = os.Create(file + ".new") //nolint:gosec // the probe tries what the confinement should stop
 	report("create a file", err)
 	closeIfOpen(created, err)
 
@@ -155,12 +168,25 @@ var probeOnce = sync.OnceValues(func() (map[string]string, error) {
 		return nil, err
 	}
 
+	readable := filepath.Join(dir, "readable")
+	if err := os.Mkdir(readable, 0o700); err != nil {
+		return nil, err
+	}
+
+	if err := os.WriteFile(filepath.Join(readable, "justfile"), []byte("x"), 0o600); err != nil {
+		return nil, err
+	}
+
+	if err := os.Symlink(file, filepath.Join(readable, "out")); err != nil {
+		return nil, err
+	}
+
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.Command(self, "probe", port(allowed), port(other), file) //nolint:gosec // the test runs itself
+	cmd := exec.Command(self, "probe", port(allowed), port(other), file, readable) //nolint:gosec // the test runs itself
 	cmd.Stderr = os.Stderr
 
 	out, err := cmd.Output()
@@ -200,6 +226,17 @@ func TestApplyLeavesTheResolverFilesReadable(t *testing.T) {
 	// assert
 	assert.Equal(t, "ok", report["read /etc/hosts"])
 	assert.Equal(t, "ok", report["read /etc/resolv.conf"])
+}
+
+func TestApplyLeavesTheFoldersItIsGivenReadableButNotWritable(t *testing.T) {
+	// act
+	report := results(t)
+
+	// assert
+	assert.Equal(t, "ok", report["list a readable folder"])
+	assert.Equal(t, "ok", report["read a file of a readable folder"])
+	assert.Equal(t, "EACCES", report["read through a link out of a readable folder"])
+	assert.Equal(t, "EACCES", report["create a file in a readable folder"])
 }
 
 func TestApplyTakesTheRestOfTheFileSystemAway(t *testing.T) {
@@ -243,7 +280,7 @@ func TestApplyRefusesAProgramBuiltWithCgo(t *testing.T) {
 	needsLandlock(t)
 
 	// act
-	err := confine.Apply(nil)
+	err := confine.Apply(nil, nil)
 
 	// assert
 	require.ErrorContains(t, err, "cgo")

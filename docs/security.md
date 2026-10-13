@@ -193,16 +193,24 @@ also filters its own syscalls. `aibox run --no-sandbox` runs it without
 bubblewrap, for debugging.
 
 Once QEMU runs, aibox locks itself down too. It gives up the right to gain
-new privileges. Landlock rules only let it read `/etc` for DNS and connect
-to the ports on the allow list. A seccomp filter blocks ptrace, mount,
-namespace and similar syscalls. This needs Linux 6.7 or newer.
+new privileges. Landlock rules only let it read `/etc` for DNS, the project
+and the VM's home, and connect to the ports on the allow list. A seccomp
+filter blocks ptrace, mount, namespace and similar syscalls. This needs
+Linux 6.7 or newer.
 
 On macOS aibox locks itself down with Seatbelt, the macOS sandbox, once the
 VM runs. From then on it reads the contents of no files except the
-resolver's, though it can still see the metadata of all files. It only
-connects over TCP to the ports on the allow list, and to the system's name
-service. It can't start programs or read or signal other processes. Files it
-opened before, like the logs, and the VM keep working.
+resolver's, the project's and those in the VM's home, though it can still
+see the metadata of all files. It only connects over TCP to the ports on
+the allow list, and to the system's name service. It can't start programs
+or read or signal other processes. Files it opened before, like the logs,
+and the VM keep working.
+
+aibox reads the project and the VM's home when the session ends. That's how
+it tells you which files the VM changed and how to go on with the session.
+The VM already sees both folders. On both systems the sandbox checks where
+a path really leads, so a symlink the VM left there can't lead a read
+outside. aibox can't write to either folder.
 
 Before the VM starts, aibox works in folders an earlier VM could write. git
 reads the project's `.git` for your identity and for the bundle of a task.

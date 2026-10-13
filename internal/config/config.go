@@ -651,8 +651,8 @@ allow:
 #   - 8080:3000
 
 # Files and folders of the project that programs on this machine run, which
-# aibox run checks besides .git/config, .git/hooks, .envrc, lefthook.yml,
-# justfile, package.json, .idea and .vscode. When the session ends, aibox
+# aibox run checks besides the ones it always checks, like .git/config,
+# .git/hooks, .envrc, package.json and .idea. When the session ends, aibox
 # tells you which of them the VM may have changed. For example:
 # watch:
 #   - Makefile

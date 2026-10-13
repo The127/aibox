@@ -473,10 +473,10 @@ VM opens.
 ## watch
 
 When an `aibox run` session ends, aibox tells you which files the VM may
-have changed that programs on your machine run without asking. It always
-checks `.git/config`, `.git/hooks`, `.envrc`, `lefthook.yml`, `justfile`,
-`package.json`, `.idea` and `.vscode`. If your project has more of these,
-add them:
+have changed that programs on your machine run without asking, like
+`.git/config` or `.envrc`. It always checks
+[these files](what-the-vm-writes.md#what-aibox-checks-for-you). If your
+project has more of them, add them:
 
 ```yaml
 watch:

@@ -25,8 +25,13 @@ var watched = []string{
 	".git/config",
 	".git/hooks",
 	".envrc",
+	".husky",
 	"lefthook.yml",
+	"lefthook.yaml",
+	".lefthook.yml",
 	"justfile",
+	"Justfile",
+	".justfile",
 	"package.json",
 	".idea",
 	".vscode",
@@ -64,25 +69,47 @@ func takeSnapshot(project string, paths []string) snapshot {
 		shot.add(root, ".git")
 	}
 
-	for _, name := range paths {
-		if link, ok := linkAbove(root, name); ok {
-			shot.add(root, link)
-
-			continue
-		}
-
+	for _, name := range distinct(root, paths) {
 		shot.add(root, name)
 	}
 
 	return shot
 }
 
-// linkAbove is the first folder on the way to the name that is a link,
+// distinct are the paths without the ones that lead to a file an earlier
+// one leads to, like justfile and Justfile where the file system tells no
+// case apart. A path whose way leads through a link becomes that link,
 // which os.Root would follow.
+func distinct(root *os.Root, paths []string) []string {
+	var names []string
+
+	var files []fs.FileInfo
+
+	for _, name := range paths {
+		if link, ok := linkAbove(root, name); ok {
+			name = link
+		}
+
+		info, err := root.Lstat(filepath.FromSlash(name))
+		if err == nil {
+			if slices.ContainsFunc(files, func(file fs.FileInfo) bool { return os.SameFile(file, info) }) {
+				continue
+			}
+
+			files = append(files, info)
+		}
+
+		names = append(names, name)
+	}
+
+	return names
+}
+
+// linkAbove is the first folder on the way to the name that is a link.
 func linkAbove(root *os.Root, name string) (string, bool) {
 	parts := strings.Split(name, "/")
 	for i := 1; i < len(parts); i++ {
-		folder := strings.Join(parts[:i], "/")
+		folder := path.Join(parts[:i]...)
 
 		info, err := root.Lstat(filepath.FromSlash(folder))
 		if err == nil && info.Mode()&fs.ModeSymlink != 0 {

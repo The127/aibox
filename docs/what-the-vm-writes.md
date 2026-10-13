@@ -36,9 +36,18 @@ aibox: the VM may have changed files that programs on this machine run. Read the
   added      .git/hooks/pre-commit
 ```
 
-It checks `.git/config`, `.git/hooks`, `.envrc`, `lefthook.yml`, `justfile`,
-`package.json`, `.idea` and `.vscode`. Add the files your project runs on
-top of these, like a `Makefile`, with [watch](config.md#watch).
+It checks these files and folders:
+
+- `.git/config` and `.git/hooks` for git
+- `.husky` for husky
+- `.envrc` for direnv
+- `lefthook.yml`, `lefthook.yaml` and `.lefthook.yml` for lefthook
+- `justfile`, `Justfile` and `.justfile` for just
+- `package.json` for npm
+- `.idea` and `.vscode` for your IDE
+
+Add the files your project runs on top of these, like a `Makefile`, with
+[watch](config.md#watch).
 
 The check doesn't stop anything, it only tells you. It also can't tell
 whether the VM or a program on your machine changed a file. Your IDE
@@ -64,6 +73,10 @@ Right before the VM starts, aibox records every file under the paths on
 the list, with its content and its permissions. When the VM stops, it does
 the same again and prints what was added, changed or removed. Making a hook
 executable counts as a change, since git only runs a hook that is.
+
+A name finds a file the way your file system finds it. On macOS and
+Windows, which tell no case apart, `justfile` also finds a `JUSTFILE`.
+When two names lead to the same file, aibox checks it once.
 
 aibox doesn't follow links. A link on the list, or on the way to an entry
 of `watch`, counts as a change itself when it appears. A file aibox can't

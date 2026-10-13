@@ -198,6 +198,12 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	spec.Task = t.share
 	spec.ConsoleLog = filepath.Join(t.dir, "console.log")
 
+	if r.config.Mise {
+		if spec.Mise, err = taskMise(host, cwd, base, r.project); err != nil {
+			return err
+		}
+	}
+
 	// the targets of this task, apart from those of other runs
 	network := proxy.NewLog(t.proxyLog)
 	spec.Proxy.OnConnected, spec.Proxy.OnRefused, spec.Proxy.OnClosed = network.Connected, network.Refused, network.Closed
@@ -962,6 +968,13 @@ func readAll(file *os.File) ([]byte, error) {
 // of the folder of a task, only with core.longpaths; git elsewhere has no
 // such option and ignores it.
 func gitOutput(dir, writable string, args ...string) (string, error) {
+	out, err := gitBytes(dir, writable, args...)
+
+	return strings.TrimSpace(string(out)), err
+}
+
+// gitBytes is gitOutput without the trimming, for the content of a file.
+func gitBytes(dir, writable string, args ...string) ([]byte, error) {
 	cmd := fence.Command(writable, "git", append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.longpaths=true"}, args...)...)
 	cmd.Dir = dir
 
@@ -970,8 +983,8 @@ func gitOutput(dir, writable string, args ...string) (string, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	return out, nil
 }

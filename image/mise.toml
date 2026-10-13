@@ -1,0 +1,5 @@
+# The config of mise for the whole VM.
+[settings]
+# mise reads the config of the project without asking. You approve it on
+# your machine before aibox installs from it.
+trusted_config_paths = ["/project"]

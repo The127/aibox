@@ -216,6 +216,7 @@ func TestGuestWordsTellTheGuestItsSettingsPortsAndMounts(t *testing.T) {
 	m.Shell = true
 	m.Resume = "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"
 	m.Port = true
+	m.Mise = true
 	m.ProxyPort = 1025
 	m.TerminalPort = 1024
 	m.Shares = append(m.Shares, vm.Share{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"})
@@ -225,7 +226,7 @@ func TestGuestWordsTellTheGuestItsSettingsPortsAndMounts(t *testing.T) {
 	words := m.GuestWords()
 
 	// assert
-	assert.Equal(t, []string{"aibox.shell", "aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "aibox.port", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go", "aibox.loopback=3000,64422"}, words)
+	assert.Equal(t, []string{"aibox.shell", "aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "aibox.port", "aibox.mise", "aibox.proxy=1025", "aibox.terminal=1024", "aibox.mount=mount0:/opt/go", "aibox.loopback=3000,64422"}, words)
 }
 
 func TestCheckSessionIDTakesALowercaseUUID(t *testing.T) {

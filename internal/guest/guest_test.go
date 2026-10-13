@@ -41,6 +41,7 @@ func TestParseCmdline(t *testing.T) {
 		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
 		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
 		"console=hvc0 aibox.task":              {Console: "/dev/hvc0", Task: true},
+		"console=hvc0 aibox.mise":              {Console: "/dev/hvc0", Mise: true},
 		"console=hvc0 aibox.port":              {Console: "/dev/hvc0", Port: true},
 		"console=hvc0 aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e": {
 			Console: "/dev/hvc0",
@@ -147,6 +148,42 @@ func TestCommandRunsClaudeCodeAsTheUser(t *testing.T) {
 	assert.Same(t, tty, cmd.Stdin)
 	assert.Same(t, tty, cmd.Stdout)
 	assert.Same(t, tty, cmd.Stderr)
+}
+
+func TestCommandInstallsTheToolsOfMiseBeforeClaudeCode(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Mise: true}, tty, session.Request{Term: "xterm"})
+
+	// assert
+	assert.Equal(t, []string{
+		"/usr/bin/bash", "-c", `(export "${@:1:4}"; exec /usr/bin/mise install); shift 4; exec "$@"`, "/usr/bin/bash",
+		"MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml",
+		"MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=.tool-versions",
+		"MISE_GLOBAL_CONFIG_FILE=/etc/mise/none.toml",
+		"MISE_YES=1",
+		"/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md",
+	}, cmd.Args)
+	assert.Contains(t, cmd.Env, "PATH=/home/user/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin")
+}
+
+func TestTheInstallOfMiseRunsTheCommandHoweverItWent(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+	cmd := guest.Command(guest.Options{Console: tty.Name(), Mise: true}, tty, session.Request{Term: "xterm"})
+	script := strings.ReplaceAll(cmd.Args[2], "/usr/bin/mise", "false")
+	out := filepath.Join(t.TempDir(), "out")
+
+	// act
+	err := exec.Command("bash", "-c", script, "bash", "A=1", "B=2", "C=3", "D=4", "sh", "-c", `echo "$0 $A" > "$1"`, "ran", out).Run() //nolint:gosec // the test's own script
+
+	// assert
+	require.NoError(t, err)
+	content, err := os.ReadFile(out) //nolint:gosec // the test's own file
+	require.NoError(t, err)
+	assert.Equal(t, "ran \n", string(content))
 }
 
 func TestCommandPointsClaudeCodeAtTheProxy(t *testing.T) {

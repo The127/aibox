@@ -128,6 +128,11 @@ aibox stores and passes on your login, which
 [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
 don't allow a tool like aibox to do.
 
+The VM has no compiler, no Node and no Python. If your project has a
+`mise.toml` or `.tool-versions`, set `mise: true` in the config. aibox then
+installs those tools in the VM before Claude Code starts. It shows you the
+files and asks first. See [mise](https://the127.github.io/aibox/config.html#mise).
+
 When a tool still can't reach a host, the error names it, and the preset
 that allows it if there is one. To allow more, run:
 

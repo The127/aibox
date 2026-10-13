@@ -281,6 +281,9 @@ type Config struct {
 	// IDE says whether Claude Code in the VM may use the IDE that has the
 	// project open.
 	IDE bool `yaml:"ide"`
+	// Mise says whether the VM installs the tools the project's mise.toml
+	// and .tool-versions name, with mise, before the command starts.
+	Mise bool `yaml:"mise"`
 	// Clipboard says whether the person pastes from the clipboard of the
 	// host with Ctrl+V: an image Claude Code in the VM may read, or text
 	// aibox types. Nil means they do.
@@ -583,6 +586,13 @@ allow:
 # like VS Code: the code you select, diffs in the editor and the errors it
 # reports, for files in the project. It is off unless you turn it on:
 # ide: true
+
+# Whether the VM installs the tools your project's mise.toml and
+# .tool-versions name, like Go or Node, with mise, before Claude Code
+# starts. aibox shows you the files and asks before it uses new or changed
+# ones. The downloads need their hosts on the allow list. It is off unless
+# you turn it on:
+# mise: true
 
 # Whether Ctrl+V pastes from your clipboard: an image, which the VM can
 # read only right after you press the key, or text, which aibox types as

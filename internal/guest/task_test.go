@@ -189,6 +189,7 @@ type taskFixture struct {
 	out       string
 	home      string
 	claude    string
+	mise      string
 	base      string
 	processes *taskProcesses
 	progress  bytes.Buffer
@@ -258,6 +259,8 @@ func (f *taskFixture) command(name string, args ...string) *exec.Cmd {
 		name = f.claude
 	case guest.GitPath:
 		name = "git"
+	case guest.MisePath:
+		name = f.mise
 	}
 
 	cmd := exec.Command(name, args...) //nolint:gosec // the programs are the test's own
@@ -771,4 +774,60 @@ func tcpPair(t *testing.T) (net.Conn, net.Conn) {
 	})
 
 	return accepted, dialed
+}
+
+// withMise puts the script in place of mise.
+func (f *taskFixture) withMise(script string) {
+	f.mise = filepath.Join(f.t.TempDir(), "mise")
+	require.NoError(f.t, os.WriteFile(f.mise, []byte("#!/bin/sh\n"+script), 0o755)) //nolint:gosec // the script must run
+}
+
+func (f *taskFixture) runWithMise() (int, results) {
+	var out bytes.Buffer
+
+	code := guest.RunTaskWithMise(f.processes, f.command, f.input, f.out, &out, &f.progress)
+
+	return code, readResults(f.t, &out)
+}
+
+func TestTaskInstallsTheToolsOfMiseBeforeClaudeCode(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `
+test -f "$HOME/installed"
+echo used >> README
+git add README
+git -c user.name=Claude -c user.email=claude@example.com commit --quiet --message "use the tools"
+`)
+	f.withMise(`echo "$1 $MISE_OVERRIDE_CONFIG_FILENAMES $MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES" > "$HOME/installed"`)
+
+	// act
+	code, r := f.runWithMise()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	assert.Empty(t, r.result.Warnings)
+	assert.Contains(t, f.progress.String(), "installing the tools of mise.toml and .tool-versions")
+
+	installed, err := os.ReadFile(filepath.Join(f.home, "installed"))
+	require.NoError(t, err)
+	assert.Equal(t, "install mise.toml .tool-versions\n", string(installed))
+}
+
+func TestTaskRunsClaudeCodeWhenTheInstallOfMiseFails(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, `
+echo fixed > README
+git add README
+git -c user.name=Claude -c user.email=claude@example.com commit --quiet --message "fix the README"
+`)
+	f.withMise("echo no network >&2\nexit 3\n")
+
+	// act
+	code, r := f.runWithMise()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, []string{"install the tools: mise install ended with exit code 3"}, r.result.Warnings)
+	assert.Contains(t, f.progress.String(), "no network")
+	assert.Equal(t, "fix the README by Claude\n", f.fetch(r))
 }

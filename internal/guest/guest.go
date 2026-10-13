@@ -38,6 +38,7 @@ const (
 	// from the one of the image and the part of the host it runs on
 	prompt   = "/run/aibox/prompt.md"
 	bash     = "/usr/bin/bash"
+	mise     = "/usr/bin/mise"
 	userName = "user"
 
 	// the second disk is mounted outside the folders anyone looks at, and
@@ -101,7 +102,8 @@ const imagePath = "/usr/local/bin:/usr/bin:/bin"
 // host that are mounted read-only where the host says. Loopback are the
 // ports on the loopback of the host the VM may reach through the proxy.
 // Task runs a task from the task share unattended, in place of Claude Code
-// on a terminal. HyperV says the VM runs on Hyper-V, which shares the
+// on a terminal. Mise installs the tools of the project with mise before
+// the command starts. HyperV says the VM runs on Hyper-V, which shares the
 // folders of the host over Plan 9 instead of virtio-fs.
 type Options struct {
 	Console      string
@@ -109,6 +111,7 @@ type Options struct {
 	Resume       string
 	Port         bool
 	Task         bool
+	Mise         bool
 	HyperV       bool
 	ProxyPort    uint32
 	TerminalPort uint32
@@ -218,11 +221,24 @@ var ErrNoSCSIDisk = errors.New("not one SCSI disk")
 // aibox.
 var ErrUsedDisk = errors.New("a task needs a blank state disk")
 
-// localBin is made on the state disk, cache is where caches go.
+// localBin is made on the state disk, cache is where caches go, and
+// miseData where mise keeps the tools it installs.
 const (
 	localBin = "/usr/local/bin"
 	cache    = home + "/.cache"
+	miseData = home + "/.local/share/mise"
 )
+
+// miseInstall are the variables of the install before the command starts.
+// It reads only the two files of the project the host approved, and no
+// config of the home, which the VM could have changed. The global config is
+// a file that never exists.
+var miseInstall = []string{
+	"MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml",
+	"MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=.tool-versions",
+	"MISE_GLOBAL_CONFIG_FILE=/etc/mise/none.toml",
+	"MISE_YES=1",
+}
 
 type stateDir struct{ dir, target string }
 
@@ -233,6 +249,7 @@ var stateDirs = []stateDir{
 	// overlayfs does not work on top of virtio-fs, so container images need
 	// a real disk
 	{"containers", home + "/.local/share/containers"},
+	{"mise", miseData},
 }
 
 // The command runs in a cgroup of its own below one that belongs to the
@@ -338,6 +355,8 @@ func ParseCmdline(cmdline string) (Options, error) {
 			}
 		case "aibox.task":
 			options.Task = true
+		case "aibox.mise":
+			options.Mise = true
 		case "aibox.port":
 			options.Port = true
 		case "aibox.hyperv":
@@ -419,6 +438,15 @@ func Command(options Options, terminal *os.File, request session.Request) *exec.
 		term = "dumb"
 	}
 
+	// the install shows on the terminal, and the command starts however
+	// it went
+	if options.Mise {
+		count := strconv.Itoa(len(miseInstall))
+		script := `(export "${@:1:` + count + `}"; exec ` + mise + ` install); shift ` + count + `; exec "$@"`
+		args = slices.Concat([]string{"-c", script, bash}, miseInstall, []string{name}, args)
+		name = bash
+	}
+
 	cmd := userCommand(options, request, term, name, args...)
 
 	if terminal != nil {
@@ -483,9 +511,12 @@ func takeVariable(env []string, name string) (string, []string) {
 // is left out, like the host does, in case another client sends one.
 func ownVariables(options Options, term, hostPath string) []string {
 	path := imagePath
+	if options.Mise {
+		path = miseData + "/shims:" + imagePath
+	}
 
 	if folders := slices.DeleteFunc(strings.Split(hostPath, ":"), notAFolder); len(folders) > 0 {
-		path = strings.Join(folders, ":") + ":" + imagePath
+		path = strings.Join(folders, ":") + ":" + path
 	}
 
 	env := []string{

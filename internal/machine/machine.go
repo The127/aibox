@@ -79,6 +79,7 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		Shell:        spec.Shell,
 		Resume:       spec.Resume,
 		Task:         spec.Task != "",
+		Mise:         spec.Mise,
 		Loopback:     spec.Loopback,
 	}, nil
 }

@@ -18,6 +18,7 @@ const HaltCommand = haltCommand
 const (
 	ClaudePath = claude
 	GitPath    = gitPath
+	MisePath   = mise
 )
 
 // ClipboardToolAt is ClipboardTool with the clipboard of the host at base.
@@ -28,6 +29,13 @@ var ClipboardToolAt = clipboardTool
 // The git steps before and after Claude Code have gitTimeout each.
 func RunTask(sys Processes, command func(string, ...string) *exec.Cmd, input, out string, gitTimeout time.Duration, results, progress io.Writer) int {
 	t := &taskRun{sys: sys, command: command, input: input, out: out, progress: progress, gitTimeout: gitTimeout}
+
+	return t.run(results)
+}
+
+// RunTaskWithMise is RunTask with the install of mise before Claude Code.
+func RunTaskWithMise(sys Processes, command func(string, ...string) *exec.Cmd, input, out string, results, progress io.Writer) int {
+	t := &taskRun{sys: sys, command: command, input: input, out: out, progress: progress, gitTimeout: gitTimeout, mise: true}
 
 	return t.run(results)
 }

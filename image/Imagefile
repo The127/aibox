@@ -18,6 +18,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # because the disk of a project is mounted over /usr/local.
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/bin/claude
+# mise installs the toolchains a project names, with the mise setting of
+# the config. Its static build needs no libraries.
+RUN curl -fsSLo /usr/bin/mise https://github.com/jdx/mise/releases/download/v2026.10.9/mise-v2026.10.9-linux-x64-musl && \
+    echo "77fbb428fff656ec0bbacb99d7ed5b038a0e09a9cc0168909fcf3da56b5d51e0  /usr/bin/mise" | sha256sum -c - && \
+    chmod 0755 /usr/bin/mise
 
 RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
 RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
@@ -42,6 +47,8 @@ COPY --from=tools /out/git/ /
 COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
 COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
+COPY --from=tools /usr/bin/mise /usr/bin/mise
+COPY mise.toml /etc/mise/config.toml
 COPY --from=tools /out/mke2fs/ /
 COPY --from=tools /etc/mke2fs.conf /etc/
 # lddtree drops the setuid bit, which the two need to map the subuid

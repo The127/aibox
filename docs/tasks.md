@@ -53,8 +53,10 @@ and `aibox run` never see the home or the disk, so you can run several tasks
 at once.
 
 The project config applies like it does for `aibox run`: `allow`, `mounts`,
-`skills`, `agents`, `commands`, `path`, `env`, `git`, `memory`, `cpus` and
-`disk`. The task gets
+`skills`, `agents`, `commands`, `path`, `env`, `git`, `memory`, `cpus`,
+`disk` and `mise`. With [`mise`](config.md#mise), a task installs the tools
+only if you approved the mise files of its commit in an `aibox run`. The
+task gets
 its own `proxy.log`. It doesn't write to the project's.
 
 ## Before you run a task

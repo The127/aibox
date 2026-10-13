@@ -31,7 +31,7 @@ jobs:
       - name: install bubblewrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap strace
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # the virtiofsd of Ubuntu 24.04 has no --translate-uid and its QEMU no
       # -accel kvm,device=, which aibox both needs, so they come from Nix
@@ -61,6 +61,16 @@ jobs:
           printf 'allow:\n  - preset:github\n' > ~/.aibox/config.yaml
       - name: time the download on the runner itself
         run: time git clone --bare --depth 1 https://github.com/torvalds/linux "$RUNNER_TEMP/linux-host.git"
+      # QEMU from Nix exits at once in the sandbox, with nothing on its
+      # output. This only looks for why, the checks run without the sandbox
+      - name: try the sandbox and trace why QEMU exits
+        continue-on-error: true
+        run: |
+          mkdir -p ~/sandboxed
+          cd ~/sandboxed
+          (echo exit; sleep 10; while pgrep -x aibox > /dev/null; do sleep 2; done) |
+            script -q -e -c "strace -f -o $RUNNER_TEMP/strace.log $RUNNER_TEMP/aibox run --shell --image $RUNNER_TEMP/image" /dev/null || true
+          grep -E 'execve\(|exit_group|EACCES|EPERM|ENOENT.*(lib|nix)|killed|SIGSYS' "$RUNNER_TEMP/strace.log" | grep -v 'resumed>' | tail -60
       - name: boot the VM and run the checks in its shell
         run: |
           mkdir -p ~/project
@@ -76,12 +86,12 @@ jobs:
           # only when its input does, so the input stays open until aibox
           # is gone
           (cat "$RUNNER_TEMP/commands"; sleep 10; while pgrep -x aibox > /dev/null; do sleep 2; done) |
-            script -q -e -c "$RUNNER_TEMP/aibox run --shell --image $RUNNER_TEMP/image" "$RUNNER_TEMP/session.log" > /dev/null
+            script -q -e -c "$RUNNER_TEMP/aibox run --shell --no-sandbox --image $RUNNER_TEMP/image" "$RUNNER_TEMP/session.log" > /dev/null
       - name: show the results
         if: always()
         run: |
           echo '--- console.log'
-          head -5 ~/.aibox/projects/*/console.log || true
+          head -5 ~/.aibox/projects/-home-runner-project/console.log || true
           echo '--- the session, without the terminal test output'
           grep -a -v -E '^[A-Za-z0-9+/=]{60,}' "$RUNNER_TEMP/session.log" | tail -60 || true
           grep -a -q MARK-clone-2 "$RUNNER_TEMP/session.log"

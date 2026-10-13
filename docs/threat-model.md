@@ -90,7 +90,7 @@ Everything the VM can reach on your machine goes through one of these.
 | read a file outside the project | The VM only sees its shares. |
 | get aibox to write a file outside through a symlink in the project or its home | aibox works in those folders in a helper that the kernel lets create, change and delete files only there. On Linux it can still change the permissions and owner of a file outside. See [The host side](security.md#the-host-side). |
 | give itself more hosts, secrets or branches | The config isn't in the project, and aibox reads it once when it starts. |
-| get tools of its choice installed at the next start | With `mise: true`, aibox shows you changed mise files and asks before it installs from them. A task only installs from files you approved. |
+| change what mise installs at the next start | With `mise: true`, aibox shows you a changed `mise.toml` or `.tool-versions` and asks before it installs from it. A task only installs from files you approved. Files they point to and mise's files on the state disk aren't covered, see below. |
 | write to a read-only mount | Your machine enforces read-only, not the VM. |
 | break out through a bug in its kernel | The VM has its own kernel, so a bug in it gives the attacker nothing on your machine. The kernel has no modules, no network drivers and no `bpf()`. The attacker then has to break the hypervisor too. |
 | break out through a bug in the hypervisor | On Linux QEMU runs in bubblewrap with no network, only `LD_LIBRARY_PATH` in its environment and no writable file system, and filters its own syscalls. On macOS the VM runs in a Virtualization.framework process, which aibox can't put in a sandbox of its own. |
@@ -130,7 +130,8 @@ has the details.
   and the authors of the commits come from the VM.
 - What the VM leaves for the next `aibox run`. The VM's home folder and
   state disk stay between runs, so a steered session can leave something
-  behind for the next one, like a line in `~/.claude/CLAUDE.md`.
+  behind for the next one, like a line in `~/.claude/CLAUDE.md`, a script
+  that your approved `mise.toml` runs, or a tool on the state disk.
   `aibox projects reset --logout` clears both. See
   [Starting over](usage.md#starting-over). Tasks get a new home and state
   disk each time.

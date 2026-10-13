@@ -145,6 +145,9 @@ var presets = map[string][]string{
 	"pypi":   {"pypi.org", "files.pythonhosted.org"},
 	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"},
 	"github": {"github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"},
+	// mise looks up the versions of most tools on GitHub and downloads many
+	// of them from its releases
+	"mise": {"github.com", "api.github.com", "*.githubusercontent.com"},
 	// the layers of an image come from production.cloudfront.docker.com
 	"docker": {"registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudfront.docker.com"},
 }
@@ -157,6 +160,7 @@ var markers = map[string][]string{
 	"npm":   {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"},
 	"pypi":  {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile", "uv.lock", "poetry.lock"},
 	"cargo": {"Cargo.toml", "Cargo.lock"},
+	"mise":  {"mise.toml", ".tool-versions"},
 }
 
 // titles are the names of the tools of the presets markers knows, as
@@ -166,6 +170,7 @@ var titles = map[string]string{
 	"npm":   "npm",
 	"pypi":  "Python",
 	"cargo": "Rust",
+	"mise":  "mise",
 }
 
 func presetNames() []string {

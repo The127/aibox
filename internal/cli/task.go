@@ -199,9 +199,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	spec.ConsoleLog = filepath.Join(t.dir, "console.log")
 
 	if r.config.Mise {
-		if spec.Mise, err = taskMise(host, cwd, base, r.project); err != nil {
-			return err
-		}
+		spec.Mise = taskMise(host, cwd, base, r.project)
 	}
 
 	// the targets of this task, apart from those of other runs

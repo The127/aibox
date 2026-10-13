@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/the127/aibox/internal/project"
@@ -21,14 +21,7 @@ import (
 // VM, in the order they are hashed. The VM reads no other.
 var miseFiles = []string{"mise.toml", ".tool-versions"}
 
-// maxMiseBytes is the most aibox reads of a mise file. The VM can write the
-// file, and aibox reads it whole and shows it on the terminal.
-const maxMiseBytes = 1 << 20
-
-var (
-	errMiseLink  = errors.New("is no plain file")
-	errMiseLarge = fmt.Errorf("is larger than %d bytes", maxMiseBytes)
-)
+var errMiseLink = errors.New("is no plain file")
 
 // miseFile is a mise file of the project and what it holds.
 type miseFile struct {
@@ -58,7 +51,7 @@ func readMiseFiles(dir string) ([]miseFile, error) {
 			return nil, fmt.Errorf("%s %w", name, errMiseLink)
 		}
 
-		content, err := readLimited(path)
+		content, err := os.ReadFile(path) //nolint:gosec // a file of the project
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
@@ -69,33 +62,15 @@ func readMiseFiles(dir string) ([]miseFile, error) {
 	return files, nil
 }
 
-func readLimited(path string) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // a file of the project
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() { _ = f.Close() }()
-
-	content, err := io.ReadAll(io.LimitReader(f, maxMiseBytes+1))
-	if err != nil {
-		return nil, err
-	}
-
-	if len(content) > maxMiseBytes {
-		return nil, errMiseLarge
-	}
-
-	return content, nil
-}
-
 // readCommitMiseFiles reads the mise files of the commit, as the VM of a
 // task checks it out. git runs in the helper and writes nothing.
 func readCommitMiseFiles(dir, commit string) ([]miseFile, error) {
 	var files []miseFile
 
 	for _, name := range miseFiles {
-		entry, err := gitOutput(dir, "", "ls-tree", "-l", "--end-of-options", commit, "--", name)
+		// the VM of a task checks out the whole repository, so the files
+		// are the ones at its top, wherever the task started
+		entry, err := gitOutput(dir, "", "ls-tree", "--full-tree", "--end-of-options", commit, "--", name)
 		if err != nil {
 			return nil, err
 		}
@@ -104,14 +79,10 @@ func readCommitMiseFiles(dir, commit string) ([]miseFile, error) {
 			continue
 		}
 
-		// mode type object size, a tab and the name
+		// mode type object, a tab and the name
 		fields := strings.Fields(entry)
-		if len(fields) < 4 || (fields[0] != "100644" && fields[0] != "100755") {
+		if len(fields) < 3 || (fields[0] != "100644" && fields[0] != "100755") {
 			return nil, fmt.Errorf("%s %w", name, errMiseLink)
-		}
-
-		if size, err := strconv.Atoi(fields[3]); err != nil || size > maxMiseBytes {
-			return nil, fmt.Errorf("%s %w", name, errMiseLarge)
 		}
 
 		content, err := gitBytes(dir, "", "cat-file", "blob", fields[2])
@@ -127,13 +98,15 @@ func readCommitMiseFiles(dir, commit string) ([]miseFile, error) {
 
 // hashMiseFiles is the hash the person approves: the names and the content
 // of the files, each with its length, so that no two sets of files share
-// one.
+// one. A CRLF counts as a newline, since git may check a file out with
+// either, and a task reads it from the commit.
 func hashMiseFiles(files []miseFile) string {
 	h := sha256.New()
 
 	for _, f := range files {
-		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", f.name, len(f.content))
-		_, _ = h.Write(f.content)
+		content := bytes.ReplaceAll(f.content, []byte("\r\n"), []byte("\n"))
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", f.name, len(content))
+		_, _ = h.Write(content)
 	}
 
 	return hex.EncodeToString(h.Sum(nil))
@@ -152,9 +125,13 @@ func approvedMise(p project.Project, files []miseFile) bool {
 // or changed ones are shown, and go in only when the person says yes,
 // which aibox then keeps.
 func approveMise(ctx context.Context, deps dependencies, dir string, p project.Project) (bool, error) {
+	// the VM can put a link there, which must not keep the project from
+	// starting
 	files, err := readMiseFiles(dir)
 	if err != nil {
-		return false, fmt.Errorf("mise: %w", err)
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: starting without the tools of mise: %v\n", err)
+
+		return false, nil
 	}
 
 	if len(files) == 0 {
@@ -195,22 +172,24 @@ func approveMise(ctx context.Context, deps dependencies, dir string, p project.P
 
 // taskMise says whether the VM of a task installs the tools of the commit.
 // A task can't ask, so only files the person approved in aibox run go in.
-func taskMise(out io.Writer, dir, commit string, p project.Project) (bool, error) {
+func taskMise(out io.Writer, dir, commit string, p project.Project) bool {
 	files, err := readCommitMiseFiles(dir, commit)
 	if err != nil {
-		return false, fmt.Errorf("mise: %w", err)
+		_, _ = fmt.Fprintf(out, "the task starts without the tools of mise: %v\n", err)
+
+		return false
 	}
 
 	switch {
 	case len(files) == 0:
 		_, _ = fmt.Fprintf(out, "mise is on, but the commit has no %s\n", strings.Join(miseFiles, " or "))
 
-		return false, nil
+		return false
 	case !approvedMise(p, files):
 		_, _ = fmt.Fprintf(out, "the task starts without the tools of mise: approve the mise files of the commit in aibox run first\n")
 
-		return false, nil
+		return false
 	}
 
-	return true, nil
+	return true
 }

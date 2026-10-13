@@ -159,7 +159,7 @@ func TestCommandInstallsTheToolsOfMiseBeforeClaudeCode(t *testing.T) {
 
 	// assert
 	assert.Equal(t, []string{
-		"/usr/bin/bash", "-c", `(export "${@:1:4}"; exec /usr/bin/mise install); shift 4; exec "$@"`, "/usr/bin/bash",
+		"/usr/bin/bash", "-c", `(export "${@:1:4}"; exec /usr/bin/mise install >&2); shift 4; exec "$@"`, "/usr/bin/bash",
 		"MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml",
 		"MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=.tool-versions",
 		"MISE_GLOBAL_CONFIG_FILE=/etc/mise/none.toml",

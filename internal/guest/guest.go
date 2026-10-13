@@ -442,7 +442,8 @@ func Command(options Options, terminal *os.File, request session.Request) *exec.
 	// it went
 	if options.Mise {
 		count := strconv.Itoa(len(miseInstall))
-		script := `(export "${@:1:` + count + `}"; exec ` + mise + ` install); shift ` + count + `; exec "$@"`
+		// without a terminal, what mise prints is no output of the command
+		script := `(export "${@:1:` + count + `}"; exec ` + mise + ` install >&2); shift ` + count + `; exec "$@"`
 		args = slices.Concat([]string{"-c", script, bash}, miseInstall, []string{name}, args)
 		name = bash
 	}

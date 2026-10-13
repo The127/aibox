@@ -33,18 +33,6 @@ func TestReadMiseFilesReadsTheFilesThereAre(t *testing.T) {
 	assert.Equal(t, []miseFile{{name: ".tool-versions", content: []byte("node 22\n")}}, files)
 }
 
-func TestReadMiseFilesRefusesALargeFile(t *testing.T) {
-	// arrange
-	dir := t.TempDir()
-	writeIn(t, dir, "mise.toml", strings.Repeat("#", maxMiseBytes+1))
-
-	// act
-	_, err := readMiseFiles(dir)
-
-	// assert
-	require.ErrorIs(t, err, errMiseLarge)
-}
-
 func TestHashMiseFilesTellsFilesApart(t *testing.T) {
 	// arrange
 	one := []miseFile{{name: "mise.toml", content: []byte("a")}}
@@ -174,18 +162,39 @@ func TestTaskMiseTakesOnlyFilesApprovedBefore(t *testing.T) {
 	var out strings.Builder
 
 	// act
-	before, err := taskMise(&out, dir, commit, p)
-	require.NoError(t, err)
+	before := taskMise(&out, dir, commit, p)
 
 	files, err := readCommitMiseFiles(dir, commit)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(p.Mise, []byte(hashMiseFiles(files)+"\n"), 0o600))
 
-	after, err := taskMise(&out, dir, commit, p)
+	after := taskMise(&out, dir, commit, p)
 
 	// assert
-	require.NoError(t, err)
 	assert.False(t, before)
 	assert.True(t, after)
 	assert.Contains(t, out.String(), "approve the mise files of the commit in aibox run first")
+}
+
+func TestHashMiseFilesTakesACRLFForANewline(t *testing.T) {
+	// arrange
+	lf := []miseFile{{name: "mise.toml", content: []byte("[tools]\ngo = \"1.25\"\n")}}
+	crlf := []miseFile{{name: "mise.toml", content: []byte("[tools]\r\ngo = \"1.25\"\r\n")}}
+
+	// act and assert
+	assert.Equal(t, hashMiseFiles(lf), hashMiseFiles(crlf))
+}
+
+func TestReadCommitMiseFilesReadsTheTopOfTheRepositoryFromASubfolder(t *testing.T) {
+	// arrange
+	dir, commit := commitMise(t, map[string]string{"mise.toml": "[tools]\n"}, nil)
+	sub := filepath.Join(dir, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o750))
+
+	// act
+	files, err := readCommitMiseFiles(sub, commit)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []miseFile{{name: "mise.toml", content: []byte("[tools]\n")}}, files)
 }

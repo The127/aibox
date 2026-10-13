@@ -106,6 +106,7 @@ These are the presets:
 | `preset:pypi` | `pypi.org`, `files.pythonhosted.org` |
 | `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org` |
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
+| `preset:mise` | `github.com`, `api.github.com`, `*.githubusercontent.com` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
 
 When the proxy refuses a host that a preset allows, its message names the
@@ -335,9 +336,10 @@ The tools stay on the state disk, so the next start only installs what's
 new. In the VM, `go`, `node` and the rest are on the `PATH`.
 
 The downloads need their hosts on the allow list. mise looks up the
-versions of most tools on GitHub, so allow `preset:github` and the preset
-of the tool, like `preset:go` for Go. `proxy.log` shows what the proxy
-refused.
+versions of most tools on GitHub, so allow `preset:mise` and the preset of
+the tool, like `preset:go` for Go. `aibox config suggest` offers
+`preset:mise` for a project with a `mise.toml` or `.tool-versions`.
+`proxy.log` shows what the proxy refused.
 
 Some things to know:
 
@@ -346,7 +348,15 @@ Some things to know:
   count for the install before Claude Code starts.
 - A task installs the tools too, but only if you approved the files of its
   commit in an `aibox run` before. A task can't ask you. It starts with an
-  empty disk, so it downloads the tools on every run.
+  empty disk, so it downloads the tools on every run. The install may take
+  as long as the task's `--timeout`, and Claude Code gets the whole
+  timeout after it.
+- Your approval covers what the two files say, not the files they point
+  to, like a script that `[env]` runs. It doesn't cover mise's own files
+  on the state disk either. The VM can change both, like anything else it
+  keeps between runs. `aibox projects reset` clears the state disk.
+- Folders of the [`path`](#path) setting come before the tools of mise on
+  the `PATH`.
 - mise runs in the VM, with the same limits as everything else there.
 
 ## clipboard

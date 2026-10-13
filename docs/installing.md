@@ -53,8 +53,10 @@ See [The network](security.md#the-network).
 ## Windows
 
 aibox runs on Windows 11 on amd64 with Hyper-V, which Windows 11 Pro,
-Enterprise and Education have. Download `aibox.exe` from the
-[releases](https://github.com/The127/aibox/releases).
+Enterprise and Education have. Each
+[release](https://github.com/The127/aibox/releases) has
+`aibox_VERSION_windows_amd64.zip`, with `aibox.exe` in it. Put it in a
+folder on your `PATH`.
 
 Hyper-V is off until you turn it on. Do that once, from a PowerShell you
 opened as administrator, and restart Windows:

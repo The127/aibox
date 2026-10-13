@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -17,10 +18,19 @@ const readTimeout = 10 * time.Second
 // output runs the program that reads the clipboard and returns what it
 // printed.
 func output(name string, args ...string) ([]byte, error) {
+	return outputWith(nil, name, args...)
+}
+
+// outputWith is output with the variables added to the environment.
+func outputWith(env []string, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // each reader passes a fixed program
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+
 	// a child the program left behind may hold its output open
 	cmd.WaitDelay = time.Second
 

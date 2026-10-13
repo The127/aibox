@@ -42,6 +42,7 @@ func (c *calls) all() []string {
 type fakeVM struct {
 	calls        *calls
 	startErr     error
+	modifyErr    error
 	runtimeIDErr error
 }
 
@@ -55,6 +56,13 @@ func (v *fakeVM) Start(context.Context) error {
 	v.calls.add("start")
 
 	return v.startErr
+}
+
+func (v *fakeVM) Modify(_ context.Context, m hcs.Modification) error {
+	disk, _ := m.Settings.(hcs.Attachment)
+	v.calls.add("modify " + m.ResourcePath + " " + disk.Path)
+
+	return v.modifyErr
 }
 
 func (v *fakeVM) Terminate(ctx context.Context) error {
@@ -151,6 +159,10 @@ func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, 
 
 // aStateDisk is the path the fake peer reads from a state disk handle.
 const aStateDisk = `C:\Users\me\.aibox\projects\x\state.ext4`
+
+// addedStateDisk is the state disk the VM gets once it runs, at the LUN
+// the guest looks it up by.
+const addedStateDisk = "modify VirtualMachine/Devices/Scsi/0/Attachments/1 " + aStateDisk
 
 // fakePeer is the client of a connection, who hands over a state disk
 // under a handle; diskErr refuses it.
@@ -259,6 +271,25 @@ func (f *fixture) hangUp() {
 
 const createLine = `{"op":"create","create":{"memoryMiB":2048,"cpus":2,"cmdline":"console=ttyS0","state":420}}`
 
+func TestAVMWhoseStateDiskCantBeAddedEndsAndItsStartIsRefused(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, func(_ context.Context, f *fixture) (vm, error) {
+		return &fakeVM{calls: f.calls, modifyErr: &hcs.Error{Op: "HcsModifyComputeSystem", HRESULT: 0x80070020}}, nil
+	})
+	f.serve(t.Context(), t)
+
+	// act
+	created := f.ask(t, createLine)
+	started := f.ask(t, `{"op":"start"}`)
+
+	// assert
+	assert.Empty(t, created.Error)
+	assert.Contains(t, started.Error, "could not start the VM: HRESULT 0x80070020")
+	assert.Contains(t, f.calls.all(), "terminate", "the VM without its disk is of no use")
+}
+
 func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	t.Parallel()
 
@@ -278,12 +309,12 @@ func TestAConnectionMakesAVMStartsItAndEndsIt(t *testing.T) {
 	assert.Equal(t, hvservice.Reply{}, started)
 	require.Len(t, f.granted, 1)
 	assert.True(t, strings.HasPrefix(f.granted[0], "grant handle 420 to "), f.granted[0])
-	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all())
+	assert.Equal(t, []string{"create", "start", addedStateDisk, "terminate", "close", "revoke"}, f.calls.all())
 	assert.Zero(t, f.srv.ledger.used, "the memory of the VM is free again")
 
 	require.Len(t, f.docs, 1)
 	assert.Equal(t, "console=ttyS0", f.docs[0].VirtualMachine.Chipset.LinuxKernelDirect.KernelCmdLine)
-	assert.Equal(t, aStateDisk, f.docs[0].VirtualMachine.Devices.Scsi["0"].Attachments["1"].Path, "the state disk the peer read from the handle")
+	assert.NotContains(t, f.docs[0].VirtualMachine.Devices.Scsi["0"].Attachments, "1", "the state disk comes once the VM runs, as the peer read it from the handle")
 
 	pipe := f.docs[0].VirtualMachine.Devices.ComPorts["0"].NamedPipe
 	assert.True(t, strings.HasPrefix(pipe, `\\.\pipe\aibox-console-`), pipe)
@@ -564,7 +595,7 @@ func TestAStopEndsTheVMBeforeItIsAnsweredAndLetsTheClientMakeAnother(t *testing.
 
 	// assert
 	assert.Equal(t, hvservice.Reply{}, stopped)
-	assert.Equal(t, []string{"create", "start", "terminate", "close", "revoke"}, f.calls.all(), "the VM was gone before the answer")
+	assert.Equal(t, []string{"create", "start", addedStateDisk, "terminate", "close", "revoke"}, f.calls.all(), "the VM was gone before the answer")
 	assert.Zero(t, f.srv.ledger.used)
 	assert.Empty(t, f.ask(t, createLine).Error, "the client may make another")
 }

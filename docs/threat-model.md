@@ -28,8 +28,9 @@ other address and get the VM's connections.
 - Your files outside the project folder and the mounts.
 - Your API key, your git login and SSH keys, and your IDE's token. Note that
   a subscription token and the secrets in `env` do go into the VM.
-- Your clipboard, apart from one image right after you press Ctrl+V. Set
-  `clipboard: false` in the config to keep that out too.
+- Your clipboard, apart from what you paste with Ctrl+V: one image the VM
+  reads right after the key, or text aibox types. Set `clipboard: false`
+  in the config to keep that out too.
 - Your machine's own networks and the servers that listen on its loopback.
 - The rest of the internet. Data leaves only through what you allowed, like
   a host, a port or a branch.
@@ -76,7 +77,7 @@ Everything the VM can reach on your machine goes through one of these.
 | The git broker | git's requests | The broker adds your login on your machine, only for the repositories and branches the config names. See [Git](git.md). |
 | The key forwarder | Requests to the Claude API | The VM gets a placeholder key. aibox adds the real one. See [API key](tasks.md#api-key). |
 | The IDE bridge | Selections, diffs and errors | With `ide: true`, the bridge passes on only those messages, and only for files in the project. See [In your IDE](usage.md#in-your-ide). |
-| The clipboard | One image after Ctrl+V | aibox lets the VM read the clipboard only right after you press Ctrl+V, once, and only an image. Tasks never get it. See [Pasting images](usage.md#pasting-images). |
+| The clipboard | One image or the text after Ctrl+V | aibox lets the VM read the clipboard only right after you press Ctrl+V, once, and only an image. Text it types, as a terminal pastes. Tasks never get it. See [Pasting](usage.md#pasting). |
 | The terminal | What Claude Code shows you | `aibox run` passes the VM's terminal straight through. |
 | The ports | Connections from your machine to servers in the VM | aibox listens only on `127.0.0.1`, only on the ports the config lists, and only with `aibox run`. The VM only connects them to its own loopback. See [ports](config.md#ports). |
 | A task's results | The bundle, the logs and `result.json` | For `aibox task`, aibox checks each file and the bundle, and strips control characters before text reaches your terminal. See [How a task runs](tasks.md#how-a-task-runs). |
@@ -98,7 +99,7 @@ Everything the VM can reach on your machine goes through one of these.
 | read your API key | It only has a placeholder. |
 | read your git login | It never enters the VM. |
 | push to `main`, delete a branch or push a tag | The broker refuses what the `git` list doesn't allow. |
-| read the passwords you copy | It can only ask for the clipboard right after you press Ctrl+V, and only gets an image. |
+| read the passwords you copy | It can only ask for the clipboard right after you press Ctrl+V, and only gets an image. Text it gets only when you paste it. |
 | run code through your IDE | The IDE bridge only passes on selections, diffs and errors. |
 | sneak extra branches into a task's bundle | aibox reads the bundle's header and only prints the fetch command for `aibox/task`. |
 | fake a line from aibox in a task's output | aibox strips control characters and marks every line from the VM. |
@@ -143,7 +144,11 @@ has the details.
 - Diffs you accept or edit in your IDE.
 - Your clipboard right after a Ctrl+V, or Alt+V on Windows, in any
   program in the VM. aibox watches for the key, not for Claude Code, so a
-  Ctrl+V in bash or vim lets the VM read the image too.
+  Ctrl+V in bash or vim lets the VM read the image too, or types the text.
+  A program in the VM can ask you to press the key and so get the text on
+  your clipboard, a password you copied included. In a program that
+  didn't turn bracketed paste on, such as a plain shell, each line of the
+  text runs as you paste it, as in any terminal.
 - Gatekeeper on macOS, for programs that come out of the VM.
 - Spending. Only a task's `--timeout` is enforced by aibox.
 

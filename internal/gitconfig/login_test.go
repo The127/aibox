@@ -42,6 +42,23 @@ func TestLoginForAsksTheCredentialHelperOfTheHost(t *testing.T) {
 	assert.Contains(t, string(request), "protocol=https\nhost=github.com\n")
 }
 
+func TestLoginForLetsNoHelperAskThePerson(t *testing.T) {
+	// arrange: a helper that says what it was let do
+	told := filepath.Join(t.TempDir(), "told")
+	helper(t, `echo "$GIT_TERMINAL_PROMPT $GCM_INTERACTIVE" > `+filepath.ToSlash(told)+"; echo username=someone; echo password=the-token")
+
+	// act
+	_, err := gitconfig.LoginFor(context.Background(), "github.com/owner/repo")
+
+	// assert: no prompt on the terminal, no window of Git Credential
+	// Manager
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(told) //nolint:gosec // the test's own file
+	require.NoError(t, err)
+	assert.Equal(t, "0 never\n", string(got))
+}
+
 func TestLoginForFailsWithoutALogin(t *testing.T) {
 	// arrange
 	helper(t, "true")

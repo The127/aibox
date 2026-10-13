@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -29,8 +30,11 @@ type Client struct {
 	Resized <-chan Size
 	// Env are variables for the command, as NAME=value.
 	Env []string
-	// OnPaste is called each time the person presses Ctrl+V, or is nil.
-	OnPaste func()
+	// OnPaste is called each time the person presses Ctrl+V, or is nil. It
+	// returns text to paste in place of the key, or nil to pass the key
+	// on. PasteAltV makes Alt+V a paste key too, which goes on as Ctrl+V.
+	OnPaste   func() []byte
+	PasteAltV bool
 	// Forward runs while the session does, or is nil. Its dial connects to
 	// a port on the loopback of the VM. It must return once ctx ends.
 	Forward func(ctx context.Context, dial Dial)
@@ -181,7 +185,17 @@ func (c Client) Attach(conn net.Conn) (int, error) {
 	s.Stdout = c.Out
 
 	if c.In != nil && c.OnPaste != nil {
-		s.Stdin = watchPaste(c.In, c.OnPaste)
+		bracketed := &atomic.Bool{}
+		s.Stdout = &modeWatcher{w: c.Out, on: bracketed}
+
+		s.Stdin = watchPaste(c.In, func() []byte {
+			text := c.OnPaste()
+			if text == nil {
+				return nil
+			}
+
+			return pasted(string(text), bracketed.Load())
+		}, c.PasteAltV)
 	}
 
 	if err := s.RequestPty(c.Term, int(c.Size.Rows), int(c.Size.Cols), ssh.TerminalModes{}); err != nil {

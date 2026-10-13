@@ -77,11 +77,11 @@ func (Linux) PivotRoot(newRoot, putOld string) error {
 const scsiDiskClass = "/sys/class/scsi_disk"
 
 const (
-	// scsiDiskWait is how long SCSIDisk waits for a disk to be listed. The
-	// kernel ends probing the disk of the root before it mounts the root,
-	// and the backend puts both disks on one controller, so the wait is
-	// only for a controller that is slower than that.
-	scsiDiskWait = 5 * time.Second
+	// scsiDiskWait makes SCSIDisk wait until the disk is listed: the
+	// service adds the state disk once the VM runs, so that the root is
+	// the only disk at boot, and the host ends a VM whose guest doesn't
+	// connect in time, which bounds the wait.
+	scsiDiskWait = -1
 	scsiDiskPoll = 50 * time.Millisecond
 )
 
@@ -92,7 +92,8 @@ func (Linux) SCSIDisk(lun int) (string, error) {
 }
 
 // scsiDisk refuses a second disk at the LUN at once, so that another
-// controller cannot hand over a disk of its own.
+// controller cannot hand over a disk of its own. A negative wait waits
+// until the disk is there.
 func scsiDisk(class string, lun int, wait time.Duration) (string, error) {
 	deadline := time.Now().Add(wait)
 
@@ -106,7 +107,7 @@ func scsiDisk(class string, lun int, wait time.Duration) (string, error) {
 			return found[0], nil
 		}
 
-		if len(found) > 1 || time.Now().After(deadline) {
+		if len(found) > 1 || (wait >= 0 && time.Now().After(deadline)) {
 			return "", fmt.Errorf("%w at LUN %d: found %d", ErrNoSCSIDisk, lun, len(found))
 		}
 
@@ -332,18 +333,45 @@ const (
 // a plain socket rather than one of DialHost, since the kernel needs only
 // its number and Go's poller would have nothing to do with it.
 func (l Linux) MountPlan9(share, target string, flags uintptr) error {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return fmt.Errorf("open a vsock socket: %w", err)
+	for {
+		fd, err := dialPlan9(unix.Socket, unix.Connect, unix.Close)
+		if err != nil {
+			return err
+		}
+
+		// the mount waits for the server over the connection too, and one
+		// a signal broke off is in a state no new mount can go on from
+		err = l.Mount(share, target, "9p", flags, plan9Options(fd, share))
+		_ = unix.Close(fd)
+
+		if !errors.Is(err, unix.EINTR) {
+			return err
+		}
 	}
+}
 
-	defer func() { _ = unix.Close(fd) }()
+// dialPlan9 connects a vsock socket to the Plan 9 server of the host. A
+// signal interrupts a connect that waits, as the runtime of Go sends one
+// to a thread to preempt it, and vsock then drops the connection it was
+// making, so a new socket tries again.
+func dialPlan9(socket func(domain, typ, proto int) (int, error), connect func(fd int, sa unix.Sockaddr) error, closeFD func(fd int) error) (int, error) {
+	for {
+		fd, err := socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+		if err != nil {
+			return -1, fmt.Errorf("open a vsock socket: %w", err)
+		}
 
-	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: plan9Port}); err != nil {
-		return fmt.Errorf("connect to the Plan 9 server of the host: %w", err)
+		err = connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: plan9Port})
+		if err == nil {
+			return fd, nil
+		}
+
+		_ = closeFD(fd)
+
+		if !errors.Is(err, unix.EINTR) {
+			return -1, fmt.Errorf("connect to the Plan 9 server of the host: %w", err)
+		}
 	}
-
-	return l.Mount(share, target, "9p", flags, plan9Options(fd, share))
 }
 
 // plan9Options hands the connection to the kernel as both ends of the

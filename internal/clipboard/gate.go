@@ -24,8 +24,10 @@ const (
 // types keeps it armed. Reading the image ends that, and so do a clipboard
 // without an image and the end of the window.
 type Gate struct {
-	// Read returns the image on the clipboard as PNG
-	Read func() ([]byte, error)
+	// Read returns the image on the clipboard as PNG, and ReadText the
+	// text, or nil for none
+	Read     func() ([]byte, error)
+	ReadText func() (string, error)
 	// Window is how long an Arm lasts. Zero means DefaultWindow.
 	Window time.Duration
 	// Log gets why the VM got no image, or is nil
@@ -58,6 +60,59 @@ func (g *Gate) Arm() {
 	g.until = time.Now().Add(window)
 	g.press++
 	g.image = nil
+}
+
+// Paste is what a press of the paste key sends the VM in place of the key:
+// the text on the clipboard, or nil for the key itself. An image goes
+// first, as in Claude Code: the VM may then read that very image, once,
+// within the window, as after Arm. Text the VM never reads; it gets it
+// typed, as a terminal pastes it.
+func (g *Gate) Paste() []byte {
+	g.Arm()
+
+	g.mu.Lock()
+	press := g.press
+	g.mu.Unlock()
+
+	image, err := g.Read()
+	if err == nil {
+		g.mu.Lock()
+		if g.press == press {
+			g.image = image
+		}
+
+		g.mu.Unlock()
+
+		return nil
+	}
+
+	if !errors.Is(err, ErrNoImage) {
+		g.logf("no image to paste: %v", err)
+	}
+
+	if g.ReadText == nil {
+		return nil
+	}
+
+	text, err := g.ReadText()
+	if err != nil || text == "" {
+		if err != nil && !errors.Is(err, ErrNoText) {
+			g.logf("no text to paste: %v", err)
+		}
+
+		// the key goes on, and the VM finds no image, as after Arm
+		return nil
+	}
+
+	// the VM gets the text typed, and nothing to read
+	g.mu.Lock()
+	if g.press == press {
+		g.until = time.Time{}
+	}
+
+	g.mu.Unlock()
+
+	return []byte(text)
 }
 
 // ServeHTTP answers TypesPath with the types on the clipboard and ImagePath

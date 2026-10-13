@@ -281,10 +281,14 @@ type Config struct {
 	// IDE says whether Claude Code in the VM may use the IDE that has the
 	// project open.
 	IDE bool `yaml:"ide"`
-	// Clipboard says whether Claude Code in the VM may read an image from
-	// the clipboard of the host when the person presses Ctrl+V. Nil means
-	// it may.
+	// Clipboard says whether the person pastes from the clipboard of the
+	// host with Ctrl+V: an image Claude Code in the VM may read, or text
+	// aibox types. Nil means they do.
 	Clipboard *bool `yaml:"clipboard"`
+	// PasteAltV says whether Alt+V pastes too. Nil means it does on
+	// Windows, whose terminals paste on Ctrl+V themselves, and not
+	// elsewhere.
+	PasteAltV *bool `yaml:"paste-alt-v"`
 	// Path are folders in the VM that go in front of its PATH, or names of
 	// variables of the host whose folders do.
 	Path []string `yaml:"path"`
@@ -580,10 +584,15 @@ allow:
 # reports, for files in the project. It is off unless you turn it on:
 # ide: true
 
-# Whether Claude Code in the VM may read an image from your clipboard when
-# you press Ctrl+V. The VM can read it only right after you press the key.
-# It is on unless you turn it off:
+# Whether Ctrl+V pastes from your clipboard: an image, which the VM can
+# read only right after you press the key, or text, which aibox types as
+# your terminal pastes it. It is on unless you turn it off:
 # clipboard: false
+
+# Whether Alt+V pastes too, as Ctrl+V does. The terminals of Windows paste
+# on Ctrl+V themselves, so on Windows it is on unless you turn it off, and
+# elsewhere off unless you turn it on:
+# paste-alt-v: true
 
 # Folders in the VM that go in front of its PATH. A name such as PATH stands
 # for the folders in that variable of the host, which then need a mount at

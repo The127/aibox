@@ -771,6 +771,7 @@ func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
 		"an empty stdin":             {stdin: " \n", want: errNoPrompt.Error()},
 		"a missing file":             {args: []string{"--file", "missing.md"}, want: "read the prompt"},
 		"a link":                     {args: []string{"--file", "link.md"}, want: "read the prompt"},
+		"a link inside the folder":   {args: []string{"--file", "inside.md"}, want: "read the prompt"},
 		"a file in a linked folder":  {args: []string{"--file", "linked/secret"}, want: "read the prompt"},
 		"a file above the folder":    {args: []string{"--file", "../secret"}, want: "read the prompt"},
 		"a folder":                   {args: []string{"--file", "."}, want: errNoPromptFile.Error()},
@@ -796,6 +797,8 @@ func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
 			symlink(t, filepath.Dir(secret), filepath.Join(f.cwd, "linked"))
 			require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.cwd), "secret"), []byte("secret\n"), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "latin1.md"), []byte("caf\xe9\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(f.cwd, "plain.md"), []byte("fix it\n"), 0o600))
+			symlink(t, filepath.Join(f.cwd, "plain.md"), filepath.Join(f.cwd, "inside.md"))
 
 			// act
 			err := f.task(test.args...)

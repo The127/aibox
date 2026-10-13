@@ -85,8 +85,10 @@ type Spec struct {
 	Stdout io.Writer
 	Stderr io.Writer
 	// OnPaste is called each time the person presses Ctrl+V on the
-	// terminal, or is nil.
-	OnPaste func()
+	// terminal, or is nil. It returns text to paste in place of the key,
+	// or nil to pass the key on. PasteAltV makes Alt+V a paste key too.
+	OnPaste   func() []byte
+	PasteAltV bool
 	// Forwards are listeners on the host whose connections go into the VM
 	// while its session runs.
 	Forwards []Forward

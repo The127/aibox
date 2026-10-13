@@ -436,7 +436,12 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 
 	if r.clipboard != nil {
 		spec.Loopback = append(spec.Loopback, vm.ClipboardPort)
-		spec.OnPaste = r.clipboard.Arm
+		spec.OnPaste = r.clipboard.Paste
+		// the terminals of Windows paste on Ctrl+V themselves
+		spec.PasteAltV = runtime.GOOS == "windows"
+		if r.config.PasteAltV != nil {
+			spec.PasteAltV = *r.config.PasteAltV
+		}
 	}
 
 	if r.ide != nil {
@@ -636,7 +641,7 @@ func gitLogins(ctx context.Context, deps dependencies, remotes []config.GitRemot
 			if err != nil {
 				closeKeys(keys)
 
-				return nil, nil, fmt.Errorf("git entry %s: git on this machine has no login for HTTPS, and SSH does not work either: %w", remote.Remote, err)
+				return nil, nil, fmt.Errorf("git entry %s: git on this machine has no login for HTTPS, and SSH does not work either: %w (aibox asks for no login: store one with git, such as by a git push over HTTPS, or make SSH work)", remote.Remote, err)
 			}
 
 			_, _ = fmt.Fprintf(deps.stderr, "aibox: git has no login for HTTPS for %s, so the broker reaches it over SSH as %s@%s with %s\n",
@@ -1098,11 +1103,7 @@ func sessions(vmHome string) map[string]time.Time {
 // readRootDir reads a folder of the root without waiting, since the VM
 // could have left a FIFO there.
 func readRootDir(root *os.Root, name string) ([]fs.DirEntry, error) {
-	if err := refuseLink(root, name); err != nil {
-		return nil, err
-	}
-
-	dir, err := root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
+	dir, err := openInRoot(root, name)
 	if err != nil {
 		return nil, err
 	}

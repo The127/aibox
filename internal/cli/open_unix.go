@@ -16,6 +16,8 @@ func openNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(path, flag|noFollowFlags, perm) //nolint:gosec // the callers say where the path comes from
 }
 
-// refuseLink does nothing: O_NOFOLLOW in noFollowFlags refuses a link at
-// the end of the path when the file is opened.
-func refuseLink(*os.Root, string) error { return nil }
+// openInRoot opens the name in the root for reading with noFollowFlags, so
+// that it refuses a link at the end of the name.
+func openInRoot(root *os.Root, name string) (*os.File, error) {
+	return root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
+}

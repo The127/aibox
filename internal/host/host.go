@@ -52,8 +52,10 @@ type Session struct {
 	Errors   io.Writer
 	Env      []string
 	EndDelay time.Duration
-	// OnPaste is called each time the person presses Ctrl+V, or is nil.
-	OnPaste func()
+	// OnPaste is called each time the person presses Ctrl+V, or is nil, as
+	// session.Client takes it, and PasteAltV makes Alt+V a paste key too.
+	OnPaste   func() []byte
+	PasteAltV bool
 	// Forwards are listeners whose connections go into the VM while the
 	// session on the terminal runs. They are closed when it ends.
 	Forwards []backend.Forward
@@ -141,6 +143,7 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 
 	client.Env = s.Env
 	client.OnPaste = s.OnPaste
+	client.PasteAltV = s.PasteAltV
 
 	if len(s.Forwards) > 0 {
 		client.Forward = func(ctx context.Context, dial session.Dial) {

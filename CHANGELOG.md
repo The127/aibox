@@ -1,5 +1,57 @@
 # Changelog
 
+## [2.0.1](https://github.com/The127/aibox/compare/v2.0.0...v2.0.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* give the release binaries the version of their tag ([#180](https://github.com/The127/aibox/issues/180)) ([bdc782b](https://github.com/The127/aibox/commit/bdc782b9300070ff454c723fefb805d557f923c6))
+
+## [2.0.0](https://github.com/The127/aibox/compare/v1.6.1...v2.0.0) (2026-10-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* give each project path a folder of its own ([#144](https://github.com/The127/aibox/issues/144))
+
+### Features
+
+* bring agents, commands, CLAUDE.md and safe settings into the VM ([#149](https://github.com/The127/aibox/issues/149)) ([9172396](https://github.com/The127/aibox/commit/91723969886e89306a571fbbd8b57ad177ff3577))
+* paste an image with Alt+V on Windows ([#154](https://github.com/The127/aibox/issues/154)) ([01a6369](https://github.com/The127/aibox/commit/01a6369ae973f73b614bd36784804c8657c910f7))
+* paste the text on the clipboard on Ctrl+V ([#175](https://github.com/The127/aibox/issues/175)) ([24d79dc](https://github.com/The127/aibox/commit/24d79dcbca8795b6b7722461a849a0e1c4df5efa))
+* put aibox for Windows into each release ([#177](https://github.com/The127/aibox/issues/177)) ([15bbd8f](https://github.com/The127/aibox/commit/15bbd8f78170e82ab700c20d38dae1cb17a90286))
+* reach the VM over a virtio serial port without vsock namespaces ([#162](https://github.com/The127/aibox/issues/162)) ([52db71d](https://github.com/The127/aibox/commit/52db71d76cf4eddef8da85d6bf26073c259278ef))
+* reset, list and remove what aibox keeps for a project ([#143](https://github.com/The127/aibox/issues/143)) ([df993b5](https://github.com/The127/aibox/commit/df993b5f944c5c99ab3f57ffbbf0aaaf702fafaf))
+* resume a Claude Code session with aibox run --resume &lt;id&gt; ([#153](https://github.com/The127/aibox/issues/153)) ([e6ab48a](https://github.com/The127/aibox/commit/e6ab48a41efd019ae8312cb18526fde77c273fc6))
+* serve a VM its proxy from an AppContainer on Windows ([#146](https://github.com/The127/aibox/issues/146)) ([e01d8cf](https://github.com/The127/aibox/commit/e01d8cf99d76468d8469e96627dc44a096413fff))
+* start new projects from a config of your own ([#147](https://github.com/The127/aibox/issues/147)) ([f94616c](https://github.com/The127/aibox/commit/f94616cfd0d4e56712f39f0e1631607d02bdb2e8))
+* suggest presets from the files of a project ([#145](https://github.com/The127/aibox/issues/145)) ([ba58728](https://github.com/The127/aibox/commit/ba587288e637c755ba060a496a99c7de5e8ed37d))
+* take Windows paths in mounts, tasks, the editor and SSH ([1e76aac](https://github.com/The127/aibox/commit/1e76aac133aa18b472b27d20082273c75b9e252f))
+* tell Claude Code in the VM which system its host runs ([#159](https://github.com/The127/aibox/issues/159)) ([8f81b90](https://github.com/The127/aibox/commit/8f81b90fcb3e865444bd66c01926c7f903a51991))
+* tell how to go on with the session when aibox run ends ([#155](https://github.com/The127/aibox/issues/155)) ([326a291](https://github.com/The127/aibox/commit/326a2917b57cd296a1eb997abc011a3850a88102))
+
+
+### Bug Fixes
+
+* add the state disk once the VM runs on Hyper-V ([#173](https://github.com/The127/aibox/issues/173)) ([0c649ca](https://github.com/The127/aibox/commit/0c649ca4e41d559b6a52e0335cf533e2864f2f1b))
+* give a task on Windows a host part of its own ([#166](https://github.com/The127/aibox/issues/166)) ([e3bf055](https://github.com/The127/aibox/commit/e3bf0550f315792997b5202bff68c7eb8b0e6a29))
+* give a Windows task a fetch command and a prompt it can take ([#163](https://github.com/The127/aibox/issues/163)) ([4a75932](https://github.com/The127/aibox/commit/4a75932c206e7bd8adb59c9a626b273a84028f48))
+* give each project path a folder of its own ([ca6c76c](https://github.com/The127/aibox/commit/ca6c76c63636c800613ea7a47c1260b9df44c5e5)), closes [#142](https://github.com/The127/aibox/issues/142)
+* give each project path a folder of its own ([#144](https://github.com/The127/aibox/issues/144)) ([ca6c76c](https://github.com/The127/aibox/commit/ca6c76c63636c800613ea7a47c1260b9df44c5e5))
+* give git in the VM the line endings of the host ([#158](https://github.com/The127/aibox/issues/158)) ([076ae4f](https://github.com/The127/aibox/commit/076ae4f4237a963c47386b3b84cccf0c7f397af5))
+* keep deadlines off the tunnel of a local service of the proxy ([#174](https://github.com/The127/aibox/issues/174)) ([62befaf](https://github.com/The127/aibox/commit/62befafed7576b033e9e65eb811da6defea872e4))
+* keep the clock of the VM in UTC on Hyper-V ([#157](https://github.com/The127/aibox/issues/157)) ([9a13c11](https://github.com/The127/aibox/commit/9a13c117e01fb3094ab3ca1880179cda33492a59))
+* let a task write in the folders of its home that hold mounts ([#167](https://github.com/The127/aibox/issues/167)) ([50926b8](https://github.com/The127/aibox/commit/50926b88cacbeb236420722faaed62a0d5ccf28e))
+* let the guest rename and link to a name of one character on Windows ([#156](https://github.com/The127/aibox/issues/156)) ([1db5074](https://github.com/The127/aibox/commit/1db50747f0fc05d60c3c6fed489936df6f6d908f))
+* open no login window of a credential helper when aibox starts ([#176](https://github.com/The127/aibox/issues/176)) ([ec46507](https://github.com/The127/aibox/commit/ec46507d8782bffdba912bd5a3fc8ff7b93a48ed))
+* refuse a link in the same step as the open on Windows ([#178](https://github.com/The127/aibox/issues/178)) ([ad35422](https://github.com/The127/aibox/commit/ad35422e17f8a445786078d53501af0ab265596c)), closes [#90](https://github.com/The127/aibox/issues/90)
+* refuse a service of another version than aibox ([#165](https://github.com/The127/aibox/issues/165)) ([fa335bf](https://github.com/The127/aibox/commit/fa335bf3b07463ea64262a9cc0c5e564c65f4e86))
+* remove the AppContainer profiles that killed runs left behind on Windows ([#152](https://github.com/The127/aibox/issues/152)) ([7a1293f](https://github.com/The127/aibox/commit/7a1293ff0f25d8740d7ed9d89248d18fa8d7c2af))
+* say that Hyper-V is off instead of crashing the service ([#164](https://github.com/The127/aibox/issues/164)) ([d72309d](https://github.com/The127/aibox/commit/d72309d8b4702de443150107dfeb8bbb9d1a8224))
+* say that the VM ended when it ends under its command ([#160](https://github.com/The127/aibox/issues/160)) ([4b23a8f](https://github.com/The127/aibox/commit/4b23a8f9671b7dbf3bb18b5092861b7b6b242a3c))
+* tell Claude Code in the VM how git reaches a remote ([#170](https://github.com/The127/aibox/issues/170)) ([89364a2](https://github.com/The127/aibox/commit/89364a25d5852de805e9a4dfa57881fb5a73b91f)), closes [#169](https://github.com/The127/aibox/issues/169)
+* try the Plan 9 server again when a signal interrupts the connect ([#172](https://github.com/The127/aibox/issues/172)) ([e4a3cda](https://github.com/The127/aibox/commit/e4a3cdaeff45a451a6ff77dc071f2c59db029d0b))
+
 ## [1.6.1](https://github.com/The127/aibox/compare/v1.6.0...v1.6.1) (2026-10-12)
 
 

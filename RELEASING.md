@@ -13,6 +13,8 @@ Releases are made from the commit messages on `main`. Nobody tags by hand.
    - a `tar.gz`, a `deb` and an `rpm` for linux amd64
    - a `tar.gz` for macOS arm64, signed ad hoc with the entitlement
      Virtualization.framework asks for
+   - a `zip` for Windows amd64, cross-compiled on the same Mac, as it
+     needs no cgo
    - `aibox-image_amd64.tar.gz` and `aibox-image_arm64.tar.gz`, the VM
      images, which the `images` workflow builds before goreleaser runs
    - `checksums.txt`

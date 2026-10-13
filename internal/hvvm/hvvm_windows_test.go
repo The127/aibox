@@ -2,6 +2,7 @@ package hvvm
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -316,4 +318,58 @@ func TestWhatTheHelperSaysReachesAiboxWithoutControlCharacters(t *testing.T) {
 
 	// assert
 	assert.Equal(t, "aibox: the proxy stopped\n?]52;c;aGk=??[2J??forged?\n", out.String())
+}
+
+func TestTheHelperHandsAWebSocketOfTheServicesToAibox(t *testing.T) {
+	t.Parallel()
+
+	// arrange: aibox's service on port 3131, as the IDE bridge, echoes
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	stop := ServeServices(l, "the token", func(host, port string) http.Handler {
+		if host != "localhost" || port != "3131" {
+			return nil
+		}
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+
+			defer func() { _ = c.CloseNow() }()
+
+			kind, data, err := c.Read(r.Context())
+			if err != nil {
+				return
+			}
+
+			_ = c.Write(r.Context(), kind, data)
+		})
+	})
+	t.Cleanup(stop)
+
+	addr := make(chan string, 1)
+
+	err = served(t, loopback(addr), Events{}, Config{ProxyPort: 1025, Local: []uint16{3131}, Services: l.Addr().String(), Token: "the token"})
+	require.NoError(t, err)
+
+	conn, _, status := connect(t, <-addr, "localhost:3131")
+	require.Equal(t, http.StatusOK, status)
+
+	client := &http.Client{Transport: &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) { return conn, nil }}}
+
+	// act: the VM's side of the WebSocket, in the tunnel
+	ws, _, err := websocket.Dial(t.Context(), "ws://localhost:3131/", &websocket.DialOptions{HTTPClient: client})
+	require.NoError(t, err)
+
+	defer func() { _ = ws.CloseNow() }()
+
+	require.NoError(t, ws.Write(t.Context(), websocket.MessageText, []byte("hello")))
+	_, got, err := ws.Read(t.Context())
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(got))
 }

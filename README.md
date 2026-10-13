@@ -86,8 +86,9 @@ bubblewrap from your distribution. The `deb` and `rpm` on the
 [releases](https://github.com/The127/aibox/releases) page pull them in for
 you.
 
-On Windows, download `aibox.exe` from the releases and, as administrator,
-run `aibox service install` once. See
+On Windows, download the zip for Windows from the releases, put
+`aibox.exe` on your `PATH` and, as administrator, run `aibox service
+install` once. See
 [Installing](https://the127.github.io/aibox/installing.html#windows).
 
 With [Nix](https://nixos.org), on Linux on amd64 or macOS on Apple silicon:

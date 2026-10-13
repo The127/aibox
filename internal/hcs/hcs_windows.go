@@ -43,6 +43,7 @@ var (
 	procOpenComputeSystem          = computecore.NewProc("HcsOpenComputeSystem")
 	procCloseComputeSystem         = computecore.NewProc("HcsCloseComputeSystem")
 	procStartComputeSystem         = computecore.NewProc("HcsStartComputeSystem")
+	procModifyComputeSystem        = computecore.NewProc("HcsModifyComputeSystem")
 	procTerminateComputeSystem     = computecore.NewProc("HcsTerminateComputeSystem")
 	procGetComputeSystemProperties = computecore.NewProc("HcsGetComputeSystemProperties")
 	procEnumerateComputeSystems    = computecore.NewProc("HcsEnumerateComputeSystems")
@@ -64,7 +65,7 @@ func load() error {
 	procs := []*windows.LazyProc{
 		procCreateOperation, procCloseOperation, procCancelOperation, procWaitForOperationResult,
 		procCreateComputeSystem, procOpenComputeSystem, procCloseComputeSystem,
-		procStartComputeSystem, procTerminateComputeSystem, procGetComputeSystemProperties,
+		procStartComputeSystem, procModifyComputeSystem, procTerminateComputeSystem, procGetComputeSystemProperties,
 		procEnumerateComputeSystems, procGrantVMAccess, procRevokeVMAccess,
 	}
 
@@ -328,6 +329,36 @@ func (s *System) call(ctx context.Context, what string, proc *windows.LazyProc) 
 // Start boots the VM.
 func (s *System) Start(ctx context.Context) error {
 	_, err := s.call(ctx, "start", procStartComputeSystem)
+
+	return err
+}
+
+// Modify changes the running VM as the modification says.
+func (s *System) Modify(ctx context.Context, m Modification) error {
+	what := "change the compute system " + s.id
+
+	b, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+
+	config, err := utf16(string(b))
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.handle == 0 {
+		return fmt.Errorf("%s: %w", what, ErrClosed)
+	}
+
+	_, err = run(ctx, what, func(op operation) uintptr {
+		hresult, _, _ := procModifyComputeSystem.Call(s.handle, uintptr(op), uintptr(unsafe.Pointer(config)), 0) //nolint:gosec // the document as the service takes it
+
+		return hresult
+	})
 
 	return err
 }

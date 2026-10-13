@@ -30,14 +30,27 @@ const (
 // such as "\x1b[27;133;118~".
 const longestSequence = 16
 
+// key is a paste key the watcher saw.
+type key int
+
+const (
+	noKey key = iota
+	ctrlVKey
+	altVKey
+)
+
 // pasteWatcher passes on what the person types and calls onPaste for each
-// Ctrl+V in it: as the control byte, in the kitty keyboard protocol and
-// with modifyOtherKeys of xterm. It looks at the bytes one by one, so that
-// a sequence split across two reads counts too. With altV it takes Alt+V
-// for Ctrl+V as well, and passes it on as Ctrl+V.
+// paste key in it: Ctrl+V as the control byte, in the kitty keyboard
+// protocol and with modifyOtherKeys of xterm, and with altV Alt+V the same
+// ways. onPaste returns what goes on in place of the key, such as the text
+// on the clipboard, or nil to pass the key on, as Ctrl+V for Alt+V. The
+// watcher looks at the bytes one by one, so that a key split across two
+// reads counts too, but only a key a read holds whole can be replaced:
+// holding back an escape until the next read would hold back the Escape
+// key too.
 type pasteWatcher struct {
 	r       io.Reader
-	onPaste func()
+	onPaste func() []byte
 	altV    bool
 	// sequence is the escape sequence read so far, without the escape, or
 	// nil outside of one
@@ -46,50 +59,86 @@ type pasteWatcher struct {
 	// on, or -1 when an earlier read passed it on already
 	from    int
 	pasting bool
+	// pending is what a read passed on that did not fit, as a paste can be
+	// longer than its key, and err the error of that read
+	pending []byte
+	err     error
 }
 
-func watchPaste(r io.Reader, onPaste func()) io.Reader {
-	return &pasteWatcher{r: r, onPaste: onPaste, altV: altVPastes, from: -1}
+func watchPaste(r io.Reader, onPaste func() []byte, altV bool) io.Reader {
+	return &pasteWatcher{r: r, onPaste: onPaste, altV: altV, from: -1}
 }
 
-// Read passes on what it reads, with an Alt+V the read holds whole as the
-// Ctrl+V it stands for. One that spans two reads goes on as it is: holding
-// back an escape until the next read would hold back the Escape key too.
 func (p *pasteWatcher) Read(b []byte) (int, error) {
-	n, err := p.r.Read(b)
-	kept := 0
+	for len(p.pending) == 0 && p.err == nil {
+		n, err := p.r.Read(b)
+		p.pending, p.err = p.scan(b[:n]), err
+	}
 
-	for _, c := range b[:n] {
+	n := copy(b, p.pending)
+	p.pending = p.pending[n:]
+
+	if len(p.pending) > 0 {
+		return n, nil
+	}
+
+	err := p.err
+	p.err = nil
+
+	return n, err
+}
+
+// scan returns what goes on of what the read got.
+func (p *pasteWatcher) scan(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+
+	for _, c := range in {
 		if c == esc {
-			p.from = kept
+			p.from = len(out)
 		}
 
-		b[kept] = c
-		kept++
+		out = append(out, c)
 
-		if p.see(c) && p.from >= 0 {
-			kept = p.from
-			b[kept] = ctrlV
-			kept++
+		k := p.see(c)
+		if k == noKey {
+			continue
+		}
 
-			p.onPaste()
+		start := p.from
+		if c == ctrlV {
+			start = len(out) - 1
+		}
+
+		// what the key began with went on already, so it goes on as it
+		// is, which for Alt+V is no paste key
+		if start < 0 && k == altVKey {
+			continue
+		}
+
+		pasted := p.onPaste()
+
+		switch {
+		case start < 0:
+		case pasted != nil:
+			out = append(out[:start], pasted...)
+		case k == altVKey:
+			out = append(out[:start], ctrlV)
 		}
 	}
 
 	p.from = -1
 
-	return kept, err
+	return out
 }
 
-// see looks at the next byte, and tells whether it ends an Alt+V that
-// stands for Ctrl+V.
-func (p *pasteWatcher) see(c byte) bool {
+// see looks at the next byte, and tells whether it ends a paste key.
+func (p *pasteWatcher) see(c byte) key {
 	switch {
 	case c == esc:
 		p.sequence = []byte{}
 	case p.sequence == nil:
 		if c == ctrlV && !p.pasting {
-			p.onPaste()
+			return ctrlVKey
 		}
 	case c < ' ' || len(p.sequence) == longestSequence:
 		// no sequence the watcher reads holds a control byte, so this one
@@ -118,14 +167,16 @@ func (p *pasteWatcher) see(c byte) bool {
 			// Alt and a key
 			p.sequence = nil
 
-			return p.altV && !p.pasting && c == 'v'
+			if p.altV && !p.pasting && c == 'v' {
+				return altVKey
+			}
 		}
 	}
 
-	return false
+	return noKey
 }
 
-func (p *pasteWatcher) end(sequence string) bool {
+func (p *pasteWatcher) end(sequence string) key {
 	switch {
 	case sequence == pasteStart:
 		p.pasting = true
@@ -133,12 +184,12 @@ func (p *pasteWatcher) end(sequence string) bool {
 		p.pasting = false
 	case p.pasting:
 	case isKeyV(sequence, modifierCtrl):
-		p.onPaste()
+		return ctrlVKey
 	case p.altV && isKeyV(sequence, modifierAlt):
-		return true
+		return altVKey
 	}
 
-	return false
+	return noKey
 }
 
 // isKeyV tells whether a CSI sequence is V with the modifier going down:

@@ -29,6 +29,7 @@ func clipboardCommand() *cli.Command {
 // clipboardHelper reads the clipboard of the host until it is closed.
 type clipboardHelper interface {
 	Read() ([]byte, error)
+	ReadText() (string, error)
 	Close() error
 }
 
@@ -45,5 +46,5 @@ func shareClipboard(deps dependencies, loopback []uint16, log *os.File) (*clipbo
 		return nil, nil, err
 	}
 
-	return &clipboard.Gate{Read: helper.Read, Log: log}, helper, nil
+	return &clipboard.Gate{Read: helper.Read, ReadText: helper.ReadText, Log: log}, helper, nil
 }

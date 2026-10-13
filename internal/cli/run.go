@@ -428,7 +428,7 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 
 	if r.clipboard != nil {
 		spec.Loopback = append(spec.Loopback, vm.ClipboardPort)
-		spec.OnPaste = func() []byte { r.clipboard.Arm(); return nil }
+		spec.OnPaste = r.clipboard.Paste
 		// the terminals of Windows paste on Ctrl+V themselves
 		spec.PasteAltV = runtime.GOOS == "windows"
 	}

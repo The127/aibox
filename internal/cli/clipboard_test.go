@@ -17,6 +17,8 @@ type fakeClipboard struct {
 
 func (c *fakeClipboard) Read() ([]byte, error) { return []byte("the image"), nil }
 
+func (c *fakeClipboard) ReadText() (string, error) { return "the text", nil }
+
 func (c *fakeClipboard) Close() error {
 	c.closed = true
 

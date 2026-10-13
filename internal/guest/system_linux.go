@@ -77,11 +77,11 @@ func (Linux) PivotRoot(newRoot, putOld string) error {
 const scsiDiskClass = "/sys/class/scsi_disk"
 
 const (
-	// scsiDiskWait is how long SCSIDisk waits for a disk to be listed. The
-	// kernel ends probing the disk of the root before it mounts the root,
-	// and the backend puts both disks on one controller, so the wait is
-	// only for a controller that is slower than that.
-	scsiDiskWait = 5 * time.Second
+	// scsiDiskWait makes SCSIDisk wait until the disk is listed: the
+	// service adds the state disk once the VM runs, so that the root is
+	// the only disk at boot, and the host ends a VM whose guest doesn't
+	// connect in time, which bounds the wait.
+	scsiDiskWait = -1
 	scsiDiskPoll = 50 * time.Millisecond
 )
 
@@ -92,7 +92,8 @@ func (Linux) SCSIDisk(lun int) (string, error) {
 }
 
 // scsiDisk refuses a second disk at the LUN at once, so that another
-// controller cannot hand over a disk of its own.
+// controller cannot hand over a disk of its own. A negative wait waits
+// until the disk is there.
 func scsiDisk(class string, lun int, wait time.Duration) (string, error) {
 	deadline := time.Now().Add(wait)
 
@@ -106,7 +107,7 @@ func scsiDisk(class string, lun int, wait time.Duration) (string, error) {
 			return found[0], nil
 		}
 
-		if len(found) > 1 || time.Now().After(deadline) {
+		if len(found) > 1 || (wait >= 0 && time.Now().After(deadline)) {
 			return "", fmt.Errorf("%w at LUN %d: found %d", ErrNoSCSIDisk, lun, len(found))
 		}
 

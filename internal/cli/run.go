@@ -1095,11 +1095,7 @@ func sessions(vmHome string) map[string]time.Time {
 // readRootDir reads a folder of the root without waiting, since the VM
 // could have left a FIFO there.
 func readRootDir(root *os.Root, name string) ([]fs.DirEntry, error) {
-	if err := refuseLink(root, name); err != nil {
-		return nil, err
-	}
-
-	dir, err := root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
+	dir, err := openInRoot(root, name)
 	if err != nil {
 		return nil, err
 	}

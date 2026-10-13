@@ -426,8 +426,6 @@ func utf16Text(text string, order binary.ByteOrder) string {
 // absolute path must not end in a link, and opening a FIFO must not wait.
 // readPromptFile then refuses anything but a plain file.
 func openPromptFile(cwd, name string) (*os.File, error) {
-	const flags = os.O_RDONLY | noFollowFlags
-
 	if filepath.IsAbs(name) {
 		return openNoFollow(name, os.O_RDONLY, 0)
 	}
@@ -439,11 +437,7 @@ func openPromptFile(cwd, name string) (*os.File, error) {
 
 	defer func() { _ = root.Close() }()
 
-	if err := refuseLink(root, name); err != nil {
-		return nil, err
-	}
-
-	return root.OpenFile(name, flags, 0)
+	return openInRoot(root, name)
 }
 
 // readPromptFile reads the file of --file, relative to cwd, or stdin for

@@ -393,7 +393,8 @@ func ValidTarget(target string) bool {
 		return false
 	}
 
-	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+	// as written, so that zeros in front can't make it any length
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
 		return false
 	}
 

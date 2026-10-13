@@ -150,12 +150,13 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 
 	terminal := host.Watch(newListener(terminalListener))
 	stopTerminal := host.ServeTerminal(ctx, terminal, host.Session{
-		Stdin:    spec.Stdin,
-		Stdout:   spec.Stdout,
-		Errors:   spec.Progress,
-		Env:      spec.Env,
-		EndDelay: b.SessionEndDelay,
-		OnPaste:  spec.OnPaste,
+		Stdin:     spec.Stdin,
+		Stdout:    spec.Stdout,
+		Errors:    spec.Progress,
+		Env:       spec.Env,
+		EndDelay:  b.SessionEndDelay,
+		OnPaste:   spec.OnPaste,
+		PasteAltV: spec.PasteAltV,
 	})
 
 	// Virtualization.framework locks the state disk as it starts the VM and

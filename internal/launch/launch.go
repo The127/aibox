@@ -78,8 +78,10 @@ type Options struct {
 	Proxy     proxy.Options
 	// Env are variables for the command in the VM, as NAME=value.
 	Env []string
-	// OnPaste is called each time the person presses Ctrl+V, or is nil.
-	OnPaste func()
+	// OnPaste is called each time the person presses Ctrl+V, or is nil, as
+	// session.Client takes it, and PasteAltV makes Alt+V a paste key too.
+	OnPaste   func() []byte
+	PasteAltV bool
 	// KVMDevice is the KVM device file QEMU gets. Empty means /dev/kvm.
 	KVMDevice string
 	// Bubblewrap is the program that runs QEMU in its sandbox. Empty means
@@ -212,12 +214,13 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 	machine.Port = link.port != nil
 
 	stopTerminal := host.ServeTerminal(ctx, link.terminal, host.Session{
-		Stdin:    options.Stdin,
-		Stdout:   options.Stdout,
-		Errors:   options.Progress,
-		Env:      options.Env,
-		EndDelay: options.SessionEndDelay,
-		OnPaste:  options.OnPaste,
+		Stdin:     options.Stdin,
+		Stdout:    options.Stdout,
+		Errors:    options.Progress,
+		Env:       options.Env,
+		EndDelay:  options.SessionEndDelay,
+		OnPaste:   options.OnPaste,
+		PasteAltV: options.PasteAltV,
 	})
 	machine.TerminalPort = link.terminalPort
 

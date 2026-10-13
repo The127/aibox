@@ -539,8 +539,8 @@ const killedCode = 128 + int(syscall.SIGKILL)
 // step is a command of the task: the cgroup it runs in, how long it may
 // take, if there is a limit, and where its input comes from and its output
 // goes, nil for none. With combined, standard error goes into the pipe of
-// stdout, so that their lines come in order. timedOut says whether the
-// limit ended it.
+// stdout, so that their lines come in order, and stderr stays nil.
+// timedOut says whether the limit ended it.
 type step struct {
 	cmd            *exec.Cmd
 	cgroup         string

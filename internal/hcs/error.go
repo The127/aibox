@@ -9,10 +9,20 @@ import (
 // process that is neither an Administrator nor a Hyper-V Administrator.
 const hresultAccessDenied = 0x8037011B
 
+// hresultNoHyperV is HCS_E_HYPERV_NOT_INSTALLED, the result of a call on a
+// Windows whose Host Compute Service is there, as Virtual Machine Platform
+// brings it, but whose Hyper-V is off.
+const hresultNoHyperV = 0x80370102
+
 // ErrAccessDenied is the error of a call the service refused because the
 // process is neither an Administrator nor a Hyper-V Administrator. An
 // *Error with that HRESULT is one, by errors.Is.
 var ErrAccessDenied = errors.New("the Host Compute Service serves only Administrators and Hyper-V Administrators")
+
+// ErrNoHyperV is a Windows without the Host Compute Service, or with the
+// service but with Hyper-V off, and says how to turn Hyper-V on. An *Error
+// with the HRESULT of Hyper-V that is off is one, by errors.Is.
+var ErrNoHyperV = errors.New("this Windows has no Hyper-V: turn it on from a PowerShell you opened as administrator, with Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All, and restart Windows")
 
 // ErrClosed is the error of a call on a System after its Close.
 var ErrClosed = errors.New("the compute system is closed")
@@ -40,7 +50,15 @@ func (e *Error) Error() string {
 }
 
 // Is matches ErrAccessDenied when the HRESULT is the one the service
-// refuses a process without the rights with.
+// refuses a process without the rights with, and ErrNoHyperV when it is
+// the one of a Windows whose Hyper-V is off.
 func (e *Error) Is(target error) bool {
-	return target == ErrAccessDenied && e.HRESULT == hresultAccessDenied
+	switch target {
+	case ErrAccessDenied:
+		return e.HRESULT == hresultAccessDenied
+	case ErrNoHyperV:
+		return e.HRESULT == hresultNoHyperV
+	}
+
+	return false
 }

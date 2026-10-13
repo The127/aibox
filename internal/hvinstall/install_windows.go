@@ -49,6 +49,12 @@ const (
 // runs. It stops an installed service, and with it its VMs, before it
 // changes what the service runs.
 func Install(image string) error {
+	// before anything changes, so that a Windows without Hyper-V keeps no
+	// service that can't run
+	if err := hvserver.CheckHyperV(); err != nil {
+		return err
+	}
+
 	m, err := connect()
 	if err != nil {
 		return err

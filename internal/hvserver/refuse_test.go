@@ -30,6 +30,10 @@ func TestRefusalTellsAibox(t *testing.T) {
 			fmt.Errorf("create the VM: %w", &hcs.Error{Op: "HcsCreateComputeSystem", HRESULT: 0x80070002, Result: `{"ErrorMessage":"C:\\ProgramData\\aibox\\vm\\os.vhd"}`}),
 			"the service could not start the VM: HRESULT 0x80070002 (more in the Application event log, source aibox)",
 		},
+		"that Hyper-V is off, and how to turn it on": {
+			fmt.Errorf("create the VM: %w", &hcs.Error{Op: "HcsCreateComputeSystem", HRESULT: 0x80370102, Result: `{"ErrorMessage":"C:\\ProgramData\\aibox\\vm"}`}),
+			hcs.ErrNoHyperV.Error(),
+		},
 		"nothing of any other error": {
 			errors.New(`open C:\ProgramData\aibox\vm\vmlinuz-hyperv: access denied`),
 			"the service could not start the VM (more in the Application event log, source aibox)",

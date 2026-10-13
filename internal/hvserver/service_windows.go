@@ -72,6 +72,11 @@ func Run() error {
 // serve ends the VMs a service before left behind, listens on the pipe,
 // says it is ready, and serves until ctx ends.
 func serve(ctx context.Context, ready func(), logf func(format string, args ...any)) error {
+	// Hyper-V turned off after the install: the sweep below would panic
+	if err := CheckHyperV(); err != nil {
+		return err
+	}
+
 	folder, err := Folder()
 	if err != nil {
 		return err
@@ -175,3 +180,9 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 // errNoReason is the failure of a service that ended unasked and said
 // nothing of why.
 var errNoReason = errors.New("for no reason it gave")
+
+// CheckHyperV tells whether this Windows has the Host Compute Service the
+// service makes its VMs with, which comes with Hyper-V.
+func CheckHyperV() error {
+	return hcs.Available()
+}

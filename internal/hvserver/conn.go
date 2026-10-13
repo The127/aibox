@@ -51,6 +51,8 @@ type console struct {
 // server is what the service needs to make VMs, which the tests fake.
 type server struct {
 	install hvservice.Install
+	// version is the version of aibox the service is, which it tells aibox
+	version string
 	ledger  ledger
 	host    func() (hvservice.Host, error)
 	create  func(ctx context.Context, id string, doc hcs.Document) (vm, error)
@@ -139,6 +141,8 @@ func (s *server) answer(ctx context.Context, sess *session, request hvservice.Re
 	}
 
 	switch request.Op {
+	case hvservice.OpVersion:
+		return hvservice.Reply{Version: s.version}
 	case hvservice.OpCreate:
 		if sess.vm != nil {
 			return hvservice.Refusal(fmt.Errorf("%w: create of a second VM", errOutOfTurn))

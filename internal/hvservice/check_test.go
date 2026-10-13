@@ -16,6 +16,7 @@ func TestCheckTakesACreateWithItsVMAndABareStart(t *testing.T) {
 		{Op: hvservice.OpCreate, Create: &hvservice.Create{}},
 		{Op: hvservice.OpStart},
 		{Op: hvservice.OpStop},
+		{Op: hvservice.OpVersion},
 	} {
 		t.Run(string(request.Op), func(t *testing.T) {
 			t.Parallel()
@@ -38,6 +39,7 @@ func TestCheckRefusesARequestTheServiceWouldNotDoAsMeant(t *testing.T) {
 		"create without its VM": {Op: hvservice.OpCreate},
 		"start with a VM":       {Op: hvservice.OpStart, Create: &hvservice.Create{}},
 		"stop with a VM":        {Op: hvservice.OpStop, Create: &hvservice.Create{}},
+		"version with a VM":     {Op: hvservice.OpVersion, Create: &hvservice.Create{}},
 	}
 
 	for name, request := range tests {

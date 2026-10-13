@@ -46,8 +46,9 @@ func Folder() (string, error) {
 }
 
 // Run runs the service as Windows' service manager starts it, until the
-// manager stops it.
-func Run() error {
+// manager stops it. version is the version of aibox, which the service
+// tells aibox when it asks.
+func Run(version string) error {
 	elog, err := eventlog.Open(ServiceName)
 	if err != nil {
 		return fmt.Errorf("open the event log: %w", err)
@@ -58,7 +59,7 @@ func Run() error {
 	logf := func(format string, args ...any) { _ = elog.Info(eventID, fmt.Sprintf(format, args...)) }
 
 	h := &handler{
-		serve: func(ctx context.Context, ready func()) error { return serve(ctx, ready, logf) },
+		serve: func(ctx context.Context, ready func()) error { return serve(ctx, ready, version, logf) },
 		fail:  func(err error) { _ = elog.Error(eventID, err.Error()) },
 	}
 
@@ -71,7 +72,7 @@ func Run() error {
 
 // serve ends the VMs a service before left behind, listens on the pipe,
 // says it is ready, and serves until ctx ends.
-func serve(ctx context.Context, ready func(), logf func(format string, args ...any)) error {
+func serve(ctx context.Context, ready func(), version string, logf func(format string, args ...any)) error {
 	// Hyper-V turned off after the install: the sweep below would panic
 	if err := CheckHyperV(); err != nil {
 		return err
@@ -98,6 +99,7 @@ func serve(ctx context.Context, ready func(), logf func(format string, args ...a
 
 	srv := &server{
 		install: hvservice.Install{Kernel: filepath.Join(folder, KernelFile), Rootfs: filepath.Join(folder, RootFile)},
+		version: version,
 		host:    host,
 		create:  createVM,
 		logf:    logf,

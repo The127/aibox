@@ -101,6 +101,7 @@ func newFixture(t *testing.T, create func(ctx context.Context, f *fixture) (vm, 
 	f.srv = &server{
 		install: hvservice.Install{Kernel: `C:\aibox\vmlinuz`, Rootfs: `C:\aibox\os.vhd`},
 		host:    func() (hvservice.Host, error) { return hvservice.Host{MemoryMiB: 16384, CPUs: 8}, nil },
+		version: "v1.2.3",
 		logf:    t.Logf,
 	}
 	f.srv.containerSID = func(name string) (string, error) {
@@ -580,6 +581,21 @@ func TestAStopOfNoVMIsRefused(t *testing.T) {
 
 	// assert
 	assert.Contains(t, reply.Error, "out of turn")
+}
+
+func TestTheServiceTellsItsVersionBeforeAnyVM(t *testing.T) {
+	t.Parallel()
+
+	// arrange
+	f := newFixture(t, nil)
+	f.serve(t.Context(), t)
+
+	// act
+	reply := f.ask(t, `{"op":"version"}`)
+
+	// assert
+	assert.Empty(t, reply.Error)
+	assert.Equal(t, "v1.2.3", reply.Version)
 }
 
 // networkLine is a create that asks for the network of the container.

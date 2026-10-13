@@ -13,6 +13,7 @@ import (
 	"github.com/the127/aibox/internal/hvserver"
 	"github.com/the127/aibox/internal/hvshares"
 	"github.com/the127/aibox/internal/hvvm"
+	"github.com/the127/aibox/internal/version"
 )
 
 // platformCommands are the commands only this kind of host has: the
@@ -64,7 +65,7 @@ func platformCommands(deps dependencies) []*cli.Command {
 		}, {
 			Name:   "run",
 			Hidden: true,
-			Action: func(context.Context, *cli.Command) error { return hvserver.Run() },
+			Action: func(context.Context, *cli.Command) error { return hvserver.Run(version.Get()) },
 		}},
 	}, {
 		Name:   hvshares.Command,

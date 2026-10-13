@@ -61,6 +61,9 @@ const (
 	// OpStop ends the VM of the connection, and is answered once it is
 	// gone, which closing the connection, which ends it too, can't tell.
 	OpStop Op = "stop"
+	// OpVersion asks the version of the service, which aibox asks first: a
+	// service of another build makes the VM as that build does.
+	OpVersion Op = "version"
 )
 
 // Request is a message from aibox to the service. A connection is for one
@@ -123,6 +126,8 @@ type Reply struct {
 	// can point its filters at a container of someone else.
 	Container    string `json:"container,omitempty"`
 	ContainerSID string `json:"containerSid,omitempty"`
+	// Version answers OpVersion: the version of the service.
+	Version string `json:"version,omitempty"`
 }
 
 // Refusal is the reply that says why the service refused a request, its

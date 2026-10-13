@@ -114,12 +114,8 @@ func vmSettings(vmHome string) (map[string]json.RawMessage, error) {
 
 	name := filepath.Join(".claude", "settings.json")
 
-	if err := refuseLink(root, name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-
 	// without waiting, since the VM could have left a FIFO there
-	file, err := root.OpenFile(name, os.O_RDONLY|noFollowFlags, 0)
+	file, err := openInRoot(root, name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]json.RawMessage{}, nil
 	}

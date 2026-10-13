@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/The127/aibox/compare/v2.0.0...v2.0.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* give the release binaries the version of their tag ([#180](https://github.com/The127/aibox/issues/180)) ([bdc782b](https://github.com/The127/aibox/commit/bdc782b9300070ff454c723fefb805d557f923c6))
+
 ## [2.0.0](https://github.com/The127/aibox/compare/v1.6.1...v2.0.0) (2026-10-13)
 
 

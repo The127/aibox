@@ -41,6 +41,7 @@ func TestParseCmdline(t *testing.T) {
 		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
 		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
 		"console=hvc0 aibox.task":              {Console: "/dev/hvc0", Task: true},
+		"console=hvc0 aibox.port":              {Console: "/dev/hvc0", Port: true},
 		"console=hvc0 aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e": {
 			Console: "/dev/hvc0",
 			Resume:  "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
@@ -605,6 +606,45 @@ func TestCommandRunsAShellWhenAsked(t *testing.T) {
 	// assert
 	assert.Equal(t, []string{"/usr/bin/bash", "-l"}, cmd.Args)
 	assert.Equal(t, uint32(1000), cmd.SysProcAttr.Credential.Uid)
+}
+
+func TestRunOpensThePortToTheHostBeforeItDialsTheHost(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "root=/dev/vda aibox.port " + withTerminal}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+
+	opened := slices.Index(sys.calls, "open the port to aibox")
+	require.NotEqual(t, -1, opened)
+	assert.Less(t, opened, slices.Index(sys.calls, "dial host 5432"))
+}
+
+func TestRunWithoutThePortToTheHostDialsNothing(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "root=/dev/vda aibox.port " + withTerminal, noPort: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	assert.NotContains(t, sys.calls, "dial host 5432")
+}
+
+func TestRunWithVsockOpensNoPort(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: "root=/dev/vda " + withTerminal}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.calls, "open the port to aibox")
 }
 
 func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
@@ -1259,7 +1299,9 @@ var overlayCalls = []string{
 type fakeSystem struct {
 	t       *testing.T
 	cmdline string
-	calls   []string
+	// noPort makes OpenHostPort fail
+	noPort bool
+	calls  []string
 	// mounts is the last mount on each target, mountsOf all of them
 	mounts   map[string]mounted
 	mountsOf map[string][]mounted
@@ -1504,6 +1546,16 @@ func (s *fakeSystem) Listen(address string) (net.Listener, error) {
 	s.mu.Unlock()
 
 	return listener, nil
+}
+
+func (s *fakeSystem) OpenHostPort() error {
+	s.record("open the port to aibox")
+
+	if s.noPort {
+		return fs.ErrNotExist
+	}
+
+	return nil
 }
 
 func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {

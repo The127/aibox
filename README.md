@@ -78,9 +78,11 @@ On macOS and Linux, install it with [Homebrew](https://brew.sh):
 brew install --cask the127/tap/aibox
 ```
 
-On Linux, aibox needs Linux 7.0 or newer with vsock, and access to
-`/dev/kvm`. Homebrew installs just the binary, so also install QEMU,
-virtiofsd and bubblewrap from your distribution. The `deb` and `rpm` on the
+On Linux, aibox needs Linux 6.7 or newer and access to `/dev/kvm`. On
+Linux 7.0 or newer with vsock it also uses vsock, see
+[Installing](https://the127.github.io/aibox/installing.html#linux).
+Homebrew installs just the binary, so also install QEMU, virtiofsd and
+bubblewrap from your distribution. The `deb` and `rpm` on the
 [releases](https://github.com/The127/aibox/releases) page pull them in for
 you.
 

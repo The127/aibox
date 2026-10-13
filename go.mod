@@ -20,6 +20,7 @@ require (
 	github.com/Code-Hex/vz/v3 v3.8.0
 	github.com/Microsoft/go-winio v0.6.3
 	github.com/coder/websocket v1.8.15
+	github.com/hashicorp/yamux v0.1.2
 	github.com/hugelgupf/p9 v0.4.1
 	github.com/mdlayher/vsock v1.3.0
 	github.com/stretchr/testify v1.12.1

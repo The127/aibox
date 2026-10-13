@@ -19,6 +19,10 @@ const (
 // because each has a vsock namespace of its own.
 const GuestCID uint32 = 3
 
+// PortName is the name of the virtio serial port the VM reaches aibox on
+// when the host has no vsock it can keep private.
+const PortName = "aibox"
+
 // ClipboardPort is the port on the loopback of the VM where xclip and
 // wl-paste in the VM reach the clipboard of the host.
 const ClipboardPort uint16 = 3132
@@ -50,7 +54,8 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 
 // Machine is a VM that boots a kernel with a root disk and keeps its state
 // on a second disk. Shell boots it into a shell instead of Claude Code,
-// Resume is the ID of the session Claude Code goes on with, or empty, Task
+// Resume is the ID of the session Claude Code goes on with, or empty, Port
+// tells the guest it reaches the host over the virtio port, not vsock, Task
 // runs the task of the task share unattended. HyperV tells the guest it
 // runs on Hyper-V, which shares the folders of the host over Plan 9 and has
 // SCSI disks, instead of virtio-fs and virtio disks.
@@ -70,6 +75,7 @@ type Machine struct {
 	Shares       []Share
 	Shell        bool
 	Resume       string
+	Port         bool
 	Task         bool
 	HyperV       bool
 	ProxyPort    uint32
@@ -82,6 +88,9 @@ type Machine struct {
 // vhost-vsock devices, the root disk, the state disk opened read-only and
 // once more read-write, the socket QEMU writes the console to, and one
 // connection to virtiofsd per entry of Machine.Shares, in the same order.
+// Port is the socket of the virtio serial port the VM reaches aibox on
+// when the host has no vsock it can keep private, and then there is no
+// Vhost. 0 leaves the port off.
 // Kernel is a path, not a number, because the kernel loader of QEMU cannot
 // take a descriptor. The state disk comes in both modes because QEMU opens
 // a drive read-only first and asks the fdset for a read-write descriptor
@@ -94,6 +103,7 @@ type Files struct {
 	StateRead  int
 	StateWrite int
 	Console    int
+	Port       int
 	Shares     []int
 }
 
@@ -174,6 +184,15 @@ func (m Machine) QEMUArgs(files Files) []string {
 		)
 	}
 
+	// the port is on the serial device of the console, so it takes no
+	// virtio slot of its own
+	if files.Port != 0 {
+		return append(args,
+			"-chardev", "socket,id=port,fd="+strconv.Itoa(files.Port),
+			"-device", "virtserialport,chardev=port,name="+PortName,
+		)
+	}
+
 	return append(args, "-device", "vhost-vsock-device,guest-cid="+strconv.FormatUint(uint64(GuestCID), 10)+",vhostfd="+strconv.Itoa(files.Vhost))
 }
 
@@ -206,6 +225,10 @@ func (m Machine) GuestWords() []string {
 
 	if m.Resume != "" {
 		words = append(words, "aibox.resume="+m.Resume)
+	}
+
+	if m.Port {
+		words = append(words, "aibox.port")
 	}
 
 	if m.Task {

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/vm"
+	"github.com/the127/aibox/internal/vport"
 )
 
 // Linux is the System of the running kernel.
@@ -266,9 +267,54 @@ func (Linux) Listen(address string) (net.Listener, error) {
 	return net.Listen("tcp", address)
 }
 
-// DialHost connects to the host over vsock.
+// DialHost connects to the host over the virtio port, once OpenHostPort
+// opened it, or else over vsock.
 func (Linux) DialHost(port uint32) (net.Conn, error) {
+	if hostPort != nil {
+		return hostPort.Dial(port)
+	}
+
 	return vsock.Dial(vsock.Host, port, nil)
+}
+
+// hostPort is the side of the VM of the virtio port to aibox. The init
+// opens it before it dials the host for the first time.
+var hostPort *vport.Dialer
+
+// portPatience is how long OpenHostPort waits for the port. The kernel adds
+// the port while it boots, a moment after the driver starts, so a port that
+// is not there by then will not come.
+const portPatience = 10 * time.Second
+
+// OpenHostPort waits for the virtio port to aibox and opens it.
+func (Linux) OpenHostPort() error {
+	deadline := time.Now().Add(portPatience)
+
+	for {
+		port, err := openPort()
+		if err == nil {
+			hostPort, err = vport.NewDialer(port)
+
+			return err
+		}
+
+		if !errors.Is(err, fs.ErrNotExist) || time.Now().After(deadline) {
+			return err
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// openPort opens the device of the port, which comes a moment after the
+// port shows in the sysfs.
+func openPort() (*os.File, error) {
+	device, err := vport.Find("/sys", "/dev", vm.PortName)
+	if err != nil {
+		return nil, err
+	}
+
+	return os.OpenFile(device, os.O_RDWR, 0) //nolint:gosec // the device of the port the sysfs names
 }
 
 const (

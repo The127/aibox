@@ -52,7 +52,8 @@ flowchart LR
 ```
 
 The VM has no network card. vsock connects it to your terminal and to a
-proxy in aibox. Apart from that, it only shares folders with your machine.
+proxy in aibox. On a Linux kernel without vsock namespaces, a serial port
+does that. Apart from that, it only shares folders with your machine.
 With [git](git.md) in the config, a broker adds your git login to the VM's
 git requests, so the login never enters the VM.
 

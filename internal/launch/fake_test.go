@@ -3,6 +3,7 @@
 package launch_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/the127/aibox/internal/launch"
 	"github.com/the127/aibox/internal/vm"
+	"github.com/the127/aibox/internal/vport"
 	"github.com/the127/aibox/internal/vsockns"
 )
 
@@ -94,6 +96,8 @@ type fakeProcesses struct {
 	confinedWith     []uint16
 	confineCalls     int
 	failConfine      error
+	// noVsock is a kernel without vsock namespaces
+	noVsock bool
 }
 
 func fakes(t *testing.T) *fakeProcesses {
@@ -189,6 +193,12 @@ func (f *fakeProcesses) options() launch.Options {
 
 	if f.stdout != nil {
 		options.Stdout = f.stdout
+	}
+
+	if f.noVsock {
+		options.OpenVsock = func() (*vsockns.Vsock, error) {
+			return nil, fmt.Errorf("%w: they came with Linux 7.0, and this kernel is 6.8.0", vsockns.ErrNoNamespaces)
+		}
 	}
 
 	return options
@@ -423,6 +433,10 @@ func fakeQEMU(args []string) int {
 		}
 	}
 
+	if os.Getenv("AIBOX_FAKE_QEMU_PORT") == "proxy" {
+		record("port-proxy", []string{askProxyOverPort(args)})
+	}
+
 	fmt.Println("fake qemu ran")
 
 	if os.Getenv("AIBOX_FAKE_QEMU") == "wait" {
@@ -433,6 +447,48 @@ func fakeQEMU(args []string) int {
 	code, _ := strconv.Atoi(os.Getenv("AIBOX_FAKE_QEMU_EXIT"))
 
 	return code
+}
+
+// askProxyOverPort plays the VM on the virtio port: it dials the proxy
+// service the kernel command line names and returns the status line of a
+// request, or the error.
+func askProxyOverPort(args []string) string {
+	var port, service int
+
+	for i := 0; i+1 < len(args); i++ {
+		if value, ok := strings.CutPrefix(args[i+1], "socket,id=port,fd="); ok && args[i] == "-chardev" {
+			port, _ = strconv.Atoi(value)
+		}
+
+		if args[i] == "-append" {
+			for _, word := range strings.Fields(args[i+1]) {
+				if value, ok := strings.CutPrefix(word, "aibox.proxy="); ok {
+					service, _ = strconv.Atoi(value)
+				}
+			}
+		}
+	}
+
+	dialer, err := vport.NewDialer(os.NewFile(uintptr(port), "port"))
+	if err != nil {
+		return err.Error()
+	}
+
+	conn, err := dialer.Dial(uint32(service))
+	if err != nil {
+		return err.Error()
+	}
+
+	if _, err := io.WriteString(conn, "CONNECT :443 HTTP/1.1\r\nHost: :443\r\n\r\n"); err != nil {
+		return err.Error()
+	}
+
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return err.Error()
+	}
+
+	return strings.TrimSpace(status)
 }
 
 // descriptors are the numbers of the files the arguments name, in the order

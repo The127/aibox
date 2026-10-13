@@ -107,6 +107,7 @@ type Options struct {
 	Console      string
 	Shell        bool
 	Resume       string
+	Port         bool
 	Task         bool
 	HyperV       bool
 	ProxyPort    uint32
@@ -126,6 +127,9 @@ type Network interface {
 	BringLoopbackUp() error
 	Listen(address string) (net.Listener, error)
 	DialHost(port uint32) (net.Conn, error)
+	// OpenHostPort makes DialHost use the virtio port of a host without a
+	// vsock it can keep private.
+	OpenHostPort() error
 }
 
 // Processes is what running commands as the user needs from the kernel.
@@ -334,6 +338,8 @@ func ParseCmdline(cmdline string) (Options, error) {
 			}
 		case "aibox.task":
 			options.Task = true
+		case "aibox.port":
+			options.Port = true
 		case "aibox.hyperv":
 			options.HyperV = true
 		case "aibox.proxy":
@@ -708,6 +714,12 @@ func setup(sys System) (*os.File, Options, error) {
 
 	if err := sys.Sethostname(hostname); err != nil {
 		say(console, "aibox: set the hostname: %v\n", err)
+	}
+
+	if options.Port {
+		if err := sys.OpenHostPort(); err != nil {
+			return console, options, fmt.Errorf("open the port to aibox: %w", err)
+		}
 	}
 
 	if options.ProxyPort != 0 {

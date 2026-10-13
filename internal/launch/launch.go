@@ -33,6 +33,7 @@ import (
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/sandbox"
 	"github.com/the127/aibox/internal/vm"
+	"github.com/the127/aibox/internal/vport"
 	"github.com/the127/aibox/internal/vsockns"
 )
 
@@ -170,22 +171,21 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		return err
 	}
 
-	vsock, err := options.OpenVsock()
+	link, err := openLink(options)
 	if err != nil {
 		_ = os.RemoveAll(sockets)
 
 		return err
 	}
 
-	files, err := openFiles(machine, options, vsock.Vhost)
+	files, err := openFiles(machine, options, link)
 
 	// the connections are made, and once confined aibox could not remove
 	// the folder any more
 	_ = os.RemoveAll(sockets)
 
 	if err != nil {
-		_ = vsock.Proxy.Close()
-		_ = vsock.Terminal.Close()
+		link.close()
 
 		return err
 	}
@@ -195,9 +195,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 	if options.RemoveState {
 		if err := os.Remove(machine.State); err != nil {
 			files.close()
-
-			_ = vsock.Proxy.Close()
-			_ = vsock.Terminal.Close()
+			link.close()
 
 			return fmt.Errorf("remove the state disk: %w", err)
 		}
@@ -205,14 +203,15 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 
 	defer files.close()
 
-	logged := logConsole(files.console, options.ConsoleLog, options.Stderr)
+	logged := logConsole(files.console, options.ConsoleLog, link.notice, options.Stderr)
 
-	stopProxy := host.ServeProxy(ctx, forGuest(vsock.Proxy), options.Proxy, options.Stderr)
+	stopProxy := host.ServeProxy(ctx, link.proxy, options.Proxy, options.Stderr)
 	defer stopProxy()
 
-	machine.ProxyPort = vsock.ProxyPort
+	machine.ProxyPort = link.proxyPort
+	machine.Port = link.port != nil
 
-	stopTerminal := host.ServeTerminal(ctx, forGuest(vsock.Terminal), host.Session{
+	stopTerminal := host.ServeTerminal(ctx, link.terminal, host.Session{
 		Stdin:    options.Stdin,
 		Stdout:   options.Stdout,
 		Errors:   options.Progress,
@@ -220,7 +219,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		EndDelay: options.SessionEndDelay,
 		OnPaste:  options.OnPaste,
 	})
-	machine.TerminalPort = vsock.TerminalPort
+	machine.TerminalPort = link.terminalPort
 
 	err = runQEMU(ctx, machine, files, options)
 
@@ -248,9 +247,14 @@ type qemuFiles struct {
 // openFiles opens everything QEMU needs, so that QEMU opens no path itself
 // and a missing file is reported before it starts. The caller closes the
 // extra files once QEMU has them, and the console when the log is done.
-func openFiles(m vm.Machine, options Options, vhost *os.File) (_ *qemuFiles, err error) {
+func openFiles(m vm.Machine, options Options, link *link) (_ *qemuFiles, err error) {
 	files := &qemuFiles{}
-	files.numbers.Vhost = files.add(vhost)
+
+	if link.port != nil {
+		files.numbers.Port = files.add(link.port)
+	} else {
+		files.numbers.Vhost = files.add(link.vhost)
+	}
 
 	defer func() {
 		if err != nil {
@@ -382,9 +386,10 @@ func connect(share vm.Share) (*os.File, error) {
 }
 
 // logConsole copies the console of the VM into the log file until the VM
-// is gone, and closes the returned channel then. Without a path, or when
-// the file cannot be opened, the console is thrown away.
-func logConsole(console *os.File, path string, stderr io.Writer) <-chan struct{} {
+// is gone, and closes the returned channel then. The notice, if any, comes
+// first. Without a path, or when the file cannot be opened, the console is
+// thrown away.
+func logConsole(console *os.File, path, notice string, stderr io.Writer) <-chan struct{} {
 	log := io.Discard
 
 	if path != "" {
@@ -400,6 +405,10 @@ func logConsole(console *os.File, path string, stderr io.Writer) <-chan struct{}
 
 	go func() {
 		defer close(done)
+
+		if notice != "" {
+			_, _ = fmt.Fprintf(log, "aibox: %s\n", notice)
+		}
 
 		_, _ = io.Copy(host.ConsoleLog(log), console)
 		_ = console.Close()
@@ -759,6 +768,88 @@ func isSocket(path string) bool {
 	info, err := os.Stat(path)
 
 	return err == nil && info.Mode()&os.ModeSocket != 0
+}
+
+// the services the VM dials on the port, in place of the vsock ports
+const (
+	proxyService uint32 = 1 + iota
+	terminalService
+)
+
+// link is how the VM reaches aibox: the listeners of the proxy and the
+// terminal, the ports the VM dials them on, and the vhost-vsock device or
+// the socket of the virtio port for QEMU. The notice says why it is the
+// port.
+type link struct {
+	proxy, terminal         net.Listener
+	proxyPort, terminalPort uint32
+	vhost, port             *os.File
+	notice                  string
+}
+
+// openLink opens vsock in a namespace of its own. A kernel without vsock
+// namespaces gets the virtio port instead, which only aibox and QEMU hold.
+func openLink(options Options) (*link, error) {
+	vsock, err := options.OpenVsock()
+	if err == nil {
+		return &link{
+			proxy:        forGuest(vsock.Proxy),
+			terminal:     forGuest(vsock.Terminal),
+			proxyPort:    vsock.ProxyPort,
+			terminalPort: vsock.TerminalPort,
+			vhost:        vsock.Vhost,
+		}, nil
+	}
+
+	if !errors.Is(err, vsockns.ErrNoNamespaces) {
+		return nil, err
+	}
+
+	notice := fmt.Sprintf("%v, so the VM reaches aibox over a virtio serial port", err)
+
+	// only root can load vsock, so the person is told how
+	if errors.Is(err, vsockns.ErrNotLoaded) {
+		_, _ = fmt.Fprintf(options.Stderr, "aibox: %v. Until then the VM reaches aibox over a serial port\n", err)
+	}
+
+	// a stream on the port is no file of aibox, so the VM gets the limit
+	// of open files of aibox as the most streams it may have open, as over
+	// vsock
+	var files unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &files); err != nil {
+		return nil, fmt.Errorf("read the limit of open files: %w", err)
+	}
+
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("create the socket of the port: %w", err)
+	}
+
+	ours, qemus := os.NewFile(uintptr(pair[0]), "port"), os.NewFile(uintptr(pair[1]), "port")
+
+	listeners, err := vport.Listen(ours, files.Cur, proxyService, terminalService)
+	if err != nil {
+		_ = ours.Close()
+		_ = qemus.Close()
+
+		return nil, fmt.Errorf("listen on the port: %w", err)
+	}
+
+	return &link{
+		proxy:        listeners[0],
+		terminal:     listeners[1],
+		proxyPort:    proxyService,
+		terminalPort: terminalService,
+		port:         qemus,
+		notice:       notice,
+	}, nil
+}
+
+// close closes the listeners, for a run that ends before they are served.
+// The files go to QEMU, and openFiles closes them.
+func (l *link) close() {
+	_ = l.proxy.Close()
+	_ = l.terminal.Close()
 }
 
 // forGuest returns a listener that accepts the connections of the VM and

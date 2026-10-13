@@ -9,3 +9,6 @@ func SetNow(l *Log, now func() time.Time) {
 
 // ReadConnect is readConnect.
 var ReadConnect = readConnect
+
+// Connect is connect.
+var Connect = connect

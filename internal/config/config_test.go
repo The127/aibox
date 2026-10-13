@@ -1157,3 +1157,15 @@ func TestLoadRejectsMaxConnectionsBelowOne(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, config.ErrNotPositive)
 }
+
+func TestAWildcardMatchesNoAddress(t *testing.T) {
+	// arrange
+	hosts := config.Hosts{"*.3.4", "*.githubusercontent.com"}
+
+	for _, host := range []string{"::ffff:1.2.3.4", "1.2.3.4", "::ffff:1.2.3.4%25.githubusercontent.com"} {
+		// act and assert
+		assert.False(t, hosts.Allows(host, "443"), host)
+	}
+
+	assert.True(t, hosts.Allows("objects.githubusercontent.com", "443"))
+}

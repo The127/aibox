@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/the127/aibox/internal/fence"
 	"github.com/the127/aibox/internal/ide"
@@ -34,7 +33,7 @@ func checkIDE(loopback []uint16, env []string) error {
 		return errIDEPort
 	}
 
-	if slices.ContainsFunc(env, func(variable string) bool { return strings.HasPrefix(variable, "CLAUDE_CODE_SSE_PORT=") }) {
+	if hasVariable(env, "CLAUDE_CODE_SSE_PORT") {
 		return errOwnSSEPort
 	}
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"net"
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -990,6 +991,11 @@ func (e entry) matches(host, port string) bool {
 	}
 
 	if below, ok := strings.CutPrefix(e.host, "*."); ok {
+		// an address can end like a name, as ::ffff:1.2.3.4 ends in .3.4
+		if _, err := netip.ParseAddr(host); err == nil {
+			return false
+		}
+
 		return strings.HasSuffix(host, "."+below)
 	}
 

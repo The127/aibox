@@ -221,14 +221,27 @@ func identityVariables(identity gitconfig.Identity, env []string) []string {
 		{"GIT_AUTHOR_EMAIL", identity.Email},
 		{"GIT_COMMITTER_EMAIL", identity.Email},
 	} {
-		set := slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, v.name+"=") })
-
-		if v.value != "" && !set {
+		if v.value != "" && !hasVariable(env, v.name) {
 			variables = append(variables, v.name+"="+v.value)
 		}
 	}
 
 	return variables
+}
+
+// openProject opens the folder aibox keeps for the project in cwd.
+func openProject(aibox, cwd string) (project.Project, error) {
+	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
+	if err != nil {
+		return project.Project{}, fmt.Errorf("open the project folder: %w", err)
+	}
+
+	return p, nil
+}
+
+// hasVariable says whether env, as NAME=value, sets the variable.
+func hasVariable(env []string, name string) bool {
+	return slices.ContainsFunc(env, func(variable string) bool { return strings.HasPrefix(variable, name+"=") })
 }
 
 // folders returns the current folder and the aibox folder.
@@ -328,9 +341,9 @@ func openProjectRun(ctx context.Context, deps dependencies, cmd *cli.Command, cw
 }
 
 func openLockedProjectRun(ctx context.Context, deps dependencies, cwd, aibox, vmImage, kernelDigest string) (projectRun, error) {
-	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
+	p, err := openProject(aibox, cwd)
 	if err != nil {
-		return projectRun{}, fmt.Errorf("open the project folder: %w", err)
+		return projectRun{}, err
 	}
 
 	cfg, err := loadConfig(deps, p.Config, aibox)
@@ -702,7 +715,7 @@ func keepAPIKey(env []string, loopback []uint16) ([]string, string, error) {
 		return env, "", nil
 	}
 
-	if slices.ContainsFunc(env, func(variable string) bool { return strings.HasPrefix(variable, "ANTHROPIC_BASE_URL=") }) {
+	if hasVariable(env, "ANTHROPIC_BASE_URL") {
 		return nil, "", errOwnBaseURL
 	}
 

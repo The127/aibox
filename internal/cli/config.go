@@ -12,7 +12,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/the127/aibox/internal/config"
-	"github.com/the127/aibox/internal/project"
 )
 
 func configCommand(deps dependencies) *cli.Command {
@@ -58,9 +57,9 @@ func editConfig(deps dependencies, editor string, template bool) error {
 			return err
 		}
 	} else {
-		p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
+		p, err := openProject(aibox, cwd)
 		if err != nil {
-			return fmt.Errorf("open the project folder: %w", err)
+			return err
 		}
 
 		if err := config.EnsureDefault(p.Config, path); err != nil {
@@ -89,9 +88,9 @@ func suggestConfig(ctx context.Context, deps dependencies) error {
 		return err
 	}
 
-	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
+	p, err := openProject(aibox, cwd)
 	if err != nil {
-		return fmt.Errorf("open the project folder: %w", err)
+		return err
 	}
 
 	cfg, err := loadConfig(deps, p.Config, aibox)

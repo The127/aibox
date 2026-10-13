@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/the127/aibox/internal/hvchild"
+	"github.com/the127/aibox/internal/proxy"
 )
 
 // targets keeps what the events of a proxy name.
@@ -256,7 +257,7 @@ func TestAiboxTakesOnlyTargetsThatAreAHostAndPort(t *testing.T) {
 	})
 
 	// act
-	for _, target := range []string{"example.com:443", strings.Repeat("a", maxHost+1) + ":443", "example.com", "example.com:99999", "\x1b[2Jexample.com:443", "[::1]:22"} {
+	for _, target := range []string{"example.com:443", strings.Repeat("a", maxHost+1) + ":443", "example.com", "example.com:99999", "\x1b[2Jexample.com:443", "[::1]:22", proxy.InvalidTarget} {
 		require.NoError(t, helper.Send(kindProxy, proxyEvent{Event: proxyRefused, Target: target}))
 	}
 
@@ -264,7 +265,7 @@ func TestAiboxTakesOnlyTargetsThatAreAHostAndPort(t *testing.T) {
 	require.NoError(t, h.Configure(t.Context(), Config{}))
 
 	// assert
-	assert.Equal(t, []string{"example.com:443", "[::1]:22"}, tg.all())
+	assert.Equal(t, []string{"example.com:443", "[::1]:22", proxy.InvalidTarget}, tg.all())
 }
 
 func TestWhyTheHelperCantServeFitsAMessageAiboxReads(t *testing.T) {
@@ -278,7 +279,7 @@ func TestWhyTheHelperCantServeFitsAMessageAiboxReads(t *testing.T) {
 	assert.LessOrEqual(t, size, maxFromHelper())
 }
 
-func TestTheHelperSaysNothingOfATargetLongerThanAnyAndServesOn(t *testing.T) {
+func TestTheHelperReportsATargetLongerThanAnyAsInvalidAndServesOn(t *testing.T) {
 	t.Parallel()
 
 	// arrange
@@ -298,13 +299,15 @@ func TestTheHelperSaysNothingOfATargetLongerThanAnyAndServesOn(t *testing.T) {
 
 	_, _, _ = connect(t, proxyAddr, "example.org:443")
 
-	select {
-	case <-tg.got:
-	case <-time.After(10 * time.Second):
-		t.Fatal("aibox was not told of the target after it")
+	for range 2 {
+		select {
+		case <-tg.got:
+		case <-time.After(10 * time.Second):
+			t.Fatal("aibox was not told of both targets")
+		}
 	}
 
-	assert.Equal(t, []string{"example.org:443"}, tg.all(), "only the target a host can be")
+	assert.Equal(t, []string{proxy.InvalidTarget, "example.org:443"}, tg.all(), "the long target only as invalid")
 }
 
 func TestWhatTheHelperSaysReachesAiboxWithoutControlCharacters(t *testing.T) {

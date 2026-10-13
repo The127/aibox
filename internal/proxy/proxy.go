@@ -32,10 +32,11 @@ const (
 	// session refuses a handful, so more come from a VM that makes up names,
 	// and the rest are only counted.
 	maxTargets = 1000
-	// invalidTarget is what the log keeps for a target that is no host and
-	// port, instead of its text, which can be as long as the request.
-	invalidTarget = "an invalid target"
 )
+
+// InvalidTarget is what the proxy reports for a request whose target is no
+// host and port, instead of its text, which can be as long as the request.
+const InvalidTarget = "an invalid target"
 
 // Options control what the proxy lets through.
 type Options struct {
@@ -134,8 +135,10 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 		return
 	}
 
+	target := net.JoinHostPort(host, port)
+
 	if local != nil {
-		defer options.connected(net.JoinHostPort(host, port))()
+		defer options.connected(target)()
 
 		serveLocal(ctx, conn, reader, local)
 
@@ -144,7 +147,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 
 	upstream, err := connect(ctx, host, port, options)
 	if errors.Is(err, errNotPublic) {
-		refuse(conn, net.JoinHostPort(host, port), reasonNotPublic, options)
+		refuse(conn, target, reasonNotPublic, options)
 
 		return
 	}
@@ -156,7 +159,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	}
 
 	defer func() { _ = upstream.Close() }()
-	defer options.connected(net.JoinHostPort(host, port))()
+	defer options.connected(target)()
 
 	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
 	defer stop()
@@ -220,8 +223,12 @@ func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, o
 	}
 
 	host, port, err = net.SplitHostPort(request.Host)
-	if err != nil || host == "" || port == "" {
+	if err != nil || !ValidTarget(request.Host) {
 		writeError(conn, http.StatusBadRequest, "")
+
+		if options.OnRefused != nil {
+			options.OnRefused(InvalidTarget)
+		}
 
 		return "", "", nil, false
 	}
@@ -373,18 +380,14 @@ func refuse(conn net.Conn, target, reason string, options Options) {
 	writeError(conn, http.StatusForbidden, body)
 
 	if options.OnRefused != nil {
-		if !validTarget(target) {
-			target = invalidTarget
-		}
-
 		options.OnRefused(target)
 	}
 }
 
-// validTarget says whether the target is a host and port the proxy could
+// ValidTarget says whether the target is a host and port the proxy could
 // reach: an address, or a name of at most 253 characters in labels of at
 // most 63, and a port.
-func validTarget(target string) bool {
+func ValidTarget(target string) bool {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return false

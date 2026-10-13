@@ -948,8 +948,8 @@ func TestServeReportsAnInvalidTargetWithoutItsText(t *testing.T) {
 	status, _ := connect(t, address, strings.Repeat("a", 300)+".example:443")
 
 	// assert
-	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
-	assert.Equal(t, "an invalid target", <-refused)
+	assert.Equal(t, "HTTP/1.1 400 Bad Request", status)
+	assert.Equal(t, proxy.InvalidTarget, <-refused)
 }
 
 func TestLogKeepsAThousandTargetsAndCountsTheRest(t *testing.T) {
@@ -969,4 +969,32 @@ func TestLogKeepsAThousandTargetsAndCountsTheRest(t *testing.T) {
 	assert.Len(t, refused, 1000)
 	assert.Equal(t, 1, strings.Count(out.String(), "refused more than 1000 targets, the log names no more of them"))
 	assert.Contains(t, out.String(), "summary refused other targets 2 times")
+}
+
+func TestValidTarget(t *testing.T) {
+	// arrange
+	tests := map[string]bool{
+		"example.com:443":                        true,
+		"example.com.:443":                       true,
+		"under_score.example:443":                true,
+		"93.184.216.34:443":                      true,
+		"[2606:4700::1111]:443":                  true,
+		"example.com":                            false,
+		"example.com:0":                          false,
+		"example.com:65536":                      false,
+		"example.com:https":                      false,
+		":443":                                   false,
+		"a..b:443":                               false,
+		"a b.example:443":                        false,
+		"\x1b[2Jexample.com:443":                 false,
+		strings.Repeat("a", 64) + ".example:443": false,
+		strings.Repeat("a.", 127) + "ab:443":     false,
+	}
+
+	for target, want := range tests {
+		t.Run(target, func(t *testing.T) {
+			// act and assert
+			assert.Equal(t, want, proxy.ValidTarget(target))
+		})
+	}
 }

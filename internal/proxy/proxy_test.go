@@ -1048,3 +1048,44 @@ func TestReadConnectKeepsNoHeaderLine(t *testing.T) {
 	// header lines
 	assert.LessOrEqual(t, allocations, 10.0)
 }
+
+func TestServeTurnsAwayAConnectionBeyondTheLimit(t *testing.T) {
+	// arrange
+	refused := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		OnRefused:      func(target string) { refused <- target },
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	first, _ := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", first)
+
+	// act
+	second, _ := connect(t, address, "localhost:3129")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 503 Service Unavailable", second)
+	assert.Equal(t, proxy.TooManyConnections, <-refused)
+}
+
+func TestServeServesAgainOnceAConnectionClosed(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	_, conn := connect(t, address, "localhost:3129")
+	require.NoError(t, conn.Close())
+
+	// act and assert
+	assert.Eventually(t, func() bool {
+		status, conn := connect(t, address, "localhost:3129")
+		_ = conn.Close()
+
+		return status == "HTTP/1.1 200 Connection Established"
+	}, timeout, 10*time.Millisecond)
+}

@@ -1092,3 +1092,31 @@ func TestLoadRejectsAPortOfTheHostTwice(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, config.ErrPortTwice)
 }
+
+func TestLoadReadsMaxConnections(t *testing.T) {
+	// arrange
+	path := write(t, "max-connections: 64\n")
+
+	// act
+	cfg, err := config.Load(path, "")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 64, cfg.ConnectionLimit())
+}
+
+func TestConnectionLimitHasADefault(t *testing.T) {
+	// act and assert
+	assert.Equal(t, config.DefaultMaxConnections, config.Config{}.ConnectionLimit())
+}
+
+func TestLoadRejectsMaxConnectionsBelowOne(t *testing.T) {
+	// arrange
+	path := write(t, "max-connections: 0\n")
+
+	// act
+	_, err := config.Load(path, "")
+
+	// assert
+	require.ErrorIs(t, err, config.ErrNotPositive)
+}

@@ -257,7 +257,7 @@ func TestAiboxTakesOnlyTargetsThatAreAHostAndPort(t *testing.T) {
 	})
 
 	// act
-	for _, target := range []string{"example.com:443", strings.Repeat("a", maxHost+1) + ":443", "example.com", "example.com:99999", "\x1b[2Jexample.com:443", "[::1]:22", proxy.InvalidTarget} {
+	for _, target := range []string{"example.com:443", strings.Repeat("a", maxHost+1) + ":443", "example.com", "example.com:99999", "\x1b[2Jexample.com:443", "[::1]:22", proxy.InvalidTarget, proxy.TooManyConnections} {
 		require.NoError(t, helper.Send(kindProxy, proxyEvent{Event: proxyRefused, Target: target}))
 	}
 
@@ -265,7 +265,7 @@ func TestAiboxTakesOnlyTargetsThatAreAHostAndPort(t *testing.T) {
 	require.NoError(t, h.Configure(t.Context(), Config{}))
 
 	// assert
-	assert.Equal(t, []string{"example.com:443", "[::1]:22", proxy.InvalidTarget}, tg.all())
+	assert.Equal(t, []string{"example.com:443", "[::1]:22", proxy.InvalidTarget, proxy.TooManyConnections}, tg.all())
 }
 
 func TestWhyTheHelperCantServeFitsAMessageAiboxReads(t *testing.T) {

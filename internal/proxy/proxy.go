@@ -36,7 +36,12 @@ const (
 
 // InvalidTarget is what the proxy reports for a request whose target is no
 // host and port, instead of its text, which can be as long as the request.
-const InvalidTarget = "an invalid target"
+// TooManyConnections is what it reports for a connection beyond
+// Options.MaxConnections.
+const (
+	InvalidTarget      = "an invalid target"
+	TooManyConnections = "too many connections at once"
+)
 
 // Options control what the proxy lets through.
 type Options struct {
@@ -48,6 +53,9 @@ type Options struct {
 	OnConnected func(target string)
 	// OnRefused is called with the host:port of each refused request.
 	OnRefused func(target string)
+	// MaxConnections is how many connections the proxy serves at once, or
+	// 0 for any number.
+	MaxConnections int
 	// OnClosed is called with the host:port of each request the proxy
 	// reached once its tunnel has closed.
 	OnClosed func(target string)
@@ -117,9 +125,31 @@ var (
 	sixToFour = netip.MustParsePrefix("2002::/16")
 )
 
-// Serve accepts connections until the context ends.
+// Serve accepts connections until the context ends. A connection beyond
+// Options.MaxConnections gets a 503 and is closed, so that the client
+// learns why instead of waiting.
 func Serve(ctx context.Context, listener net.Listener, options Options) error {
+	var open chan struct{}
+	if options.MaxConnections > 0 {
+		open = make(chan struct{}, options.MaxConnections)
+	}
+
 	return tunnel.Serve(ctx, listener, func(ctx context.Context, conn net.Conn) {
+		if open != nil {
+			select {
+			case open <- struct{}{}:
+				defer func() { <-open }()
+			default:
+				writeError(conn, http.StatusServiceUnavailable, "aibox: "+TooManyConnections+"\n")
+
+				if options.OnRefused != nil {
+					options.OnRefused(TooManyConnections)
+				}
+
+				return
+			}
+		}
+
 		handle(ctx, conn, options)
 	})
 }

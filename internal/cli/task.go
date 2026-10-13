@@ -176,6 +176,15 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 
 	// from here on, every line of the task carries its ID, the error too
 	log := task.NewLog(deps.stderr, shortID(t.dir), time.Now)
+	log.Wrap(func() int {
+		width, terminal := deps.stderrWidth()
+		if !terminal {
+			return 0
+		}
+
+		return width
+	})
+
 	host, vm := log.Writer("aibox"), log.Writer("vm")
 
 	defer func() { err = finishLog(host, vm, err) }()

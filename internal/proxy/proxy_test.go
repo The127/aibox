@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -794,4 +795,92 @@ func TestServeStopsWithATunnelOpen(t *testing.T) {
 
 	_, err = tunnel.Read(make([]byte, 1))
 	assert.Error(t, err)
+}
+
+// deadlineConn notes each deadline in the past set on it, which on a
+// Hyper-V socket
+// of Windows cancels a receive that waits and leaves the socket unusable.
+type deadlineConn struct {
+	net.Conn
+
+	set *atomic.Int32
+}
+
+func (c deadlineConn) SetDeadline(t time.Time) error {
+	c.note(t)
+
+	return c.Conn.SetDeadline(t)
+}
+
+func (c deadlineConn) SetReadDeadline(t time.Time) error {
+	c.note(t)
+
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c deadlineConn) SetWriteDeadline(t time.Time) error {
+	c.note(t)
+
+	return c.Conn.SetWriteDeadline(t)
+}
+
+// deadlineListener hands out its connections as deadlineConns.
+type deadlineListener struct {
+	net.Listener
+
+	set *atomic.Int32
+}
+
+func (l deadlineListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+
+	return deadlineConn{Conn: conn, set: l.set}, nil
+}
+
+func TestServeSetsNoDeadlineOnATunnelWhoseHandlerTakesItOver(t *testing.T) {
+	// arrange: a local target that takes the connection over, as a
+	// WebSocket does
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	set := &atomic.Int32{}
+	address, stop := startOn(t, deadlineListener{Listener: inner, set: set}, proxy.Options{
+		Allow: func(string, string) bool { return false },
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				conn, rw, err := http.NewResponseController(w).Hijack()
+				if err != nil {
+					return
+				}
+
+				defer func() { _ = conn.Close() }()
+
+				_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n\r\ntaken over")
+				_ = rw.Flush()
+			})
+		},
+	})
+	t.Cleanup(func() { _ = stop() })
+
+	conn := dial(t, address)
+
+	// act
+	_, err = io.WriteString(conn, "CONNECT localhost:3131 HTTP/1.1\r\nHost: localhost:3131\r\n\r\nGET / HTTP/1.1\r\nHost: localhost:3131\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+	require.NoError(t, err)
+
+	got, err := io.ReadAll(conn)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "taken over")
+	assert.Zero(t, set.Load(), "a deadline in the past on the tunnel")
+}
+
+func (c deadlineConn) note(t time.Time) {
+	if !t.IsZero() && t.Before(time.Now()) {
+		c.set.Add(1)
+	}
 }

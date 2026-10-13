@@ -195,8 +195,39 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port
 func serveLocal(ctx context.Context, conn net.Conn, reader *bufio.Reader, handler http.Handler) {
 	writeTunnelOK(conn)
 
-	// the reader may hold bytes the client sent right after its request
-	listener := &oneConn{conn: bufferedConn{Conn: conn, reader: reader}, done: make(chan struct{})}
+	// the server takes the connection over for a handler, as for a
+	// WebSocket, by ending the read it waits on with a deadline in the
+	// past. On a Hyper-V socket of Windows that cancels the overlapped
+	// receive, after which Winsock leaves the socket unusable. So the
+	// server gets one end of a pipe, and the tunnel only plain reads and
+	// writes, which carry what the server closed on to the client. A pipe
+	// has no half-close, so a client that ends its side ends the server's
+	// too, which no local service needs.
+	served, relayed := net.Pipe()
+	written := make(chan struct{})
+
+	// a write to the pipe returns once the copy read it, not once it
+	// reached the client, and the caller closes the tunnel when this
+	// returns, so the copy finishes first
+	defer func() {
+		_ = relayed.Close()
+		<-written
+	}()
+
+	go func() {
+		// the reader may hold bytes the client sent right after its request
+		_, _ = io.Copy(relayed, reader)
+		_ = relayed.Close()
+	}()
+
+	go func() {
+		defer close(written)
+
+		_, _ = io.Copy(conn, relayed)
+		_ = conn.Close()
+	}()
+
+	listener := &oneConn{conn: served, done: make(chan struct{})}
 
 	// a handler that takes the connection over, as for a WebSocket, goes on
 	// using it after the server is done with it, so the tunnel stays open
@@ -247,16 +278,6 @@ func serveLocal(ctx context.Context, conn net.Conn, reader *bufio.Reader, handle
 
 	_ = server.Serve(listener)
 }
-
-// bufferedConn reads what the reader of the handshake holds before the rest
-// of the connection.
-type bufferedConn struct {
-	net.Conn
-
-	reader *bufio.Reader
-}
-
-func (c bufferedConn) Read(b []byte) (int, error) { return c.reader.Read(b) }
 
 // oneConn is a listener of a single connection. Accept returns it once and
 // then waits until it is closed.

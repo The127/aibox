@@ -633,7 +633,7 @@ func gitLogins(ctx context.Context, deps dependencies, remotes []config.GitRemot
 			if err != nil {
 				closeKeys(keys)
 
-				return nil, nil, fmt.Errorf("git entry %s: git on this machine has no login for HTTPS, and SSH does not work either: %w", remote.Remote, err)
+				return nil, nil, fmt.Errorf("git entry %s: git on this machine has no login for HTTPS, and SSH does not work either: %w (aibox asks for no login: store one with git, such as by a git push over HTTPS, or make SSH work)", remote.Remote, err)
 			}
 
 			_, _ = fmt.Fprintf(deps.stderr, "aibox: git has no login for HTTPS for %s, so the broker reaches it over SSH as %s@%s with %s\n",

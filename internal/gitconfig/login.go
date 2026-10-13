@@ -21,14 +21,16 @@ type Login struct {
 	Password string
 }
 
-// loginTimeout is how long a credential helper may take, which may ask the
-// person in a window of its own.
+// loginTimeout is how long a credential helper may take, which may still
+// want something of the person, such as a password manager to unlock.
 const loginTimeout = 2 * time.Minute
 
-// LoginFor asks git on the host for its login for the HTTPS remote, given
-// as host/path, as git push would. It runs outside any repository, so the
-// config of a project, which the VM can write, has no say, and never asks
-// on the terminal.
+// LoginFor asks git on the host for the login it has stored for the HTTPS
+// remote, given as host/path, as git push would. It runs outside any
+// repository, so the config of a project, which the VM can write, has no
+// say. It lets git ask the person for none, on the terminal or in the
+// login window of Git Credential Manager: starting aibox is no logging
+// in, and a remote that has no login over HTTPS may have one over SSH.
 func LoginFor(ctx context.Context, remote string) (Login, error) {
 	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
 	defer cancel()
@@ -37,7 +39,7 @@ func LoginFor(ctx context.Context, remote string) (Login, error) {
 
 	cmd := exec.CommandContext(ctx, "git", "credential", "fill")
 	cmd.Dir = "/"
-	cmd.Env = append(withoutRepository(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(withoutRepository(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("protocol=https\nhost=%s\npath=%s.git\n\n", host, repository))
 
 	var stderr bytes.Buffer

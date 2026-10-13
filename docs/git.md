@@ -71,6 +71,13 @@ repository, the same way `git push` over HTTPS would. If git has none, the
 broker talks to the server over SSH instead, as `git@HOST`. aibox tells you
 when it does that.
 
+aibox only takes a login git has stored. It lets git ask you for none, on
+the terminal or in the login window of Git Credential Manager, since
+starting aibox is no logging in. A helper with an unlock window of its
+own, such as a password manager, may still show it. For HTTPS, store a
+login once with git, for example with a `git push` over HTTPS or with
+`gh auth setup-git`.
+
 aibox asks `ssh -G` how ssh would reach the host. So these settings from
 your `~/.ssh/config` apply: `HostName`, `Port`, `IdentityFile`,
 `IdentitiesOnly`, `IdentityAgent`, `UserKnownHostsFile`,

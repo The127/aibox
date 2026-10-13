@@ -13,7 +13,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/the127/aibox/internal/filelock"
-	"github.com/the127/aibox/internal/project"
 	"github.com/the127/aibox/internal/task"
 )
 
@@ -49,9 +48,9 @@ func runClean(deps dependencies, all bool, olderThan time.Duration) error {
 		return err
 	}
 
-	p, err := project.Open(filepath.Join(aibox, "projects"), cwd)
+	p, err := openProject(aibox, cwd)
 	if err != nil {
-		return fmt.Errorf("open the project folder: %w", err)
+		return err
 	}
 
 	var before time.Time

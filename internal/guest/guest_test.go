@@ -721,7 +721,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"own /var/lib/aibox/state/cache",
 		"mount /var/lib/aibox/state/cache /home/user/.cache",
 		"own /var/lib/aibox/state/containers",
-		"mount /var/lib/aibox/state/containers /home/user/.local/share/containers",
+		"mount /var/lib/aibox/state/containers /home/user/.local/share/containers", "own /var/lib/aibox/state/mise", "mount /var/lib/aibox/state/mise /home/user/.local/share/mise",
 		"own /usr/local/bin",
 		"mount shared /",
 		"mount overlay /",

@@ -598,11 +598,15 @@ func (t *taskRun) execute(s *step) (int, error) {
 		}
 	}
 
+	// one writer for both gets one pipe, so that their lines come in order
+	// and the writer is written from one copy only
+	merged := s.stdout != nil && s.stderr == s.stdout
+
 	for _, output := range []struct {
 		to  io.Writer
 		set *io.Writer
 	}{{s.stdout, &cmd.Stdout}, {s.stderr, &cmd.Stderr}} {
-		if output.to == nil {
+		if output.to == nil || (merged && output.set == &cmd.Stderr) {
 			continue
 		}
 
@@ -622,6 +626,10 @@ func (t *taskRun) execute(s *step) (int, error) {
 			_, _ = io.Copy(output.to, r)
 			_ = r.Close()
 		})
+	}
+
+	if merged {
+		cmd.Stderr = cmd.Stdout
 	}
 
 	pid, err := t.sys.Start(cmd, s.cgroup)

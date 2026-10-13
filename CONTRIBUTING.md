@@ -25,6 +25,15 @@ VM with `/nix/store:/nix/store` under `mounts` and
 `/project/.devenv/profile/bin` under `path` in the project's config, since
 that profile links into `/nix/store`.
 
+`mise.toml` names the same tools for aibox's VM, except reuse, which needs
+Python. Set `mise: true` and allow `preset:mise`, `preset:go` and
+`ziglang.org` in the project's config. The tools then work on macOS too,
+where the binaries in `/nix/store` are built for the Mac and can't run in
+the VM. `go test -race` needs a C compiler, which zig provides: add
+`CC=zig cc -target aarch64-linux-gnu` under `env`, or `x86_64-linux-gnu`
+on amd64. Leave out the license check in the hooks with
+`LEFTHOOK_EXCLUDE=license information` under `env`.
+
 The package dependency rules in `arch-go.yml` are checked by
 [arch-go](https://github.com/arch-go/arch-go), which the Go toolchain
 fetches on its own (`go tool`). It is pinned in a module of its own,

@@ -80,6 +80,9 @@ type Options struct {
 	Env []string
 	// OnPaste is called each time the person presses Ctrl+V, or is nil.
 	OnPaste func()
+	// Forwards are listeners whose connections go into the VM while its
+	// session runs.
+	Forwards []backend.Forward
 	// KVMDevice is the KVM device file QEMU gets. Empty means /dev/kvm.
 	KVMDevice string
 	// Bubblewrap is the program that runs QEMU in its sandbox. Empty means
@@ -218,6 +221,7 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		Env:      options.Env,
 		EndDelay: options.SessionEndDelay,
 		OnPaste:  options.OnPaste,
+		Forwards: options.Forwards,
 	})
 	machine.TerminalPort = link.terminalPort
 

@@ -14,6 +14,8 @@ Other programs on your machine can't reach the VM either. On Linux each VM
 has its own vsock namespace, so no other process can connect to it. On a
 Linux kernel without vsock namespaces, the VM talks to aibox over a serial
 port that only aibox holds. On macOS only aibox can reach its VM's vsock.
+The exceptions are the [ports](config.md#ports) you list. Any program on
+your machine can connect to them, and through them to the VM's servers.
 
 Other programs also can't pose as a server you allowed. A server on your
 machine's loopback usually listens on only one address, `127.0.0.1` or
@@ -76,6 +78,7 @@ Everything the VM can reach on your machine goes through one of these.
 | The IDE bridge | Selections, diffs and errors | With `ide: true`, the bridge passes on only those messages, and only for files in the project. See [In your IDE](usage.md#in-your-ide). |
 | The clipboard | One image after Ctrl+V | aibox lets the VM read the clipboard only right after you press Ctrl+V, once, and only an image. Tasks never get it. See [Pasting images](usage.md#pasting-images). |
 | The terminal | What Claude Code shows you | `aibox run` passes the VM's terminal straight through. |
+| The ports | Connections from your machine to servers in the VM | aibox listens only on `127.0.0.1`, only on the ports the config lists, and only with `aibox run`. The VM only connects them to its own loopback. See [ports](config.md#ports). |
 | A task's results | The bundle, the logs and `result.json` | For `aibox task`, aibox checks each file and the bundle, and strips control characters before text reaches your terminal. See [How a task runs](tasks.md#how-a-task-runs). |
 | Your project folder | What the VM writes | aibox doesn't check it. Treat it like a pull request from a stranger. See [What the VM writes](what-the-vm-writes.md). |
 
@@ -129,6 +132,11 @@ has the details.
   `aibox projects reset --logout` clears both. See
   [Starting over](usage.md#starting-over). Tasks get a new home and state
   disk each time.
+- What the VM's servers send to your browser through the
+  [ports](config.md#ports). A page from the VM shares the cookies of your
+  other local servers on the same name, and it can make your browser send
+  them requests. Any program or user on your machine, and any website you
+  visit, can reach those ports too.
 - What the VM shows in your terminal. With `aibox run` its output reaches
   your terminal as it is, escape sequences included.
 - Force pushes to an allowed branch, and the CI a pushed branch starts.
@@ -150,6 +158,7 @@ forwarder. What changes is what the VM gets to touch and who is watching.
 | Who approves each step | you | nobody, because Claude Code has all permissions |
 | What stays for the next run | the home and the state disk | nothing, because both are new each time |
 | The clipboard | after Ctrl+V, unless `clipboard: false` | never |
+| The ports | the ones the config lists | never |
 | What reaches your terminal | the VM's output as it is | text with control characters stripped, each line marked |
 | What reaches your project | every write, right away | only the bundle, after aibox checks it, and only once you fetch it |
 

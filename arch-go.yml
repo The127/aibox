@@ -41,6 +41,7 @@ dependenciesRules:
         - '**.internal.backend$'
         - '**.internal.proxy$'
         - '**.internal.session$'
+        - '**.internal.tunnel$'
     shouldNotDependsOn:
       internal:
         - '**.cmd.**'

@@ -3,11 +3,14 @@
 package seatbelt_test
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,10 +41,25 @@ func probe(port string, tries []string) int {
 		return 2
 	}
 
+	// a listener from before the sandbox, as aibox opens the ports of the
+	// VM before it confines itself
+	var opened net.Listener
+
+	if slices.Contains(tries, "accept") {
+		if opened, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+			return 1
+		}
+	}
+
 	if err := seatbelt.Apply([]uint16{uint16(p)}); err != nil { //nolint:gosec // a port of the test
 		fmt.Println("apply:", err)
 
 		return 1
+	}
+
+	// the test connects only once the sandbox is on
+	if opened != nil {
+		fmt.Println("listening", opened.Addr())
 	}
 
 	for _, try := range tries {
@@ -69,12 +87,35 @@ func probe(port string, tries []string) int {
 			err = signal(arg)
 		case "lookup":
 			_, err = net.LookupHost(arg) //nolint:gosec // a name of the test
+		case "listen":
+			var listener net.Listener
+
+			listener, err = net.Listen("tcp", "127.0.0.1:0")
+			if err == nil {
+				_ = listener.Close()
+			}
+		case "accept":
+			err = acceptOne(opened)
 		}
 
 		fmt.Printf("%s %s\n", what, outcome(err))
 	}
 
 	return 0
+}
+
+// acceptOne accepts a connection and reads what it sends.
+func acceptOne(listener net.Listener) error {
+	conn, err := listener.Accept()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	_, err = io.ReadAll(conn)
+
+	return err
 }
 
 // procargs reads the arguments and the environment of the process, which
@@ -160,6 +201,36 @@ func TestAConfinedProcessConnectsOnlyToTheAllowedPorts(t *testing.T) {
 	// assert
 	assert.Equal(t, "allowed", got["connect"])
 	assert.Equal(t, "refused", refused["connect"])
+}
+
+func TestAConfinedProcessAcceptsOnAListenerFromBeforeButListensOnNoNewOne(t *testing.T) {
+	// arrange
+	cmd := exec.Command(os.Args[0], "accept", "listen") //nolint:gosec // the test binary itself
+	cmd.Env = append(os.Environ(), probeEnv+"=1")
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+
+	lines := bufio.NewScanner(stdout)
+	require.True(t, lines.Scan())
+	address, ok := strings.CutPrefix(lines.Text(), "listening ")
+	require.True(t, ok, lines.Text())
+
+	// act
+	conn, err := net.Dial("tcp", address)
+	require.NoError(t, err)
+	_, err = io.WriteString(conn, "hello")
+	require.NoError(t, err)
+	_ = conn.Close()
+
+	var results []string
+	for lines.Scan() {
+		results = append(results, lines.Text())
+	}
+
+	// assert
+	require.NoError(t, cmd.Wait())
+	assert.Equal(t, []string{"accept allowed", "listen refused"}, results)
 }
 
 func TestAConfinedProcessNeitherReadsNorWritesFiles(t *testing.T) {

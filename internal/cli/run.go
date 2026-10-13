@@ -178,6 +178,14 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
+	// aibox can't listen on a port once it has locked itself down
+	spec.Forwards, err = listenPorts(r.config.Ports, r.config.Allow.LoopbackPorts())
+	if err != nil {
+		return err
+	}
+
+	defer closeForwards(spec.Forwards)
+
 	before := sessions(r.project.Home)
 	err = deps.backend.Run(ctx, spec)
 	r.proxyLog.Summarize()

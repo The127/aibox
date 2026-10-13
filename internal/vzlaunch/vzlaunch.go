@@ -156,6 +156,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		Env:      spec.Env,
 		EndDelay: b.SessionEndDelay,
 		OnPaste:  spec.OnPaste,
+		Forwards: spec.Forwards,
 	})
 
 	// Virtualization.framework locks the state disk as it starts the VM and

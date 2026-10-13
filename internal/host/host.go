@@ -11,11 +11,13 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/the127/aibox/internal/backend"
 	"github.com/the127/aibox/internal/proxy"
 	"github.com/the127/aibox/internal/session"
+	"github.com/the127/aibox/internal/tunnel"
 )
 
 // DefaultSessionEndDelay is how long the session may go on after the VM
@@ -52,6 +54,9 @@ type Session struct {
 	EndDelay time.Duration
 	// OnPaste is called each time the person presses Ctrl+V, or is nil.
 	OnPaste func()
+	// Forwards are listeners whose connections go into the VM while the
+	// session on the terminal runs. They are closed when it ends.
+	Forwards []backend.Forward
 }
 
 // Outcome is how the terminal session went: whether the VM connected, the
@@ -137,6 +142,12 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	client.Env = s.Env
 	client.OnPaste = s.OnPaste
 
+	if len(s.Forwards) > 0 {
+		client.Forward = func(ctx context.Context, dial session.Dial) {
+			forward(ctx, s.Forwards, dial)
+		}
+	}
+
 	code, err := client.Attach(conn)
 
 	restore()
@@ -146,6 +157,32 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	}
 
 	return Outcome{attached: true, code: code}
+}
+
+// forward passes each connection of the listeners on to its port in the VM
+// until the context ends, and closes the listeners then.
+func forward(ctx context.Context, forwards []backend.Forward, dial session.Dial) {
+	var served sync.WaitGroup
+
+	for _, f := range forwards {
+		served.Go(func() {
+			_ = tunnel.Serve(ctx, f.Listener, func(ctx context.Context, conn net.Conn) {
+				vm, err := dial(f.Port)
+				if err != nil {
+					return
+				}
+
+				defer func() { _ = vm.Close() }()
+
+				stop := context.AfterFunc(ctx, func() { _ = vm.Close() })
+				defer stop()
+
+				tunnel.Join(conn, vm)
+			})
+		})
+	}
+
+	served.Wait()
 }
 
 // MaxConsoleLogBytes is how much of the console of a VM goes into its log.

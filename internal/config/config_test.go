@@ -1056,3 +1056,39 @@ func TestLoadRefusesAShareOtherThanAllOrNone(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadReadsThePorts(t *testing.T) {
+	// arrange
+	path := write(t, "ports:\n  - 5173\n  - 8080:3000\n  - \"9000:9001\"\n")
+
+	// act
+	cfg, err := config.Load(path, "")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []config.Port{{Host: 5173, VM: 5173}, {Host: 8080, VM: 3000}, {Host: 9000, VM: 9001}}, cfg.Ports)
+}
+
+func TestLoadRejectsABadPort(t *testing.T) {
+	for _, entry := range []string{"0", "65536", "http", "8080:", ":3000", "1:2:3", "-1", "8080:0"} {
+		// arrange
+		path := write(t, "ports:\n  - \""+entry+"\"\n")
+
+		// act
+		_, err := config.Load(path, "")
+
+		// assert
+		require.ErrorIs(t, err, config.ErrBadPort, entry)
+	}
+}
+
+func TestLoadRejectsAPortOfTheHostTwice(t *testing.T) {
+	// arrange
+	path := write(t, "ports:\n  - 5173\n  - 5173:3000\n")
+
+	// act
+	_, err := config.Load(path, "")
+
+	// assert
+	require.ErrorIs(t, err, config.ErrPortTwice)
+}

@@ -1089,3 +1089,33 @@ func TestServeServesAgainOnceAConnectionClosed(t *testing.T) {
 		return status == "HTTP/1.1 200 Connection Established"
 	}, timeout, 10*time.Millisecond)
 }
+
+func TestReadConnectTakesWhatClientsSend(t *testing.T) {
+	tests := map[string]string{
+		"bare LF":  "CONNECT example.com:443 HTTP/1.1\nHost: example.com:443\n\n",
+		"HTTP/1.0": "CONNECT example.com:443 HTTP/1.0\r\n\r\n",
+	}
+
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			// act
+			method, target, err := proxy.ReadConnect(bufio.NewReader(strings.NewReader(raw)))
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, "CONNECT", method)
+			assert.Equal(t, "example.com:443", target)
+		})
+	}
+}
+
+func TestServeAnswers400ToARequestLineLongerThanATarget(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{})
+
+	// act
+	r, _ := request(t, address, "CONNECT "+strings.Repeat("a", 8<<10)+".example:443 HTTP/1.1\r\n\r\n")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 400 Bad Request", r.status)
+}

@@ -252,8 +252,8 @@ func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, o
 		return "", "", nil, false
 	}
 
-	host, port, err = net.SplitHostPort(target)
-	if err != nil || !ValidTarget(target) {
+	host, port, valid := splitTarget(target)
+	if !valid {
 		writeError(conn, http.StatusBadRequest, "")
 
 		if options.OnRefused != nil {
@@ -458,31 +458,39 @@ func refuse(conn net.Conn, target, reason string, options Options) {
 // reach: an address, or a name of at most 253 characters in labels of at
 // most 63, and a port.
 func ValidTarget(target string) bool {
+	_, _, valid := splitTarget(target)
+
+	return valid
+}
+
+// splitTarget returns the host and port of a target and whether it is
+// valid, as ValidTarget says.
+func splitTarget(target string) (host, port string, valid bool) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
-		return false
+		return "", "", false
 	}
 
 	// as written, so that zeros in front can't make it any length
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
-		return false
+		return "", "", false
 	}
 
 	if net.ParseIP(host) != nil {
-		return true
+		return host, port, true
 	}
 
 	if host == "" || len(host) > 253 {
-		return false
+		return "", "", false
 	}
 
 	for label := range strings.SplitSeq(strings.TrimSuffix(host, "."), ".") {
 		if label == "" || len(label) > 63 || strings.ContainsFunc(label, notInLabel) {
-			return false
+			return "", "", false
 		}
 	}
 
-	return true
+	return host, port, true
 }
 
 // notInLabel says whether a character has no place in a label of a name:

@@ -41,3 +41,14 @@ func parseData(out []byte) ([]byte, error) {
 
 	return data, nil
 }
+
+// readText gets the text from pbpaste, as UTF-8 in the locale aibox sets
+// for it.
+func readText() ([]byte, error) {
+	return outputUTF8("pbpaste")
+}
+
+// outputUTF8 runs the program in a locale of UTF-8, whatever that of aibox.
+func outputUTF8(name string, args ...string) ([]byte, error) {
+	return outputWith([]string{"LC_ALL=en_US.UTF-8"}, name, args...)
+}

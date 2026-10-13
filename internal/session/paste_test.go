@@ -175,3 +175,104 @@ func TestTheWatcherOfLinuxAndMacOSPassesAltVOn(t *testing.T) {
 	assert.Equal(t, "\x1bv\x1b[118;3u", got)
 	assert.Zero(t, count)
 }
+
+func TestTheWatcherPastesInPlaceOfTheKey(t *testing.T) {
+	for name, tt := range map[string]struct {
+		typed string
+		altV  bool
+		want  string
+	}{
+		"ctrl+v":                  {typed: "a\x16b", want: "a<paste>b"},
+		"kitty ctrl+v":            {typed: "a\x1b[118;5ub", want: "a<paste>b"},
+		"alt+v when it pastes":    {typed: "a\x1bvb", altV: true, want: "a<paste>b"},
+		"alt+v when it does not":  {typed: "a\x1bvb", want: "a\x1bvb"},
+		"in pasted text, nothing": {typed: "\x1b[200~\x16\x1b[201~", want: "\x1b[200~\x16\x1b[201~"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// act
+			got, err := io.ReadAll(session.WatchPasteWith(strings.NewReader(tt.typed), func() []byte { return []byte("<paste>") }, tt.altV))
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, string(got))
+		})
+	}
+}
+
+func TestTheWatcherPassesTheKeyOnWithoutText(t *testing.T) {
+	// act: an image on the clipboard, which the VM reads itself
+	got, err := io.ReadAll(session.WatchPasteWith(strings.NewReader("a\x16b\x1bv"), func() []byte { return nil }, true))
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "a\x16b\x16", string(got))
+}
+
+func TestTheWatcherHandsOutAPasteLongerThanTheReadsOfItsReader(t *testing.T) {
+	// arrange
+	long := strings.Repeat("0123456789", 100)
+	r := session.WatchPasteWith(strings.NewReader("a\x16b"), func() []byte { return []byte(long) }, false)
+
+	// act: as small reads as anyone may make
+	var got []byte
+
+	b := make([]byte, 3)
+
+	for {
+		n, err := r.Read(b)
+		got = append(got, b[:n]...)
+
+		if err != nil {
+			require.ErrorIs(t, err, io.EOF)
+
+			break
+		}
+	}
+
+	// assert
+	assert.Equal(t, "a"+long+"b", string(got))
+}
+
+func TestTheWatcherPassesOnAKeySplitAcrossReads(t *testing.T) {
+	// act: what began the key went on with an earlier read
+	got, err := io.ReadAll(session.WatchPasteWith(iotest.OneByteReader(strings.NewReader("\x1b[118;5u")), func() []byte { return []byte("<paste>") }, false))
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "\x1b[118;5u", string(got))
+}
+
+func TestPastedIsTheTextAsATerminalPastesIt(t *testing.T) {
+	for name, tt := range map[string]struct {
+		text      string
+		bracketed bool
+		want      string
+	}{
+		"lines end in carriage returns": {text: "a\r\nb\nc", want: "a\rb\rc"},
+		"between the markers":           {text: "a", bracketed: true, want: "\x1b[200~a\x1b[201~"},
+		"without escapes or controls":   {text: "a\x1b[201~rm -rf /\x07\x00b\u009b", bracketed: true, want: "\x1b[200~a[201~rm -rf /b\x1b[201~"},
+		"with tabs and umlauts":         {text: "Grüße\tWien", want: "Grüße\tWien"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tt.want, string(session.Pasted(tt.text, tt.bracketed)))
+		})
+	}
+}
+
+func TestTheModeWatcherFollowsBracketedPasteAcrossWrites(t *testing.T) {
+	// arrange
+	var screen strings.Builder
+
+	w, on := session.WatchMode(&screen)
+
+	// act and assert: on, split across two writes, then off
+	_, _ = io.WriteString(w, "text\x1b[?20")
+	assert.False(t, on())
+
+	_, _ = io.WriteString(w, "04hmore")
+	assert.True(t, on())
+
+	_, _ = io.WriteString(w, "\x1b[?2004l")
+	assert.False(t, on())
+	assert.Equal(t, "text\x1b[?2004hmore\x1b[?2004l", screen.String())
+}

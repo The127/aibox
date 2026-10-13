@@ -225,3 +225,47 @@ func TestTheGateServesNothingElse(t *testing.T) {
 	image := get(gate, clipboard.ImagePath)
 	require.Equal(t, http.StatusOK, image.Code)
 }
+
+func TestPasteLetsTheVMReadTheImageItRead(t *testing.T) {
+	// arrange: an image and text, as a browser copies both
+	board := &fakeClipboard{image: []byte("\x89PNG")}
+	gate := &clipboard.Gate{Read: board.read, ReadText: func() (string, error) { return "text", nil }}
+
+	// act
+	typed := gate.Paste()
+	image := get(gate, clipboard.ImagePath)
+
+	// assert: the key goes on, and the VM reads the image of the press
+	assert.Nil(t, typed)
+	assert.Equal(t, http.StatusOK, image.Code)
+	assert.Equal(t, "\x89PNG", image.Body.String())
+	assert.Equal(t, 1, board.reads, "read once, at the press")
+}
+
+func TestPasteTypesTheTextAndLetsTheVMReadNothing(t *testing.T) {
+	// arrange
+	board := &fakeClipboard{err: fmt.Errorf("%w: only text", clipboard.ErrNoImage)}
+	gate := &clipboard.Gate{Read: board.read, ReadText: func() (string, error) { return "the text", nil }}
+
+	// act
+	typed := gate.Paste()
+	image := get(gate, clipboard.ImagePath)
+
+	// assert
+	assert.Equal(t, []byte("the text"), typed)
+	assert.Equal(t, http.StatusForbidden, image.Code)
+}
+
+func TestPastePassesTheKeyOnWithNothingOnTheClipboard(t *testing.T) {
+	// arrange
+	board := &fakeClipboard{err: clipboard.ErrNoImage}
+	gate := &clipboard.Gate{Read: board.read, ReadText: func() (string, error) { return "", clipboard.ErrNoText }}
+
+	// act
+	typed := gate.Paste()
+	image := get(gate, clipboard.ImagePath)
+
+	// assert: the VM asks, as after Ctrl+V, and finds no image
+	assert.Nil(t, typed)
+	assert.Equal(t, http.StatusNotFound, image.Code)
+}

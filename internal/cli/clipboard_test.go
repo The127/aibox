@@ -3,6 +3,7 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +17,8 @@ type fakeClipboard struct {
 }
 
 func (c *fakeClipboard) Read() ([]byte, error) { return []byte("the image"), nil }
+
+func (c *fakeClipboard) ReadText() (string, error) { return "the text", nil }
 
 func (c *fakeClipboard) Close() error {
 	c.closed = true
@@ -101,4 +104,31 @@ func TestRunLetsTheAllowListTakeThePortOfTheClipboardWhenItIsOff(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []uint16{3132}, f.launch.spec.Loopback)
 	assert.Nil(t, f.launch.spec.OnPaste)
+}
+
+func TestRunPastesOnAltVAsTheConfigSays(t *testing.T) {
+	tests := map[string]struct {
+		config string
+		want   bool
+	}{
+		"unset, as the system has it": {config: "", want: runtime.GOOS == "windows"},
+		"on":                          {config: "paste-alt-v: true\n", want: true},
+		"off":                         {config: "paste-alt-v: false\n", want: false},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.writeConfig(t, tt.config)
+
+			// act
+			err := f.run("--image", image)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, f.launch.spec.PasteAltV)
+		})
+	}
 }

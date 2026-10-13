@@ -268,7 +268,7 @@ func TestSessionTypesWhatTheClientSendsIntoTheProcess(t *testing.T) {
 func TestSessionTellsTheClientOfCtrlVAndStillTypesIt(t *testing.T) {
 	// arrange
 	pasted := make(chan struct{}, 1)
-	f := newFixture(t, nil, func(c *session.Client) { c.OnPaste = func() { pasted <- struct{}{} } })
+	f := newFixture(t, nil, func(c *session.Client) { c.OnPaste = func() []byte { pasted <- struct{}{}; return nil } })
 	f.waitStarted(t)
 
 	// act
@@ -284,6 +284,23 @@ func TestSessionTellsTheClientOfCtrlVAndStillTypesIt(t *testing.T) {
 	}
 
 	assert.Eventually(t, func() bool { return f.process.typed.String() == "\x16" }, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestSessionPastesTheTextOfTheClipboardInPlaceOfCtrlV(t *testing.T) {
+	// arrange: a program that turned bracketed paste on, as Claude Code does
+	f := newFixture(t, nil, func(c *session.Client) { c.OnPaste = func() []byte { return []byte("one\r\ntwo") } })
+	f.waitStarted(t)
+
+	_, err := io.WriteString(f.prints, "\x1b[?2004h")
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return f.screen.String() == "\x1b[?2004h" }, 5*time.Second, 10*time.Millisecond)
+
+	// act
+	_, err = io.WriteString(f.keyboard, "x\x16y")
+
+	// assert
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return f.process.typed.String() == "x\x1b[200~one\rtwo\x1b[201~y" }, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestSessionStartsTheProcessAsTheClientAsked(t *testing.T) {

@@ -13,11 +13,16 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
 // Command is the hidden command of aibox that runs the helper.
 const Command = "clipboard"
+
+// ErrNoText is a clipboard that holds no text, or text the helper could
+// not read.
+var ErrNoText = errors.New("the clipboard holds no text")
 
 // ErrNoImage is a clipboard that holds no image, or one the helper could
 // not read.
@@ -25,8 +30,8 @@ var ErrNoImage = errors.New("the clipboard holds no image")
 
 // the first byte of each answer of the helper
 const (
-	answerImage   byte = 0
-	answerNoImage byte = 1
+	answerData byte = 0
+	answerNone byte = 1
 )
 
 // Helper is the helper process, started before aibox is confined.
@@ -74,6 +79,20 @@ func Start(log io.Writer) (*Helper, error) {
 // Read asks the helper for the image on the clipboard, as PNG. It returns
 // an error wrapping ErrNoImage when there is none.
 func (h *Helper) Read() ([]byte, error) {
+	return h.get("", ErrNoImage)
+}
+
+// ReadText asks the helper for the text on the clipboard, as UTF-8. It
+// returns an error wrapping ErrNoText when there is none.
+func (h *Helper) ReadText() (string, error) {
+	text, err := h.get(textRequest, ErrNoText)
+
+	return string(text), err
+}
+
+// get asks the helper with the request line, and wraps none in the
+// helper's words when it has nothing.
+func (h *Helper) get(request string, none error) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -81,22 +100,22 @@ func (h *Helper) Read() ([]byte, error) {
 		return nil, h.broken
 	}
 
-	kind, data, err := h.ask()
+	kind, data, err := h.ask(request)
 	if err != nil {
 		h.broken = fmt.Errorf("the clipboard helper broke: %w", err)
 
 		return nil, h.broken
 	}
 
-	if kind != answerImage {
-		return nil, fmt.Errorf("%w: %s", ErrNoImage, data)
+	if kind != answerData {
+		return nil, fmt.Errorf("%w: %s", none, data)
 	}
 
 	return data, nil
 }
 
-func (h *Helper) ask() (byte, []byte, error) {
-	if _, err := h.in.Write([]byte{'\n'}); err != nil {
+func (h *Helper) ask(request string) (byte, []byte, error) {
+	if _, err := io.WriteString(h.in, request+"\n"); err != nil {
 		return 0, nil, err
 	}
 
@@ -141,17 +160,23 @@ func (h *Helper) Close() error {
 	return err
 }
 
+// textRequest is the line that asks the helper for the text on the
+// clipboard. An empty line asks for the image.
+const textRequest = "text"
+
 // Serve is the helper: for each line on in it reads the clipboard and
-// writes the image, or why there is none, to out. It returns once in ends.
+// writes the image, or the text when the line asks for it, or why there
+// is none, to out. It returns once in ends.
 func Serve(in io.Reader, out io.Writer) error {
-	return serve(in, out, read)
+	return serve(in, out, read, readText)
 }
 
-func serve(in io.Reader, out io.Writer, read func() ([]byte, error)) error {
+func serve(in io.Reader, out io.Writer, read, readText func() ([]byte, error)) error {
 	requests := bufio.NewReader(in)
 
 	for {
-		if _, err := requests.ReadBytes('\n'); err != nil {
+		line, err := requests.ReadString('\n')
+		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
@@ -159,11 +184,16 @@ func serve(in io.Reader, out io.Writer, read func() ([]byte, error)) error {
 			return err
 		}
 
-		kind := answerImage
+		reader := read
+		if strings.TrimSpace(line) == textRequest {
+			reader = readText
+		}
 
-		data, err := read()
+		kind := answerData
+
+		data, err := reader()
 		if err != nil {
-			kind, data = answerNoImage, []byte(err.Error())
+			kind, data = answerNone, []byte(err.Error())
 		}
 
 		if err := answer(out, kind, data); err != nil {

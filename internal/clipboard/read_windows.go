@@ -16,3 +16,18 @@ $out.Flush()`
 func read() ([]byte, error) {
 	return output("powershell", "-NoProfile", "-NonInteractive", "-Sta", "-Command", script)
 }
+
+// textScript writes the text on the clipboard to standard output as UTF-8,
+// whatever the code page of the console.
+const textScript = `Add-Type -AssemblyName System.Windows.Forms
+$text = [System.Windows.Forms.Clipboard]::GetText()
+if ([string]::IsNullOrEmpty($text)) { [Console]::Error.Write('no text'); exit 1 }
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+$out = [Console]::OpenStandardOutput()
+$out.Write($bytes, 0, $bytes.Length)
+$out.Flush()`
+
+// readText gets the text from PowerShell, as read does the image.
+func readText() ([]byte, error) {
+	return output("powershell", "-NoProfile", "-NonInteractive", "-Sta", "-Command", textScript)
+}

@@ -23,7 +23,7 @@ const state = `C:\Users\me\.aibox\projects\x\state.ext4`
 func documentOf(t *testing.T, sids ...string) hcs.Document {
 	t.Helper()
 
-	doc, err := vm(func(*hvservice.Create) {}).Document(host, install, consolePipe, state, sids)
+	doc, err := vm(func(*hvservice.Create) {}).Document(host, install, consolePipe, sids)
 	require.NoError(t, err)
 
 	return doc
@@ -53,28 +53,31 @@ func TestDocumentMakesAVMTheServiceFindsAndThatEndsWithItsLastHandle(t *testing.
 	assert.True(t, doc.ShouldTerminateOnLastHandleClosed)
 }
 
-func TestDocumentHasTheRootOfTheInstallationReadOnlyAndTheStateDiskOfTheClient(t *testing.T) {
+func TestDocumentHasOnlyTheRootOfTheInstallationReadOnly(t *testing.T) {
 	t.Parallel()
 
 	// act
 	doc := documentOf(t)
 
-	// assert
+	// assert: the state disk comes once the VM runs
 	assert.Equal(t, map[string]hcs.Scsi{"0": {Attachments: map[string]hcs.Attachment{
 		"0": {Type: hcs.AttachmentVirtualDisk, Path: install.Rootfs, ReadOnly: true},
-		"1": {Type: hcs.AttachmentVirtualDisk, Path: state},
 	}}}, doc.VirtualMachine.Devices.Scsi)
 	assert.Nil(t, doc.VirtualMachine.Devices.Plan9, "the client serves the folders itself")
 }
 
-func TestDocumentRefusesAVMWithoutAStateDisk(t *testing.T) {
+func TestTheStateDiskComesAtTheLUNTheGuestLooksItUpBy(t *testing.T) {
 	t.Parallel()
 
 	// act
-	_, err := vm(func(*hvservice.Create) {}).Document(host, install, consolePipe, "", nil)
+	m := hvservice.AddStateDisk(state)
 
 	// assert
-	assert.ErrorIs(t, err, hvservice.ErrBadRequest)
+	assert.Equal(t, hcs.Modification{
+		ResourcePath: "VirtualMachine/Devices/Scsi/0/Attachments/1",
+		RequestType:  "Add",
+		Settings:     hcs.Attachment{Type: hcs.AttachmentVirtualDisk, Path: state},
+	}, m)
 }
 
 func TestDocumentLetsTheClientListenOnTheSocketsAndNoOneElse(t *testing.T) {
@@ -108,7 +111,7 @@ func TestDocumentRefusesWhatTheSDDLWouldTakeForMoreThanASID(t *testing.T) {
 			t.Parallel()
 
 			// act
-			_, err := vm(func(*hvservice.Create) {}).Document(host, install, consolePipe, state, []string{sid})
+			_, err := vm(func(*hvservice.Create) {}).Document(host, install, consolePipe, []string{sid})
 
 			// assert
 			assert.ErrorIs(t, err, hvservice.ErrBadSID)
@@ -143,7 +146,7 @@ func TestDocumentRefusesAVMThatDoesNotPassCheck(t *testing.T) {
 	t.Parallel()
 
 	// act
-	_, err := vm(func(c *hvservice.Create) { c.MemoryMiB = -1 }).Document(host, install, consolePipe, state, nil)
+	_, err := vm(func(c *hvservice.Create) { c.MemoryMiB = -1 }).Document(host, install, consolePipe, nil)
 
 	// assert
 	assert.ErrorIs(t, err, hvservice.ErrBadRequest)

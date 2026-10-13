@@ -158,12 +158,14 @@ the allow list, like a new config has them.
 
 ### Subscription token
 
-A subscription token goes into the VM as it is, because Anthropic's terms
-don't allow anyone but you to handle it. In the VM, Claude Code and every
-program the task runs can read it. If something steers the task, it can send
-the token to a host on the allow list, or write it into a commit or the
-transcript. Use a separate token or key just for tasks, so you can revoke it
-on its own.
+aibox can't put a subscription token in on the way like an API key, because
+[Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+don't allow a tool like aibox to collect, store or intermediate Claude.ai
+credentials. So the token goes into the VM as it is. In the VM, Claude Code
+and every program the task runs can read it. If something steers the task,
+it can send the token to a host on the allow list, or write it into a commit
+or the transcript. Use a separate token or key just for tasks, so you can
+revoke it on its own.
 
 Whether running unattended tasks is fine on your subscription is your own
 risk. See Anthropic's

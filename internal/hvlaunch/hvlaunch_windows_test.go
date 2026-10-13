@@ -44,6 +44,10 @@ type fakeService struct {
 	// it refuses a start with, if anything
 	refuse      string
 	refuseStart string
+	// version is the version the service answers with, and unversioned a
+	// service older than the question, which refuses it
+	version     string
+	unversioned bool
 	// old is a service older than aibox, which makes no container
 	old bool
 	// stateGoneAtStop tells whether the state disk's name was gone when
@@ -80,6 +84,11 @@ func (s *fakeService) serve(conn net.Conn) {
 		reply := hvservice.Reply{}
 
 		switch request.Op {
+		case hvservice.OpVersion:
+			reply.Version = s.version
+			if s.unversioned {
+				reply = hvservice.Reply{Error: "bad request: unknown op \"version\""}
+			}
 		case hvservice.OpCreate:
 			s.made = request.Create
 
@@ -163,7 +172,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		sharesHelper: &fakeHelper{done: make(chan struct{})},
 		proxyHelper:  &fakeHelper{done: make(chan struct{})},
-		service:      &fakeService{state: filepath.Join(dir, "state.ext4")},
+		service:      &fakeService{state: filepath.Join(dir, "state.ext4"), version: "v1.2.3"},
 		console:      newFed(),
 		spec: backend.Spec{
 			Image:      image,
@@ -181,6 +190,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = f.console.Close() })
 
 	f.backend = Backend{
+		Version:         "v1.2.3",
 		BootTimeout:     200 * time.Millisecond,
 		SessionEndDelay: time.Second,
 		PowerOffWait:    200 * time.Millisecond,
@@ -232,7 +242,7 @@ func TestRunStopsAVMWhoseGuestNeverConnects(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, ErrNoBoot)
 	assert.ErrorContains(t, err, "console.log")
-	assert.Equal(t, []hvservice.Op{hvservice.OpCreate, hvservice.OpStart, hvservice.OpStop}, f.service.asked())
+	assert.Equal(t, []hvservice.Op{hvservice.OpVersion, hvservice.OpCreate, hvservice.OpStart, hvservice.OpStop}, f.service.asked())
 
 	made := f.service.made
 	require.NotNil(t, made)
@@ -282,7 +292,7 @@ func TestRunEndsWhenTheVMIsGone(t *testing.T) {
 	log, err := os.ReadFile(f.spec.ConsoleLog)
 	require.NoError(t, err)
 	assert.Equal(t, "[    0.000000] Linux\n", string(log))
-	assert.Equal(t, []hvservice.Op{hvservice.OpCreate, hvservice.OpStart, hvservice.OpStop}, f.service.asked(), "the service lets go of the VM that ended")
+	assert.Equal(t, []hvservice.Op{hvservice.OpVersion, hvservice.OpCreate, hvservice.OpStart, hvservice.OpStop}, f.service.asked(), "the service lets go of the VM that ended")
 }
 
 func TestRunStopsTheVMWhenTheContextEnds(t *testing.T) {
@@ -314,7 +324,7 @@ func TestRunStopsTheVMWhenTheContextEnds(t *testing.T) {
 		t.Fatal("Run did not end with the context")
 	}
 
-	assert.Equal(t, []hvservice.Op{hvservice.OpCreate, hvservice.OpStart, hvservice.OpStop}, f.service.asked())
+	assert.Equal(t, []hvservice.Op{hvservice.OpVersion, hvservice.OpCreate, hvservice.OpStart, hvservice.OpStop}, f.service.asked())
 }
 
 func TestRunTellsWhatTheServiceRefused(t *testing.T) {
@@ -329,7 +339,7 @@ func TestRunTellsWhatTheServiceRefused(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "9 processors, not between 1 and the 8 the host has")
-	assert.Equal(t, []hvservice.Op{hvservice.OpCreate}, f.service.asked(), "nothing was started or stopped")
+	assert.Equal(t, []hvservice.Op{hvservice.OpVersion, hvservice.OpCreate}, f.service.asked(), "nothing was started or stopped")
 }
 
 func TestRunDoesNotStopAVMThatDidNotStart(t *testing.T) {
@@ -344,7 +354,7 @@ func TestRunDoesNotStopAVMThatDidNotStart(t *testing.T) {
 
 	// assert
 	assert.ErrorContains(t, err, "HRESULT 0xC03A001A")
-	assert.Equal(t, []hvservice.Op{hvservice.OpCreate, hvservice.OpStart}, f.service.asked(), "the service ended the VM that did not start")
+	assert.Equal(t, []hvservice.Op{hvservice.OpVersion, hvservice.OpCreate, hvservice.OpStart}, f.service.asked(), "the service ended the VM that did not start")
 }
 
 func TestRunRefusesAStateDiskAnotherVMHasOpen(t *testing.T) {
@@ -565,7 +575,7 @@ func TestRunRefusesAServiceThatMakesNoContainer(t *testing.T) {
 	// assert
 	require.ErrorIs(t, err, ErrOldService)
 	assert.Nil(t, f.proxied, "no helper runs outside the container")
-	assert.Equal(t, []hvservice.Op{hvservice.OpCreate}, f.service.asked())
+	assert.Equal(t, []hvservice.Op{hvservice.OpVersion, hvservice.OpCreate}, f.service.asked())
 }
 
 func TestRunStopsTheVMWhenTheHelperOfTheProxyEnds(t *testing.T) {
@@ -630,4 +640,36 @@ func TestRunStartsWhenTheSweepFails(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoBoot, "the run went on")
 	require.NotNil(t, f.proxied, "a helper serves the proxy")
 	assert.Contains(t, stderr.String(), "remove the containers of runs that ended: access denied")
+}
+
+func TestRunRefusesAServiceOfAnotherVersionBeforeItMakesAVM(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		version     string
+		unversioned bool
+		want        string
+	}{
+		"an older or newer one": {version: "v1.2.2", want: "the service is aibox v1.2.2, this is aibox v1.2.3"},
+		"one too old to ask":    {unversioned: true, want: "the service refused to tell its version, as one older than aibox v1.2.3 does: bad request: unknown op"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			// arrange
+			f := newFixture(t)
+			f.service.version, f.service.unversioned = tt.version, tt.unversioned
+
+			// act
+			err := f.backend.Run(t.Context(), f.spec)
+
+			// assert
+			require.ErrorIs(t, err, ErrOtherService)
+			assert.ErrorContains(t, err, tt.want)
+			assert.Equal(t, []hvservice.Op{hvservice.OpVersion}, f.service.asked(), "no VM was made")
+			assert.Nil(t, f.proxied, "no helper was started")
+		})
+	}
 }

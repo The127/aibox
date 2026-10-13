@@ -60,13 +60,18 @@ var (
 	// ErrOldService is a service that made the VM no container, which
 	// one older than aibox does.
 	ErrOldService = errors.New("the service made the VM no container, as one older than aibox does: install the service again")
+	// ErrOtherService is a service of another version than aibox, which
+	// makes the VM as that version does.
+	ErrOtherService = errors.New("the service is not of this aibox: install it again, with aibox service install from a PowerShell opened as administrator")
 )
 
 // Backend runs the VM through the service. BootTimeout is how long the
 // guest may take to connect, SessionEndDelay how long the session may go
 // on after the VM stopped and PowerOffWait how long the VM may take to
-// power off after the session before it is stopped.
+// power off after the session before it is stopped. Version is the version
+// of aibox, which the service must have too.
 type Backend struct {
+	Version         string
 	BootTimeout     time.Duration
 	SessionEndDelay time.Duration
 	PowerOffWait    time.Duration
@@ -101,8 +106,9 @@ type container struct {
 }
 
 // NewBackend returns the Backend with its default timeouts.
-func NewBackend() Backend {
+func NewBackend(version string) Backend {
 	return Backend{
+		Version:         version,
 		BootTimeout:     host.DefaultBootTimeout,
 		SessionEndDelay: host.DefaultSessionEndDelay,
 		PowerOffWait:    host.DefaultPowerOffWait,
@@ -187,6 +193,10 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	}
 
 	defer s.close()
+
+	if err := s.sameVersion(b.Version); err != nil {
+		return err
+	}
 
 	// the services the proxy answers itself hold secrets, which aibox
 	// keeps: the helper hands their requests to it, over the loopback
@@ -417,6 +427,30 @@ func (s *service) ask(request hvservice.Request) (hvservice.Reply, error) {
 	}
 
 	return reply, nil
+}
+
+// sameVersion asks the service for its version, which must be want: an
+// update of aibox leaves the service as it was until it is installed
+// again. A service older than the question refuses it, as one of another
+// version.
+func (s *service) sameVersion(want string) error {
+	if err := hvservice.Write(s.conn, hvservice.Request{Op: hvservice.OpVersion}); err != nil {
+		return err
+	}
+
+	var reply hvservice.Reply
+	if err := hvservice.Read(s.r, &reply); err != nil {
+		return err
+	}
+
+	switch {
+	case reply.Error != "":
+		return fmt.Errorf("%w (the service refused to tell its version, as one older than aibox %s does: %s)", ErrOtherService, want, reply.Error)
+	case reply.Version != want:
+		return fmt.Errorf("%w (the service is aibox %s, this is aibox %s)", ErrOtherService, reply.Version, want)
+	}
+
+	return nil
 }
 
 // stop ends the VM, and returns once it is gone.

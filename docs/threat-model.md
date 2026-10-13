@@ -102,7 +102,7 @@ Everything the VM can reach on your machine goes through one of these.
 | read the passwords you copy | It can only ask for the clipboard right after you press Ctrl+V, and only gets an image. Text it gets only when you paste it. |
 | run code through your IDE | The IDE bridge only passes on selections, diffs and errors. |
 | sneak extra branches into a task's bundle | aibox reads the bundle's header and only prints the fetch command for `aibox/task`. |
-| fake a line from aibox in a task's output | aibox strips control characters and marks every line from the VM. |
+| fake a line from aibox in a task's output | aibox strips control characters and marks every line from the VM. It breaks long lines itself at your terminal's width, so a row without the mark can't hold a fake one. |
 | get a changed kernel or image booted | A release checks the SHA-256 of a downloaded image and of the kernel before each start. On macOS Virtualization.framework reads the kernel again after the check, so a change right after it isn't caught. |
 | keep running after aibox ends | The VM ends with aibox, even when aibox is killed. |
 

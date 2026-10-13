@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Log writes the lines of a task to one writer, each after the time and a
@@ -15,16 +16,29 @@ import (
 // own label, and the VM cannot leave the label out, so a line from it
 // cannot pass for a line of aibox.
 type Log struct {
-	mu  sync.Mutex
-	w   io.Writer
-	id  string
-	now func() time.Time
+	mu    sync.Mutex
+	w     io.Writer
+	id    string
+	now   func() time.Time
+	width func() int
 }
 
 // NewLog returns a Log that writes to w, with the ID id and the time now
 // gives.
 func NewLog(w io.Writer, id string, now func() time.Time) *Log {
 	return &Log{w: w, id: id, now: now}
+}
+
+// Wrap breaks each line into rows that fit the width the function returns
+// when the line is written, and stamps every row. A terminal would break a
+// longer line itself, and the VM could then fill a line so that a row
+// without a stamp starts with text that looks like a line of aibox. A
+// width of 0 or less breaks no line, for output that is no terminal.
+func (l *Log) Wrap(width func() int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.width = width
 }
 
 // Writer returns a writer whose lines go to the log after label. A line
@@ -97,7 +111,68 @@ func (w *LogWriter) flush() error {
 	text := CleanText(strings.TrimPrefix(strings.TrimSuffix(string(w.line), "\r"), w.label+": "))
 	w.line = w.line[:0]
 
-	_, err := fmt.Fprintf(w.log.w, "%s %s[%s]: %s\n", w.log.now().Format(time.TimeOnly), w.label, w.log.id, text)
+	stamp := fmt.Sprintf("%s %s[%s]: ", w.log.now().Format(time.TimeOnly), w.label, w.log.id)
+
+	var b strings.Builder
+
+	for _, row := range rows(text, w.log.columns(len(stamp))) {
+		b.WriteString(stamp + row + "\n")
+	}
+
+	_, err := io.WriteString(w.log.w, b.String())
 
 	return err
+}
+
+// minColumns is the fewest columns a row gets after its stamp. On a
+// terminal too narrow for that, the terminal breaks the row, but the part
+// it moves to the next row holds too little of the VM's text for a stamp.
+const minColumns = 8
+
+// columns is how many columns a row has after a stamp of stampWidth, or 0
+// for rows of any length. The last column stays empty: some terminals
+// break a line that fills the row.
+func (l *Log) columns(stampWidth int) int {
+	if l.width == nil {
+		return 0
+	}
+
+	width := l.width()
+	if width <= 0 {
+		return 0
+	}
+
+	return max(width-stampWidth-1, minColumns)
+}
+
+// rows breaks the text into rows of at most columns columns, or returns it
+// whole when columns is 0. A character other than ASCII counts as two
+// columns, the most a terminal gives one, so that no row comes out wider
+// than the terminal thinks.
+func rows(text string, columns int) []string {
+	if columns <= 0 {
+		return []string{text}
+	}
+
+	var (
+		broken []string
+		start  int
+		used   int
+	)
+
+	for i, r := range text {
+		width := 2
+		if r < utf8.RuneSelf {
+			width = 1
+		}
+
+		if used+width > columns && i > start {
+			broken = append(broken, text[start:i])
+			start, used = i, 0
+		}
+
+		used += width
+	}
+
+	return append(broken, text[start:])
 }

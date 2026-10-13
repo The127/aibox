@@ -152,3 +152,70 @@ func TestLogTakesACRLFForANewline(t *testing.T) {
 		"15:04:05 vm[a1b2c3]: two\n"+
 		"15:04:05 vm[a1b2c3]: three?four\n", out.String())
 }
+
+func TestLogBreaksALineIntoRowsThatFitAndStampsEach(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	log := task.NewLog(&out, "a1b2c3", fixedTime)
+	stamp := "15:04:05 vm[a1b2c3]: "
+	log.Wrap(func() int { return len(stamp) + 11 })
+	vm := log.Writer("vm")
+
+	// act
+	_, err := vm.Write([]byte("abcdefghijklmnopqrstu\n"))
+	require.NoError(t, err)
+
+	// assert
+	assert.Equal(t, stamp+"abcdefghij\n"+stamp+"klmnopqrst\n"+stamp+"u\n", out.String())
+}
+
+func TestLogCountsACharacterOtherThanASCIIAsTwoColumns(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	log := task.NewLog(&out, "a1b2c3", fixedTime)
+	stamp := "15:04:05 vm[a1b2c3]: "
+	log.Wrap(func() int { return len(stamp) + 11 })
+	vm := log.Writer("vm")
+
+	// act
+	_, err := vm.Write([]byte("日本語日本x語\n"))
+	require.NoError(t, err)
+
+	// assert
+	assert.Equal(t, stamp+"日本語日本\n"+stamp+"x語\n", out.String())
+}
+
+func TestLogBreaksNoLineWithoutAWidth(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	log := task.NewLog(&out, "a1b2c3", fixedTime)
+	log.Wrap(func() int { return 0 })
+	vm := log.Writer("vm")
+
+	// act
+	_, err := vm.Write([]byte(strings.Repeat("x", 300) + "\n"))
+	require.NoError(t, err)
+
+	// assert
+	assert.Equal(t, "15:04:05 vm[a1b2c3]: "+strings.Repeat("x", 300)+"\n", out.String())
+}
+
+func TestLogGivesARowSomeColumnsOnANarrowTerminal(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+
+	log := task.NewLog(&out, "a1b2c3", fixedTime)
+	log.Wrap(func() int { return 1 })
+	vm := log.Writer("vm")
+
+	// act
+	_, err := vm.Write([]byte("abcdefghijk\n"))
+	require.NoError(t, err)
+
+	// assert
+	stamp := "15:04:05 vm[a1b2c3]: "
+	assert.Equal(t, stamp+"abcdefgh\n"+stamp+"ijk\n", out.String())
+}

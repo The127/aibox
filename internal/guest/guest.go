@@ -1173,25 +1173,28 @@ func say(console io.Writer, format string, args ...any) {
 
 // The system prompts of the image, and the part of the host each joins.
 // The amd64 image runs on Linux and on Windows alike, so the image has the
-// part of each, and the init picks the one of the host it runs on. The
-// arm64 image runs only on macOS and has only its part.
+// parts of each, and the init picks those of the host it runs on. The
+// arm64 image runs only on macOS and has only its part. On Windows a task
+// has a part of its own: its clone is on the disk of the VM, not shared
+// from Windows, but its commits go back to a checkout on Windows.
 const (
-	imagePrompt      = "/etc/aibox/prompt.md"
-	imageTaskPrompt  = "/etc/aibox/task.md"
-	hostPrompt       = "/etc/aibox/host.md"
-	hyperVHostPrompt = "/etc/aibox/hyperv/host.md"
+	imagePrompt          = "/etc/aibox/prompt.md"
+	imageTaskPrompt      = "/etc/aibox/task.md"
+	hostPrompt           = "/etc/aibox/host.md"
+	hyperVHostPrompt     = "/etc/aibox/hyperv/host.md"
+	hyperVTaskHostPrompt = "/etc/aibox/hyperv/task-host.md"
 )
 
 // writePrompts joins the system prompts of the image with the part of the
 // host the VM runs on.
 func writePrompts(sys System, hyperV bool) error {
-	host := hostPrompt
+	host, taskHost := hostPrompt, hostPrompt
 	if hyperV {
-		host = hyperVHostPrompt
+		host, taskHost = hyperVHostPrompt, hyperVTaskHostPrompt
 	}
 
-	for _, p := range []struct{ path, image string }{{prompt, imagePrompt}, {taskPrompt, imageTaskPrompt}} {
-		if err := sys.Join(p.path, p.image, host); err != nil {
+	for _, p := range []struct{ path, image, host string }{{prompt, imagePrompt, host}, {taskPrompt, imageTaskPrompt, taskHost}} {
+		if err := sys.Join(p.path, p.image, p.host); err != nil {
 			return fmt.Errorf("write the system prompt %s: %w", p.path, err)
 		}
 	}

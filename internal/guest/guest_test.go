@@ -918,7 +918,7 @@ func TestRunGivesClaudeCodeThePromptOfWindowsOnHyperV(t *testing.T) {
 	// assert
 	require.NoError(t, err)
 	assert.Contains(t, sys.calls, "join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/hyperv/host.md")
-	assert.Contains(t, sys.calls, "join /run/aibox/task.md <- /etc/aibox/task.md /etc/aibox/hyperv/host.md")
+	assert.Contains(t, sys.calls, "join /run/aibox/task.md <- /etc/aibox/task.md /etc/aibox/hyperv/task-host.md")
 }
 
 func TestRunLooksForNoSCSIDiskOffHyperV(t *testing.T) {

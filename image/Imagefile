@@ -62,6 +62,7 @@ COPY task.md /etc/aibox/task.md
 # Windows on Hyper-V, and the one of Linux elsewhere
 COPY host/linux.md /etc/aibox/host.md
 COPY host/windows.md /etc/aibox/hyperv/host.md
+COPY host/windows-task.md /etc/aibox/hyperv/task-host.md
 COPY aibox-init /sbin/init
 # the init answers as xclip and wl-paste, the clipboard tools Claude Code
 # runs for Ctrl+V, with the clipboard of the host

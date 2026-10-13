@@ -112,7 +112,9 @@ A few rules apply:
   absolute path must not end in a link.
 - The file has to be a plain file. For a pipe, use `--file -`.
 - The prompt can be up to 1 MiB of UTF-8 text, the arguments and the file
-  together.
+  together. A file in UTF-8 or UTF-16 with a byte order mark, as Notepad
+  or `>` in Windows PowerShell write them, is fine too. The 1 MiB counts
+  the file as it is saved, so a file in UTF-16 holds about half as much.
 
 A plan you haven't committed only reaches the task as its prompt.
 It's not a file in `/project`.
@@ -200,6 +202,11 @@ Each line starts with the time, where the line comes from and the end of the
 task's ID. That way you can tell tasks apart when they share a log. `vm`
 lines come from the VM and are only what the task claims. `aibox` lines come
 from aibox on your machine.
+
+On Windows the fetch command names the bundle with forward slashes, and
+quotes it only as PowerShell, cmd.exe and Git Bash all read it, so you can
+paste it into any of them. A path with `$`, `` ` ``, `%` or `!` in it has
+no quotes all three read, so then the command is quoted for PowerShell.
 
 ### Reviewing the commits
 

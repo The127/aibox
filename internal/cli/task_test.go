@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -541,8 +543,22 @@ func TestTaskCleansTheErrorOfTheVM(t *testing.T) {
 }
 
 func TestTaskQuotesThePathInTheFetchCommand(t *testing.T) {
-	assert.Equal(t, "/a/b-1.bundle", shellQuote("/a/b-1.bundle"))
-	assert.Equal(t, `'/a b/it'\''s'`, shellQuote("/a b/it's"))
+	assert.Equal(t, "/a/b-1.bundle", quoteFor("linux", "/a/b-1.bundle"))
+	assert.Equal(t, `'/a b/it'\''s'`, quoteFor("darwin", "/a b/it's"))
+}
+
+func TestTaskQuotesThePathInTheFetchCommandForEveryShellOfWindows(t *testing.T) {
+	for path, want := range map[string]string{
+		`C:\Users\me\.aibox\tasks\x\changes.bundle`: "C:/Users/me/.aibox/tasks/x/changes.bundle",
+		`C:\Users\Jo Doe\.aibox\changes.bundle`:     `"C:/Users/Jo Doe/.aibox/changes.bundle"`,
+		`C:\Users\jo's\.aibox\changes.bundle`:       `"C:/Users/jo's/.aibox/changes.bundle"`,
+		`C:\Users\100%\.aibox\changes.bundle`:       `'C:/Users/100%/.aibox/changes.bundle'`,
+		`C:\Users\it's $me\.aibox\changes.bundle`:   `'C:/Users/it''s $me/.aibox/changes.bundle'`,
+		`C:\Users\“Jo’s”\.aibox\changes.bundle`:     `'C:/Users/“Jo’’s”/.aibox/changes.bundle'`,
+		`\\server\share\.aibox\changes.bundle`:      "//server/share/.aibox/changes.bundle",
+	} {
+		assert.Equal(t, want, quoteFor("windows", path), path)
+	}
 }
 
 func TestTaskCleansWhatTheVMPrints(t *testing.T) {
@@ -675,6 +691,43 @@ func TestTaskTakesItsPromptFromAFileAlone(t *testing.T) {
 	assert.Equal(t, "# Plan\n", f.prompt(t))
 }
 
+func TestTaskReadsAPromptFileAsWindowsWritesIt(t *testing.T) {
+	text := "Plan für heute\r\n"
+
+	tests := map[string][]byte{
+		"UTF-8 with a BOM":     append([]byte("\xef\xbb\xbf"), text...),
+		"UTF-16 little endian": utf16Bytes(text, binary.LittleEndian, "\xff\xfe"),
+		"UTF-16 big endian":    utf16Bytes(text, binary.BigEndian, "\xfe\xff"),
+	}
+
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newTaskFixture(t)
+			f.succeeds(t)
+			plan := filepath.Join(t.TempDir(), "plan.md")
+			require.NoError(t, os.WriteFile(plan, content, 0o600))
+
+			// act
+			err := f.task("-f", plan)
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, "Plan für heute\n", f.prompt(t))
+		})
+	}
+}
+
+// utf16Bytes is the text in UTF-16 in the byte order, after the BOM.
+func utf16Bytes(text string, order binary.AppendByteOrder, bom string) []byte {
+	b := []byte(bom)
+	for _, unit := range utf16.Encode([]rune(text)) {
+		b = order.AppendUint16(b, unit)
+	}
+
+	return b
+}
+
 func TestTaskTakesItsPromptFromStdin(t *testing.T) {
 	tests := map[string]struct {
 		args     []string
@@ -726,6 +779,8 @@ func TestTaskRefusesAPromptItCannotTake(t *testing.T) {
 		"too long with arguments":    {args: []string{"--file", "-", "fix it"}, stdin: strings.Repeat("x", maxPromptBytes-1), want: errLongPrompt.Error()},
 		"no UTF-8":                   {stdin: "fix \xff", want: errNoText.Error()},
 		"no UTF-8 in a file":         {args: []string{"--file", "latin1.md"}, want: errNoText.Error()},
+		"UTF-16 without a BOM":       {stdin: "f\x00i\x00x\x00", want: errNoText.Error()},
+		"UTF-16 of an odd length":    {stdin: "\xff\xfef", want: errNoText.Error()},
 	}
 
 	for name, test := range tests {

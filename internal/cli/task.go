@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,10 +12,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/urfave/cli/v3"
@@ -33,7 +36,7 @@ const maxTimeout = 30 * 24 * time.Hour
 var (
 	errNoPrompt     = errors.New("task needs a prompt, as arguments, with --file, or on stdin")
 	errLongPrompt   = errors.New("the prompt is longer than 1 MiB, its arguments and its file together")
-	errNoText       = errors.New("the prompt is not UTF-8 text")
+	errNoText       = errors.New("the prompt is not UTF-8 text, save it as UTF-8")
 	errNoLockFile   = errors.New("the lock of the task is no plain file")
 	errNoPromptFile = errors.New("the file of the prompt must be a plain file, use --file - for a pipe")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
@@ -365,7 +368,7 @@ func readPrompt(ctx context.Context, deps dependencies, cmd *cli.Command, cwd st
 	}
 
 	for i, part := range parts {
-		parts[i] = strings.TrimSpace(part)
+		parts[i] = strings.TrimSpace(decodeText(part))
 	}
 
 	prompt := strings.TrimSpace(strings.Join(parts, "\n\n"))
@@ -375,11 +378,46 @@ func readPrompt(ctx context.Context, deps dependencies, cmd *cli.Command, cwd st
 		return "", errNoPrompt
 	case len(prompt) > maxPromptBytes:
 		return "", errLongPrompt
-	case !utf8.ValidString(prompt):
+	// UTF-16 without a BOM is valid UTF-8 full of NULs
+	case !utf8.ValidString(prompt), strings.ContainsRune(prompt, 0):
 		return "", errNoText
 	}
 
 	return prompt, nil
+}
+
+// The byte order marks Windows starts text files with.
+const (
+	bomUTF8    = "\xef\xbb\xbf"
+	bomUTF16LE = "\xff\xfe"
+	bomUTF16BE = "\xfe\xff"
+)
+
+// decodeText reads the text in the encodings Windows writes it in: UTF-8
+// with a BOM, as Notepad may save it, and UTF-16 with a BOM, as > does in
+// Windows PowerShell. Anything else, such as UTF-16 of an odd length,
+// stays as it is, for the check that it is UTF-8.
+func decodeText(text string) string {
+	switch {
+	case strings.HasPrefix(text, bomUTF8):
+		return text[len(bomUTF8):]
+	case strings.HasPrefix(text, bomUTF16LE) && len(text)%2 == 0:
+		return utf16Text(text[len(bomUTF16LE):], binary.LittleEndian)
+	case strings.HasPrefix(text, bomUTF16BE) && len(text)%2 == 0:
+		return utf16Text(text[len(bomUTF16BE):], binary.BigEndian)
+	}
+
+	return text
+}
+
+// utf16Text is the UTF-16 text, of an even length, as UTF-8.
+func utf16Text(text string, order binary.ByteOrder) string {
+	units := make([]uint16, len(text)/2)
+	for i := range units {
+		units[i] = order.Uint16([]byte(text[2*i:]))
+	}
+
+	return string(utf16.Decode(units))
 }
 
 // openPromptFile opens the file of --file. A file in a repository someone
@@ -862,15 +900,51 @@ func cut(text string, n int) string {
 	return strings.ToValidUTF8(text[:n], "") + "..."
 }
 
-// shellQuote quotes the path for a shell, unless it needs no quotes.
+// shellQuote quotes the path for the shells of the system, unless it needs
+// no quotes.
 func shellQuote(path string) string {
-	if !strings.ContainsFunc(path, func(r rune) bool {
-		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-", r)
-	}) {
-		return path
+	return quoteFor(runtime.GOOS, path)
+}
+
+// quoteFor quotes the path for the shells of goos. On Windows the person
+// may paste the command into PowerShell, cmd.exe or Git Bash, which share
+// no quotes but double quotes, and those only for a path without $, `, %
+// and !, which each of them reads in double quotes too, and without the
+// typographic double quotes, which PowerShell takes for double quotes.
+// Git takes the path with forward slashes, which none of them reads.
+func quoteFor(goos, path string) string {
+	if goos != "windows" {
+		if !needsQuotes(path, "") {
+			return path
+		}
+
+		return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 	}
 
-	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+	path = strings.ReplaceAll(path, `\`, "/")
+
+	switch {
+	case !needsQuotes(path, ":"):
+		return path
+	case !strings.ContainsAny(path, "$`%!“”„"):
+		return `"` + path + `"`
+	default:
+		// a path the shells share no quotes for, as PowerShell quotes it:
+		// it ends a quote at any of its single quotes, unless doubled
+		for _, quote := range []string{"'", "‘", "’", "‚", "‛"} {
+			path = strings.ReplaceAll(path, quote, quote+quote)
+		}
+
+		return "'" + path + "'"
+	}
+}
+
+// needsQuotes tells whether the path has a character beyond those no shell
+// reads, and the extra ones.
+func needsQuotes(path, extra string) bool {
+	return strings.ContainsFunc(path, func(r rune) bool {
+		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-"+extra, r)
+	})
 }
 
 func short(commit string) string {

@@ -86,6 +86,8 @@ type taskRun struct {
 	// archive is where the results go out, each as soon as it is complete
 	archive *tar.Writer
 	result  task.Result
+	// mise says whether the tools of the project come in before Claude Code
+	mise bool
 }
 
 func newTask(sys Processes, options Options, request session.Request) *taskRun {
@@ -98,6 +100,7 @@ func newTask(sys Processes, options Options, request session.Request) *taskRun {
 		out:        outDir,
 		progress:   io.Discard,
 		gitTimeout: gitTimeout,
+		mise:       options.Mise,
 	}
 }
 
@@ -165,6 +168,17 @@ func (t *taskRun) steps() error {
 	}
 
 	t.result.Base = base
+
+	if t.mise {
+		t.say("installing the tools of mise.toml and .tool-versions\n")
+
+		// Claude Code may get by without them
+		if err := t.installTools(settings); err != nil {
+			warning := fmt.Sprintf("install the tools: %v", err)
+			t.result.Warnings = append(t.result.Warnings, warning)
+			t.say("%s\n", warning)
+		}
+	}
 
 	t.say("running Claude Code\n")
 
@@ -332,6 +346,35 @@ func (t *taskRun) claude(settings task.Settings) error {
 	return err
 }
 
+// installTools runs mise install on the files the host approved. It may
+// take as long as Claude Code may, and what it prints goes to the progress.
+func (t *taskRun) installTools(settings task.Settings) error {
+	cgroup, err := t.newCgroup(true)
+	if err != nil {
+		return err
+	}
+
+	cmd := t.command(mise, "install")
+	cmd.Env = append(cmd.Env, miseInstall...)
+
+	code, err := t.execute(&step{
+		cmd:      cmd,
+		cgroup:   cgroup,
+		timeout:  time.Duration(settings.TimeoutSeconds) * time.Second,
+		stdout:   t.progress,
+		combined: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	if code != 0 {
+		return fmt.Errorf("mise install ended with exit code %d", code)
+	}
+
+	return nil
+}
+
 // commitLeftovers commits what the task left in the working tree, so that
 // the bundle carries it.
 func (t *taskRun) commitLeftovers() error {
@@ -495,13 +538,16 @@ const killedCode = 128 + int(syscall.SIGKILL)
 
 // step is a command of the task: the cgroup it runs in, how long it may
 // take, if there is a limit, and where its input comes from and its output
-// goes, nil for none. timedOut says whether the limit ended it.
+// goes, nil for none. With combined, standard error goes into the pipe of
+// stdout, so that their lines come in order, and stderr stays nil.
+// timedOut says whether the limit ended it.
 type step struct {
 	cmd            *exec.Cmd
 	cgroup         string
 	timeout        time.Duration
 	stdin          *os.File
 	stdout, stderr io.Writer
+	combined       bool
 
 	mu       sync.Mutex
 	finished bool
@@ -579,6 +625,10 @@ func (t *taskRun) execute(s *step) (int, error) {
 			_, _ = io.Copy(output.to, r)
 			_ = r.Close()
 		})
+	}
+
+	if s.combined {
+		cmd.Stderr = cmd.Stdout
 	}
 
 	pid, err := t.sys.Start(cmd, s.cgroup)

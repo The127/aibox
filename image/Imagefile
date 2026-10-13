@@ -13,19 +13,34 @@
 FROM debian:sid AS tools
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap
+      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap \
+      libstdc++6 libgcc-s1 zlib1g
 # The installer puts Claude Code in the home directory. It goes to /usr/bin
 # because the disk of a project is mounted over /usr/local.
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/bin/claude
+# mise installs the toolchains a project names, with the mise setting of
+# the config. Its static build needs no libraries.
+RUN curl -fsSLo /usr/bin/mise https://github.com/jdx/mise/releases/download/v2026.10.9/mise-v2026.10.9-linux-x64-musl && \
+    echo "77fbb428fff656ec0bbacb99d7ed5b038a0e09a9cc0168909fcf3da56b5d51e0  /usr/bin/mise" | sha256sum -c - && \
+    chmod 0755 /usr/bin/mise
 
 RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
 RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
 RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
+# curl downloads for install scripts like rustup's, and for Claude Code
+RUN lddtree --copy-to-tree /out/curl /usr/bin/curl
 # the init formats the state disk of a project on its first boot
 RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
 # rootless containers map their users through these two setuid programs
 RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
+# the libraries prebuilt toolchains load, like Node, Python and Rust from
+# mise, which the programs above don't bring: the C++ runtime, zlib and
+# the parts of glibc
+RUN lddtree --copy-to-tree /out/libs \
+      /usr/lib/*-linux-gnu/libstdc++.so.6 /usr/lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/*-linux-gnu/libz.so.1 \
+      /usr/lib/*-linux-gnu/libm.so.6 /usr/lib/*-linux-gnu/libdl.so.2 /usr/lib/*-linux-gnu/libpthread.so.0 \
+      /usr/lib/*-linux-gnu/librt.so.1 /usr/lib/*-linux-gnu/libutil.so.1 /usr/lib/*-linux-gnu/libresolv.so.2
 
 FROM scratch
 
@@ -42,11 +57,15 @@ COPY --from=tools /out/git/ /
 COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
 COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
+COPY --from=tools /out/curl/ /
+COPY --from=tools /usr/bin/mise /usr/bin/mise
+COPY mise.toml /etc/mise/config.toml
 COPY --from=tools /out/mke2fs/ /
 COPY --from=tools /etc/mke2fs.conf /etc/
 # lddtree drops the setuid bit, which the two need to map the subuid
 # range of "user", the user of the passwd file
 COPY --from=tools /out/uidmap/ /
+COPY --from=tools /out/libs/ /
 RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group subuid subgid /etc/
@@ -67,5 +86,7 @@ COPY aibox-init /sbin/init
 # the init answers as xclip and wl-paste, the clipboard tools Claude Code
 # runs for Ctrl+V, with the clipboard of the host
 RUN ln -s /sbin/init /usr/bin/xclip && ln -s /sbin/init /usr/bin/wl-paste
+# busybox put env into /bin, and scripts look for it in /usr/bin
+RUN ln -s /bin/env /usr/bin/env
 
 OUTPUT rootfs os.ext4

@@ -17,7 +17,8 @@ var ErrRelativePath = errors.New("project path is not absolute")
 // Project is the folder aibox keeps for one project. Dir is that folder.
 // Home is the home folder of the VM, Config the config file, Log the log of
 // the proxy, ConsoleLog the console of the last run of the VM and
-// State the disk the VM keeps its installed tools and caches on. Home is
+// State the disk the VM keeps its installed tools and caches on, and Mise
+// the hash of the mise files of the project the person approved. Home is
 // shared into the VM and State is its second disk. Path names the file
 // that holds the path of the project, so that a list of the projects can
 // show it, which the name of Dir doesn't give back.
@@ -28,6 +29,7 @@ type Project struct {
 	Log        string
 	ConsoleLog string
 	State      string
+	Mise       string
 	Path       string
 }
 
@@ -100,6 +102,7 @@ func In(dir string) Project {
 		Log:        filepath.Join(dir, "proxy.log"),
 		ConsoleLog: filepath.Join(dir, "console.log"),
 		State:      filepath.Join(dir, "state.ext4"),
+		Mise:       filepath.Join(dir, "mise.sha256"),
 		Path:       filepath.Join(dir, "path"),
 	}
 }

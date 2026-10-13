@@ -56,7 +56,8 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 // on a second disk. Shell boots it into a shell instead of Claude Code,
 // Resume is the ID of the session Claude Code goes on with, or empty, Port
 // tells the guest it reaches the host over the virtio port, not vsock, Task
-// runs the task of the task share unattended. HyperV tells the guest it
+// runs the task of the task share unattended, Mise installs the tools of
+// the project with mise before the command starts. HyperV tells the guest it
 // runs on Hyper-V, which shares the folders of the host over Plan 9 and has
 // SCSI disks, instead of virtio-fs and virtio disks.
 // ProxyPort and TerminalPort are the vsock ports of the proxy and the
@@ -77,6 +78,7 @@ type Machine struct {
 	Resume       string
 	Port         bool
 	Task         bool
+	Mise         bool
 	HyperV       bool
 	ProxyPort    uint32
 	TerminalPort uint32
@@ -233,6 +235,10 @@ func (m Machine) GuestWords() []string {
 
 	if m.Task {
 		words = append(words, "aibox.task")
+	}
+
+	if m.Mise {
+		words = append(words, "aibox.mise")
 	}
 
 	if m.HyperV {

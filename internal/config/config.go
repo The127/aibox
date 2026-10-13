@@ -140,11 +140,17 @@ const (
 // form preset:name stands for them.
 var presets = map[string][]string{
 	// proxy.golang.org redirects module downloads to storage.googleapis.com
-	"go":     {"proxy.golang.org", "sum.golang.org", "storage.googleapis.com", "vuln.go.dev", "dl.google.com", "go.dev"},
-	"npm":    {"registry.npmjs.org", "registry.yarnpkg.com", "nodejs.org"},
-	"pypi":   {"pypi.org", "files.pythonhosted.org"},
-	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"},
+	"go":   {"proxy.golang.org", "sum.golang.org", "storage.googleapis.com", "vuln.go.dev", "dl.google.com", "go.dev"},
+	"npm":  {"registry.npmjs.org", "registry.yarnpkg.com", "nodejs.org"},
+	"pypi": {"pypi.org", "files.pythonhosted.org"},
+	// rustup comes from sh.rustup.rs
+	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org", "sh.rustup.rs"},
 	"github": {"github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"},
+	// mise looks up the versions of most tools on GitHub and downloads many
+	// of them from its releases. The list of the builds of Python comes
+	// from a host of mise, and the keys it checks their signatures with
+	// from sigstore.
+	"mise": {"github.com", "api.github.com", "*.githubusercontent.com", "mise-versions.jdx.dev", "tuf-repo-cdn.sigstore.dev"},
 	// the layers of an image come from production.cloudfront.docker.com
 	"docker": {"registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudfront.docker.com"},
 }
@@ -157,6 +163,7 @@ var markers = map[string][]string{
 	"npm":   {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"},
 	"pypi":  {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile", "uv.lock", "poetry.lock"},
 	"cargo": {"Cargo.toml", "Cargo.lock"},
+	"mise":  {"mise.toml", ".tool-versions"},
 }
 
 // titles are the names of the tools of the presets markers knows, as
@@ -166,6 +173,7 @@ var titles = map[string]string{
 	"npm":   "npm",
 	"pypi":  "Python",
 	"cargo": "Rust",
+	"mise":  "mise",
 }
 
 func presetNames() []string {
@@ -281,6 +289,9 @@ type Config struct {
 	// IDE says whether Claude Code in the VM may use the IDE that has the
 	// project open.
 	IDE bool `yaml:"ide"`
+	// Mise says whether the VM installs the tools the project's mise.toml
+	// and .tool-versions name, with mise, before the command starts.
+	Mise bool `yaml:"mise"`
 	// Clipboard says whether the person pastes from the clipboard of the
 	// host with Ctrl+V: an image Claude Code in the VM may read, or text
 	// aibox types. Nil means they do.
@@ -583,6 +594,13 @@ allow:
 # like VS Code: the code you select, diffs in the editor and the errors it
 # reports, for files in the project. It is off unless you turn it on:
 # ide: true
+
+# Whether the VM installs the tools your project's mise.toml and
+# .tool-versions name, like Go or Node, with mise, before Claude Code
+# starts. aibox shows you the files and asks before it uses new or changed
+# ones. The downloads need their hosts on the allow list. It is off unless
+# you turn it on:
+# mise: true
 
 # Whether Ctrl+V pastes from your clipboard: an image, which the VM can
 # read only right after you press the key, or text, which aibox types as

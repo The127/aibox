@@ -44,6 +44,9 @@ type Spec struct {
 	Mounts []Mount
 	// Shell opens a shell in the VM instead of Claude Code.
 	Shell bool
+	// Mise installs the tools the project's mise.toml and .tool-versions
+	// name before the command in the VM starts.
+	Mise bool
 	// Resume is the ID of the Claude Code session to go on with, or empty
 	// for a new one.
 	Resume string

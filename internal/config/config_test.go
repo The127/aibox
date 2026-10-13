@@ -716,7 +716,7 @@ func TestLoadRejectsAnUnknownPreset(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, config.ErrUnknownPreset)
 	assert.ErrorContains(t, err, "rust")
-	assert.ErrorContains(t, err, "cargo, docker, github, go, npm, pypi")
+	assert.ErrorContains(t, err, "cargo, docker, github, go, mise, npm, pypi")
 }
 
 func TestLoadRejectsAnEntryThatCannotMatch(t *testing.T) {

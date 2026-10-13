@@ -110,8 +110,9 @@ These are the presets:
 | `preset:go` | `proxy.golang.org`, `sum.golang.org`, `storage.googleapis.com`, `vuln.go.dev`, `dl.google.com`, `go.dev` |
 | `preset:npm` | `registry.npmjs.org`, `registry.yarnpkg.com`, `nodejs.org` |
 | `preset:pypi` | `pypi.org`, `files.pythonhosted.org` |
-| `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org` |
+| `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org`, `sh.rustup.rs` |
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
+| `preset:mise` | `github.com`, `api.github.com`, `*.githubusercontent.com`, `mise-versions.jdx.dev`, `tuf-repo-cdn.sigstore.dev` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
 
 When the proxy refuses a host that a preset allows, its message names the
@@ -322,6 +323,47 @@ part about diffs.
 
 With `ide` turned on, your `env` can't set `CLAUDE_CODE_SSE_PORT`, because
 aibox sets it itself. Tasks never get the IDE, only `aibox run` does.
+
+## mise
+
+The VM has no compiler, no Node and no Python. If your project names its
+tools in a `mise.toml` or `.tool-versions`, aibox can install them with
+[mise](https://mise.jdx.dev) before Claude Code starts:
+
+```yaml
+mise: true
+```
+
+The first time, aibox shows you the two files and asks before it installs
+anything. It asks again whenever one of them changes, since the VM can
+change them too. If you say no, Claude Code starts without the tools.
+
+The tools stay on the state disk, so the next start only installs what's
+new. In the VM, `go`, `node` and the rest are on the `PATH`.
+
+The downloads need their hosts on the allow list. mise looks up the
+versions of most tools on GitHub, so allow `preset:mise` and the preset of
+the tool, like `preset:go` for Go. `aibox config suggest` offers
+`preset:mise` for a project with a `mise.toml` or `.tool-versions`.
+`proxy.log` shows what the proxy refused.
+
+Some things to know:
+
+- aibox only reads `mise.toml` and `.tool-versions` in the project folder.
+  Other mise files, like `.mise.toml` or one in `~/.config/mise`, don't
+  count for the install before Claude Code starts.
+- A task installs the tools too, but only if you approved the files of its
+  commit in an `aibox run` before. A task can't ask you. It starts with an
+  empty disk, so it downloads the tools on every run. The install may take
+  as long as the task's `--timeout`, and Claude Code gets the whole
+  timeout after it.
+- Your approval covers what the two files say, not the files they point
+  to, like a script that `[env]` runs. It doesn't cover mise's own files
+  on the state disk either. The VM can change both, like anything else it
+  keeps between runs. `aibox projects reset` clears the state disk.
+- Folders of the [`path`](#path) setting come before the tools of mise on
+  the `PATH`.
+- mise runs in the VM, with the same limits as everything else there.
 
 ## clipboard
 

@@ -48,11 +48,12 @@ The folder holds:
 |---|---|
 | `config.yaml` | The [project config](config.md). |
 | `home/` | The VM's home folder, so Claude Code's login and `~/.claude` survive restarts. Other projects don't see them. |
-| `state.ext4` | A disk for the VM's `/usr/local` and `~/.cache`. |
+| `state.ext4` | A disk for the VM's `/usr/local`, `~/.cache` and the tools of [mise](config.md#mise). |
 | `console.log` | The kernel and init messages of the last run. |
 | `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. |
 | `tasks/` | The project's [tasks](tasks.md). |
 | `path` | The project's path, for `aibox projects list`. |
+| `mise.sha256` | The hash of the mise files you approved last. |
 | `run.lock`, `tasks.lock` | Locked while the project runs or a task runs, so that a reset or a remove leaves it alone. |
 
 Tools you install into `/usr/local` in the VM stay on the state disk. They
@@ -229,8 +230,9 @@ clipboard when aibox asks and does nothing else. It ends with aibox.
 
 The VM runs arm64 Linux, so Mac programs don't run in it. If you mount a
 tool from your Mac, like a Go SDK or `/nix/store`, the VM can't run it. Get
-arm64 Linux builds of your tools instead, or install them into `/usr/local`
-in the VM, where they stay.
+arm64 Linux builds of your tools instead. You can also let
+[mise](config.md#mise) install them, or install them into `/usr/local` in the
+VM yourself. Both stay.
 
 You can only run one `aibox run` per project at a time on macOS.
 Virtualization.framework locks the state disk while the VM runs.

@@ -230,3 +230,11 @@ func TestAllowHint(t *testing.T) {
 		})
 	}
 }
+
+func TestSuggestOffersMiseForItsFiles(t *testing.T) {
+	// act
+	suggestions := Suggest([]string{".tool-versions"}, nil)
+
+	// assert
+	assert.Equal(t, []Suggestion{{Preset: "mise", Tool: "mise", Files: []string{".tool-versions"}, Hosts: presets["mise"]}}, suggestions)
+}

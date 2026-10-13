@@ -178,6 +178,12 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
+	if r.config.Mise {
+		if spec.Mise, err = approveMise(ctx, deps, cwd, r.project); err != nil {
+			return err
+		}
+	}
+
 	// aibox can't listen on a port once it has locked itself down
 	spec.Forwards, err = listenPorts(r.config.Ports, r.config.Allow.LoopbackPorts())
 	if err != nil {

@@ -140,10 +140,11 @@ const (
 // form preset:name stands for them.
 var presets = map[string][]string{
 	// proxy.golang.org redirects module downloads to storage.googleapis.com
-	"go":     {"proxy.golang.org", "sum.golang.org", "storage.googleapis.com", "vuln.go.dev", "dl.google.com", "go.dev"},
-	"npm":    {"registry.npmjs.org", "registry.yarnpkg.com", "nodejs.org"},
-	"pypi":   {"pypi.org", "files.pythonhosted.org"},
-	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"},
+	"go":   {"proxy.golang.org", "sum.golang.org", "storage.googleapis.com", "vuln.go.dev", "dl.google.com", "go.dev"},
+	"npm":  {"registry.npmjs.org", "registry.yarnpkg.com", "nodejs.org"},
+	"pypi": {"pypi.org", "files.pythonhosted.org"},
+	// rustup comes from sh.rustup.rs
+	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org", "sh.rustup.rs"},
 	"github": {"github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"},
 	// mise looks up the versions of most tools on GitHub and downloads many
 	// of them from its releases

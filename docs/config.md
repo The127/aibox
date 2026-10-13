@@ -104,7 +104,7 @@ These are the presets:
 | `preset:go` | `proxy.golang.org`, `sum.golang.org`, `storage.googleapis.com`, `vuln.go.dev`, `dl.google.com`, `go.dev` |
 | `preset:npm` | `registry.npmjs.org`, `registry.yarnpkg.com`, `nodejs.org` |
 | `preset:pypi` | `pypi.org`, `files.pythonhosted.org` |
-| `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org` |
+| `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org`, `sh.rustup.rs` |
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
 | `preset:mise` | `github.com`, `api.github.com`, `*.githubusercontent.com` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |

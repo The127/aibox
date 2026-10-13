@@ -13,7 +13,8 @@
 FROM debian:sid AS tools
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap
+      pax-utils busybox-static bash git ca-certificates curl e2fsprogs uidmap \
+      libstdc++6 libgcc-s1 zlib1g
 # The installer puts Claude Code in the home directory. It goes to /usr/bin
 # because the disk of a project is mounted over /usr/local.
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
@@ -31,6 +32,9 @@ RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
 RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
 # rootless containers map their users through these two setuid programs
 RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
+# the libraries prebuilt toolchains load, like Node, Python and Rust from
+# mise, which the programs above don't bring
+RUN lddtree --copy-to-tree /out/libs /usr/lib/*-linux-gnu/libstdc++.so.6 /usr/lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/*-linux-gnu/libz.so.1
 
 FROM scratch
 
@@ -54,6 +58,7 @@ COPY --from=tools /etc/mke2fs.conf /etc/
 # lddtree drops the setuid bit, which the two need to map the subuid
 # range of "user", the user of the passwd file
 COPY --from=tools /out/uidmap/ /
+COPY --from=tools /out/libs/ /
 RUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
 COPY --from=tools /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY passwd group subuid subgid /etc/
@@ -74,5 +79,7 @@ COPY aibox-init /sbin/init
 # the init answers as xclip and wl-paste, the clipboard tools Claude Code
 # runs for Ctrl+V, with the clipboard of the host
 RUN ln -s /sbin/init /usr/bin/xclip && ln -s /sbin/init /usr/bin/wl-paste
+# busybox put env into /bin, and scripts look for it in /usr/bin
+RUN ln -s /bin/env /usr/bin/env
 
 OUTPUT rootfs os.ext4

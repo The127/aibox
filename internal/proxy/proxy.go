@@ -78,6 +78,10 @@ type Options struct {
 // machine aibox runs on.
 var errNotPublic = errors.New("no public address")
 
+// errZone is an IPv6 address with a zone, which leads to the machine's own
+// links.
+var errZone = errors.New("an address with a zone")
+
 // The reasons a refusal names.
 const (
 	reasonNotAllowed = "is not on the allow list"
@@ -505,18 +509,18 @@ func notInLabel(r rune) bool {
 // cannot lead into the machine's own networks and a changed DNS answer
 // cannot lead elsewhere than the checked address.
 func connect(ctx context.Context, host, port string, options Options) (net.Conn, error) {
+	// net.ParseIP reads no address with a zone, and the resolver would
+	// return the address in it, unchecked, as if it were a name's
+	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() != "" {
+		return nil, errZone
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 
 	var pinned []net.IP
 	if options.Pinned != nil {
 		pinned = options.Pinned(host, port)
-	}
-
-	// net.ParseIP reads no address with a zone, and the resolver would
-	// return the address in it, unchecked, as if it were a name's
-	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() != "" {
-		return nil, errNotPublic
 	}
 
 	addresses := []net.IP{net.ParseIP(host)}

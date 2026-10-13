@@ -24,7 +24,7 @@ func TestReadMiseFilesRefusesALink(t *testing.T) {
 	_, err := readMiseFiles(dir)
 
 	// assert
-	require.ErrorIs(t, err, errMiseLink)
+	require.ErrorIs(t, err, errMiseNotAFile)
 }
 
 func TestApproveMiseStartsWithoutTheToolsWhenAFileIsALink(t *testing.T) {
@@ -50,5 +50,5 @@ func TestReadCommitMiseFilesRefusesALink(t *testing.T) {
 	_, err := readCommitMiseFiles(dir, commit)
 
 	// assert
-	require.ErrorIs(t, err, errMiseLink)
+	require.ErrorIs(t, err, errMiseNotAFile)
 }

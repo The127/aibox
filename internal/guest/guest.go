@@ -441,10 +441,10 @@ func Command(options Options, terminal *os.File, request session.Request) *exec.
 	// the install shows on the terminal, and the command starts however
 	// it went
 	if options.Mise {
-		count := strconv.Itoa(len(miseInstall))
-		// without a terminal, what mise prints is no output of the command
-		script := `(export "${@:1:` + count + `}"; exec ` + mise + ` install >&2); shift ` + count + `; exec "$@"`
-		args = slices.Concat([]string{"-c", script, bash}, miseInstall, []string{name}, args)
+		// without a terminal, what mise prints is no output of the command.
+		// The variables are aibox's own and need no quoting.
+		script := strings.Join(miseInstall, " ") + " " + mise + ` install >&2; exec "$@"`
+		args = slices.Concat([]string{"-c", script, bash, name}, args)
 		name = bash
 	}
 

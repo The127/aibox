@@ -21,7 +21,7 @@ import (
 // VM, in the order they are hashed. The VM reads no other.
 var miseFiles = []string{"mise.toml", ".tool-versions"}
 
-var errMiseLink = errors.New("is no plain file")
+var errMiseNotAFile = errors.New("not a plain file")
 
 // miseFile is a mise file of the project and what it holds.
 type miseFile struct {
@@ -33,64 +33,68 @@ type miseFile struct {
 // missing file is left out. The VM can put a link there, which aibox does
 // not follow.
 func readMiseFiles(dir string) ([]miseFile, error) {
-	var files []miseFile
-
-	for _, name := range miseFiles {
+	return collectMiseFiles(func(name string) ([]byte, bool, error) {
 		path := filepath.Join(dir, name)
 
 		info, err := os.Lstat(path)
 		if errors.Is(err, fs.ErrNotExist) {
-			continue
+			return nil, false, nil
 		}
 
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s %w", name, errMiseLink)
+			return nil, false, errMiseNotAFile
 		}
 
 		content, err := os.ReadFile(path) //nolint:gosec // a file of the project
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, err)
+			return nil, false, err
 		}
 
-		files = append(files, miseFile{name: name, content: content})
-	}
-
-	return files, nil
+		return content, true, nil
+	})
 }
 
 // readCommitMiseFiles reads the mise files of the commit, as the VM of a
 // task checks it out. git runs in the helper and writes nothing.
 func readCommitMiseFiles(dir, commit string) ([]miseFile, error) {
-	var files []miseFile
-
-	for _, name := range miseFiles {
+	return collectMiseFiles(func(name string) ([]byte, bool, error) {
 		// the VM of a task checks out the whole repository, so the files
 		// are the ones at its top, wherever the task started
 		entry, err := gitOutput(dir, "", "ls-tree", "--full-tree", "--end-of-options", commit, "--", name)
-		if err != nil {
-			return nil, err
-		}
-
-		if entry == "" {
-			continue
+		if err != nil || entry == "" {
+			return nil, false, err
 		}
 
 		// mode type object, a tab and the name
 		fields := strings.Fields(entry)
 		if len(fields) < 3 || (fields[0] != "100644" && fields[0] != "100755") {
-			return nil, fmt.Errorf("%s %w", name, errMiseLink)
+			return nil, false, errMiseNotAFile
 		}
 
 		content, err := gitBytes(dir, "", "cat-file", "blob", fields[2])
+
+		return content, err == nil, err
+	})
+}
+
+// collectMiseFiles reads each mise file with read, which says whether the
+// file is there.
+func collectMiseFiles(read func(name string) ([]byte, bool, error)) ([]miseFile, error) {
+	var files []miseFile
+
+	for _, name := range miseFiles {
+		content, found, err := read(name)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 
-		files = append(files, miseFile{name: name, content: content})
+		if found {
+			files = append(files, miseFile{name: name, content: content})
+		}
 	}
 
 	return files, nil
@@ -112,12 +116,12 @@ func hashMiseFiles(files []miseFile) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// approvedMise says whether the person approved the files, by the hash
-// aibox keeps for the project.
-func approvedMise(p project.Project, files []miseFile) bool {
+// approvedMise says whether the person approved the hash, by the one aibox
+// keeps for the project.
+func approvedMise(p project.Project, hash string) bool {
 	approved, err := os.ReadFile(p.Mise)
 
-	return err == nil && strings.TrimSpace(string(approved)) == hashMiseFiles(files)
+	return err == nil && strings.TrimSpace(string(approved)) == hash
 }
 
 // approveMise says whether the VM of aibox run installs the tools of the
@@ -140,7 +144,8 @@ func approveMise(ctx context.Context, deps dependencies, dir string, p project.P
 		return false, nil
 	}
 
-	if approvedMise(p, files) {
+	hash := hashMiseFiles(files)
+	if approvedMise(p, hash) {
 		return true, nil
 	}
 
@@ -163,7 +168,7 @@ func approveMise(ctx context.Context, deps dependencies, dir string, p project.P
 		return false, err
 	}
 
-	if err := os.WriteFile(p.Mise, []byte(hashMiseFiles(files)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(p.Mise, []byte(hash+"\n"), 0o600); err != nil {
 		return false, fmt.Errorf("keep the approval of the mise files: %w", err)
 	}
 
@@ -185,7 +190,7 @@ func taskMise(out io.Writer, dir, commit string, p project.Project) bool {
 		_, _ = fmt.Fprintf(out, "mise is on, but the commit has no %s\n", strings.Join(miseFiles, " or "))
 
 		return false
-	case !approvedMise(p, files):
+	case !approvedMise(p, hashMiseFiles(files)):
 		_, _ = fmt.Fprintf(out, "the task starts without the tools of mise: approve the mise files of the commit in aibox run first\n")
 
 		return false

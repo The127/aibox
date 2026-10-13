@@ -358,11 +358,11 @@ func (t *taskRun) installTools(settings task.Settings) error {
 	cmd.Env = append(cmd.Env, miseInstall...)
 
 	code, err := t.execute(&step{
-		cmd:     cmd,
-		cgroup:  cgroup,
-		timeout: time.Duration(settings.TimeoutSeconds) * time.Second,
-		stdout:  t.progress,
-		stderr:  t.progress,
+		cmd:      cmd,
+		cgroup:   cgroup,
+		timeout:  time.Duration(settings.TimeoutSeconds) * time.Second,
+		stdout:   t.progress,
+		combined: true,
 	})
 	if err != nil {
 		return err
@@ -538,13 +538,16 @@ const killedCode = 128 + int(syscall.SIGKILL)
 
 // step is a command of the task: the cgroup it runs in, how long it may
 // take, if there is a limit, and where its input comes from and its output
-// goes, nil for none. timedOut says whether the limit ended it.
+// goes, nil for none. With combined, standard error goes into the pipe of
+// stdout, so that their lines come in order. timedOut says whether the
+// limit ended it.
 type step struct {
 	cmd            *exec.Cmd
 	cgroup         string
 	timeout        time.Duration
 	stdin          *os.File
 	stdout, stderr io.Writer
+	combined       bool
 
 	mu       sync.Mutex
 	finished bool
@@ -598,15 +601,11 @@ func (t *taskRun) execute(s *step) (int, error) {
 		}
 	}
 
-	// one writer for both gets one pipe, so that their lines come in order
-	// and the writer is written from one copy only
-	merged := s.stdout != nil && s.stderr == s.stdout
-
 	for _, output := range []struct {
 		to  io.Writer
 		set *io.Writer
 	}{{s.stdout, &cmd.Stdout}, {s.stderr, &cmd.Stderr}} {
-		if output.to == nil || (merged && output.set == &cmd.Stderr) {
+		if output.to == nil {
 			continue
 		}
 
@@ -628,7 +627,7 @@ func (t *taskRun) execute(s *step) (int, error) {
 		})
 	}
 
-	if merged {
+	if s.combined {
 		cmd.Stderr = cmd.Stdout
 	}
 

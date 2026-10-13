@@ -159,12 +159,9 @@ func TestCommandInstallsTheToolsOfMiseBeforeClaudeCode(t *testing.T) {
 
 	// assert
 	assert.Equal(t, []string{
-		"/usr/bin/bash", "-c", `(export "${@:1:4}"; exec /usr/bin/mise install >&2); shift 4; exec "$@"`, "/usr/bin/bash",
-		"MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml",
-		"MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=.tool-versions",
-		"MISE_GLOBAL_CONFIG_FILE=/etc/mise/none.toml",
-		"MISE_YES=1",
-		"/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md",
+		"/usr/bin/bash", "-c",
+		`MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=.tool-versions MISE_GLOBAL_CONFIG_FILE=/etc/mise/none.toml MISE_YES=1 /usr/bin/mise install >&2; exec "$@"`,
+		"/usr/bin/bash", "/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md",
 	}, cmd.Args)
 	assert.Contains(t, cmd.Env, "PATH=/home/user/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin")
 }
@@ -177,7 +174,7 @@ func TestTheInstallOfMiseRunsTheCommandHoweverItWent(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 
 	// act
-	err := exec.Command("bash", "-c", script, "bash", "A=1", "B=2", "C=3", "D=4", "sh", "-c", `echo "$0 $A" > "$1"`, "ran", out).Run() //nolint:gosec // the test's own script
+	err := exec.Command("bash", "-c", script, "bash", "sh", "-c", `echo "$0 $MISE_YES" > "$1"`, "ran", out).Run() //nolint:gosec // the test's own script
 
 	// assert
 	require.NoError(t, err)

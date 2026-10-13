@@ -4,5 +4,5 @@
 # your machine before aibox installs from it.
 trusted_config_paths = ["/project"]
 # mise asks the hosts of the tools for their versions, not a service of its
-# own, so that the allow list needs no host for it
+# own. It still takes the list of the builds of Python from there.
 use_versions_host = false

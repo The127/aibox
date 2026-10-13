@@ -30,13 +30,19 @@ RUN curl -fsSLo /usr/bin/mise https://github.com/jdx/mise/releases/download/v202
 RUN lddtree --copy-to-tree /out/bash /usr/bin/bash
 RUN lddtree --copy-to-tree /out/git /usr/bin/git /usr/lib/git-core/git-remote-http
 RUN lddtree --copy-to-tree /out/claude /usr/bin/claude
+# curl downloads for install scripts like rustup's, and for Claude Code
+RUN lddtree --copy-to-tree /out/curl /usr/bin/curl
 # the init formats the state disk of a project on its first boot
 RUN lddtree --copy-to-tree /out/mke2fs /usr/sbin/mke2fs
 # rootless containers map their users through these two setuid programs
 RUN lddtree --copy-to-tree /out/uidmap /usr/bin/newuidmap /usr/bin/newgidmap
 # the libraries prebuilt toolchains load, like Node, Python and Rust from
-# mise, which the programs above don't bring
-RUN lddtree --copy-to-tree /out/libs /usr/lib/*-linux-gnu/libstdc++.so.6 /usr/lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/*-linux-gnu/libz.so.1
+# mise, which the programs above don't bring: the C++ runtime, zlib and
+# the parts of glibc
+RUN lddtree --copy-to-tree /out/libs \
+      /usr/lib/*-linux-gnu/libstdc++.so.6 /usr/lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/*-linux-gnu/libz.so.1 \
+      /usr/lib/*-linux-gnu/libm.so.6 /usr/lib/*-linux-gnu/libdl.so.2 /usr/lib/*-linux-gnu/libpthread.so.0 \
+      /usr/lib/*-linux-gnu/librt.so.1 /usr/lib/*-linux-gnu/libutil.so.1 /usr/lib/*-linux-gnu/libresolv.so.2
 
 FROM scratch AS root
 
@@ -54,6 +60,7 @@ COPY --from=tools /out/git/ /
 COPY --from=tools /usr/lib/git-core/ /usr/lib/git-core/
 COPY --from=tools /usr/share/git-core/ /usr/share/git-core/
 COPY --from=tools /out/claude/ /
+COPY --from=tools /out/curl/ /
 COPY --from=tools /usr/bin/mise /usr/bin/mise
 COPY mise.toml /etc/mise/config.toml
 COPY --from=tools /out/mke2fs/ /

@@ -147,8 +147,10 @@ var presets = map[string][]string{
 	"cargo":  {"crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org", "sh.rustup.rs"},
 	"github": {"github.com", "api.github.com", "codeload.github.com", "*.githubusercontent.com"},
 	// mise looks up the versions of most tools on GitHub and downloads many
-	// of them from its releases
-	"mise": {"github.com", "api.github.com", "*.githubusercontent.com"},
+	// of them from its releases. The list of the builds of Python comes
+	// from a host of mise, and the keys it checks their signatures with
+	// from sigstore.
+	"mise": {"github.com", "api.github.com", "*.githubusercontent.com", "mise-versions.jdx.dev", "tuf-repo-cdn.sigstore.dev"},
 	// the layers of an image come from production.cloudfront.docker.com
 	"docker": {"registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudfront.docker.com"},
 }

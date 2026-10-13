@@ -106,7 +106,7 @@ These are the presets:
 | `preset:pypi` | `pypi.org`, `files.pythonhosted.org` |
 | `preset:cargo` | `crates.io`, `static.crates.io`, `index.crates.io`, `static.rust-lang.org`, `sh.rustup.rs` |
 | `preset:github` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com` |
-| `preset:mise` | `github.com`, `api.github.com`, `*.githubusercontent.com` |
+| `preset:mise` | `github.com`, `api.github.com`, `*.githubusercontent.com`, `mise-versions.jdx.dev`, `tuf-repo-cdn.sigstore.dev` |
 | `preset:docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudfront.docker.com` |
 
 When the proxy refuses a host that a preset allows, its message names the

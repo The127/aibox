@@ -4,7 +4,27 @@ name: images
 # QEMU on Linux, arm64 for Virtualization.framework on macOS
 on:
   workflow_call:
+    inputs:
+      image:
+        description: build the whole image, not just the kernels for the cache
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      image:
+        description: build the whole image, not just the kernels for the cache
+        type: boolean
+        default: true
+  # these have no inputs, so they only fill the cache of the kernels
+  schedule:
+    - cron: "23 4 * * *"
+  push:
+    branches: [main]
+    paths:
+      - image/kernel.Imagefile
+      - image/kernel.Containerfile
+      - image/check-kernel-config
+      - image/*.config
 
 permissions:
   contents: read
@@ -13,38 +33,16 @@ permissions:
 # build files are the same and Debian sid still has the same kernel source.
 # A kernel built anew is saved under the version it says it was built from,
 # so a cached kernel is never older than its name, even when sid moves on
-# during the build.
+# during the build. sid moves on every week or two, so a run each day and
+# one for each change of the build files keep the cache filled for the
+# next release, which otherwise would build the kernels itself. A cache of
+# main stays for 7 days without a run reading it, which the daily run does.
 
 jobs:
   amd64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - uses: extractions/setup-just@v4
-      - uses: sigstore/cosign-installer@v4.1.2
-      # miso builds the image in a VM of its own
-      - name: open KVM to the runner user
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: install miso, checked against its signed checksums
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MISO_VERSION: v1.0.0
-        run: |
-          cd "$RUNNER_TEMP"
-          gh release download "$MISO_VERSION" --repo The127/miso --pattern 'miso_*_linux_amd64.deb' --pattern 'checksums.txt*'
-          cosign verify-blob checksums.txt \
-            --bundle checksums.txt.sigstore.json \
-            --certificate-identity https://github.com/The127/miso/.github/workflows/release.yml@refs/heads/main \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com
-          sha256sum --ignore-missing -c checksums.txt
-          sudo apt-get update
-          sudo apt-get install -y ./miso_*_linux_amd64.deb
       - name: find the kernel source of Debian sid
         id: source
         run: |
@@ -60,6 +58,37 @@ jobs:
             out/vmlinuz
             out/vmlinuz-hyperv
           key: kernel-amd64-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config', 'image/kernel-hyperv.config') }}-${{ steps.source.outputs.version }}
+      # the rest only for a kernel to build or an image
+      - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        uses: extractions/setup-just@v4
+      - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        uses: sigstore/cosign-installer@v4.1.2
+      # miso builds the image in a VM of its own
+      - name: open KVM to the runner user
+        if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: install miso, checked against its signed checksums
+        if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MISO_VERSION: v1.0.0
+        run: |
+          cd "$RUNNER_TEMP"
+          gh release download "$MISO_VERSION" --repo The127/miso --pattern 'miso_*_linux_amd64.deb' --pattern 'checksums.txt*'
+          cosign verify-blob checksums.txt \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity https://github.com/The127/miso/.github/workflows/release.yml@refs/heads/main \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          sha256sum --ignore-missing -c checksums.txt
+          sudo apt-get update
+          sudo apt-get install -y ./miso_*_linux_amd64.deb
       - if: steps.kernel.outputs.cache-hit != 'true'
         run: just image-kernel
       - if: steps.kernel.outputs.cache-hit != 'true'
@@ -72,9 +101,12 @@ jobs:
             out/vmlinuz
             out/vmlinuz-hyperv
           key: kernel-amd64-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config', 'image/kernel-hyperv.config') }}-${{ steps.built.outputs.version }}
-      - run: just image-root
-      - run: just image-archive amd64
-      - uses: actions/upload-artifact@v7
+      - if: inputs.image
+        run: just image-root
+      - if: inputs.image
+        run: just image-archive amd64
+      - if: inputs.image
+        uses: actions/upload-artifact@v7
         with:
           name: aibox-image_amd64
           path: out/aibox-image_amd64.tar.gz
@@ -86,10 +118,6 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - uses: extractions/setup-just@v4
       - name: find the kernel source of Debian sid
         id: source
         run: |
@@ -103,6 +131,13 @@ jobs:
         with:
           path: out/vmlinuz
           key: kernel-arm64-${{ hashFiles('image/kernel.Containerfile', 'image/check-kernel-config', 'image/vz-arm64.config', 'image/kernel-arm64.config') }}-${{ steps.source.outputs.version }}
+      # the rest only for a kernel to build or an image
+      - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
+        uses: extractions/setup-just@v4
       - if: steps.kernel.outputs.cache-hit != 'true'
         run: just image-docker-arm64-kernel
       - if: steps.kernel.outputs.cache-hit != 'true'
@@ -113,9 +148,12 @@ jobs:
         with:
           path: out/vmlinuz
           key: kernel-arm64-${{ hashFiles('image/kernel.Containerfile', 'image/check-kernel-config', 'image/vz-arm64.config', 'image/kernel-arm64.config') }}-${{ steps.built.outputs.version }}
-      - run: just image-docker-arm64-root
-      - run: just image-archive arm64
-      - uses: actions/upload-artifact@v7
+      - if: inputs.image
+        run: just image-docker-arm64-root
+      - if: inputs.image
+        run: just image-archive arm64
+      - if: inputs.image
+        uses: actions/upload-artifact@v7
         with:
           name: aibox-image_arm64
           path: out/aibox-image_arm64.tar.gz

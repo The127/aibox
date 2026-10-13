@@ -513,6 +513,12 @@ func connect(ctx context.Context, host, port string, options Options) (net.Conn,
 		pinned = options.Pinned(host, port)
 	}
 
+	// net.ParseIP reads no address with a zone, and the resolver would
+	// return the address in it, unchecked, as if it were a name's
+	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() != "" {
+		return nil, errNotPublic
+	}
+
 	addresses := []net.IP{net.ParseIP(host)}
 
 	switch {

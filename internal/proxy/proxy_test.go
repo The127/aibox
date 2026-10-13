@@ -1119,3 +1119,36 @@ func TestServeAnswers400ToARequestLineLongerThanATarget(t *testing.T) {
 	// assert
 	assert.Equal(t, "HTTP/1.1 400 Bad Request", r.status)
 }
+
+func TestServeRefusesAnAddressWithAZoneUnderAWildcard(t *testing.T) {
+	// arrange: the zone ends in a name the wildcard allows
+	address := serve(t, proxy.Options{
+		Allow: func(host, _ string) bool { return strings.HasSuffix(host, ".githubusercontent.com") },
+		Resolve: func(context.Context, string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		},
+	})
+
+	// act
+	status, _ := connect(t, address, "[::ffff:93.184.216.34%25.githubusercontent.com]:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 400 Bad Request", status)
+}
+
+func TestConnectResolvesNoAddressWithAZone(t *testing.T) {
+	// arrange
+	resolved := false
+	options := proxy.Options{Resolve: func(context.Context, string) ([]net.IP, error) {
+		resolved = true
+
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}}
+
+	// act
+	_, err := proxy.Connect(context.Background(), "::ffff:93.184.216.34%25.githubusercontent.com", "443", options)
+
+	// assert
+	require.Error(t, err)
+	assert.False(t, resolved)
+}

@@ -59,8 +59,11 @@ To report a vulnerability, see
   the VM as it is, so the VM can read it. A task can use all of this, with
   nobody there to stop it. See [Tasks](tasks.md).
 - What goes through an allowed connection. `proxy.log` shows the host and
-  port the VM asked for. It doesn't show the address behind the host, or
-  what was sent. A push to `github.com` and a fetch from it look the same.
+  port the VM asked for, up to 1000 different ones of each kind. A VM that
+  makes up names under a wildcard of the allow list can push a real host
+  past them, into the count of the rest. It doesn't show the address behind
+  the host, or what was sent. A push to `github.com` and a fetch from it
+  look the same.
 - What a task says about itself. Claude Code's last message, `result.json`
   and the authors of the commits all come from the VM.
 - Force pushes and CI. The git broker can't tell a force push to an allowed

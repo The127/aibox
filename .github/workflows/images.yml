@@ -48,8 +48,11 @@ jobs:
       - name: find the kernel source of Debian sid
         id: source
         run: |
+          set -o pipefail
           package=$(grep -om1 'linux-source-[0-9.]*[0-9]' image/kernel.Imagefile)
-          echo "version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[0]')" >> "$GITHUB_OUTPUT"
+          # sid can hold two versions for a while, and keys sorts them as text
+          version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[]' | sort -V | tail -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v6
         id: kernel
         with:
@@ -90,8 +93,11 @@ jobs:
       - name: find the kernel source of Debian sid
         id: source
         run: |
+          set -o pipefail
           package=$(grep -om1 'linux-source-[0-9.]*[0-9]' image/kernel.Containerfile)
-          echo "version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[0]')" >> "$GITHUB_OUTPUT"
+          # sid can hold two versions for a while, and keys sorts them as text
+          version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[]' | sort -V | tail -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v6
         id: kernel
         with:

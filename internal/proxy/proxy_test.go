@@ -983,6 +983,8 @@ func TestValidTarget(t *testing.T) {
 		"example.com:0":                          false,
 		"example.com:65536":                      false,
 		"example.com:https":                      false,
+		"example.com:0443":                       false,
+		"example.com:+443":                       false,
 		":443":                                   false,
 		"a..b:443":                               false,
 		"a b.example:443":                        false,

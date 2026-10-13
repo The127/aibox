@@ -94,6 +94,8 @@ type fakeProcesses struct {
 	firmware         string
 	ports            []uint16
 	confinedWith     []uint16
+	read             []string
+	confinedReading  []string
 	confineCalls     int
 	failConfine      error
 	// noVsock is a kernel without vsock namespaces
@@ -180,6 +182,7 @@ func (f *fakeProcesses) options() launch.Options {
 		OpenVsock:     f.openTCP,
 		Confine:       f.confine,
 		Ports:         f.ports,
+		Read:          f.read,
 		Env:           f.env,
 		KVMDevice:     os.DevNull,
 		ConsoleLog:    f.consoleLog,
@@ -207,8 +210,9 @@ func (f *fakeProcesses) options() launch.Options {
 // confine stands in for the confinement of aibox, which the test process
 // could not undo. Run calls it on the test's goroutine. A failure waits
 // for the fake QEMU to be up, so that the test sees it stopped.
-func (f *fakeProcesses) confine(ports []uint16) error {
+func (f *fakeProcesses) confine(ports []uint16, read []string) error {
 	f.confinedWith = ports
+	f.confinedReading = read
 	f.confineCalls++
 
 	if f.failConfine != nil {

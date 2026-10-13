@@ -93,10 +93,13 @@ type Options struct {
 	// NoSandbox runs QEMU without the sandbox.
 	NoSandbox bool
 	// Confine is called once QEMU has started, with the TCP ports the proxy
-	// may still connect to. Nil means confine.Apply.
-	Confine func(ports []uint16) error
+	// may still connect to and the folders aibox may still read. Nil means
+	// confine.Apply.
+	Confine func(ports []uint16, read []string) error
 	// Ports are the TCP ports of the allow list.
 	Ports []uint16
+	// Read are the folders aibox reads once the session ended.
+	Read []string
 	// ConsoleLog is the file the console of the VM is written to. Empty
 	// throws it away.
 	ConsoleLog string
@@ -495,7 +498,7 @@ func runQEMU(ctx context.Context, machine vm.Machine, files *qemuFiles, options 
 		return fmt.Errorf("run qemu: %w", err)
 	}
 
-	if err := options.Confine(options.Ports); err != nil {
+	if err := options.Confine(options.Ports, options.Read); err != nil {
 		_ = qemu.Cancel()
 
 		return errors.Join(fmt.Errorf("confine aibox: %w", err), qemu.Wait())

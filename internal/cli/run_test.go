@@ -402,6 +402,21 @@ func TestRunPassesThePortsOfTheAllowListForTheConfinement(t *testing.T) {
 	assert.Equal(t, []uint16{22, 443}, f.launch.spec.Ports)
 }
 
+func TestRunLetsTheConfinementReadTheProjectAndTheHomeOfTheVM(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{f.launch.spec.Project, f.launch.spec.Home}, f.launch.spec.Read)
+	assert.NotEmpty(t, f.launch.spec.Project)
+	assert.NotEmpty(t, f.launch.spec.Home)
+}
+
 func TestRunSandboxesQEMUByDefault(t *testing.T) {
 	// arrange
 	f := newFixture(t)

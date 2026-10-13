@@ -361,7 +361,7 @@ aibox checks what comes back:
   applies to tasks.
 
 aibox opens the result files before the VM starts. Once the VM runs, aibox
-locks itself down and can't open files anymore. For the same reason a task
+locks itself down and can't open the files of a task anymore. For the same reason a task
 can't remove its input bundle when it ends, so `aibox tasks clean` does that
 later. Each task locks a file next to its folder while it runs, and makes
 the folder only once it holds the lock. That's how `aibox tasks clean`

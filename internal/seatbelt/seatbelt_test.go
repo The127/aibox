@@ -27,6 +27,9 @@ import (
 // the variable, tries what the arguments name and prints what happened.
 const probeEnv = "AIBOX_SEATBELT_PROBE"
 
+// readEnv is a folder the probe may still read.
+const readEnv = "AIBOX_SEATBELT_READ"
+
 func TestMain(m *testing.M) {
 	if port := os.Getenv(probeEnv); port != "" {
 		os.Exit(probe(port, os.Args[1:]))
@@ -51,7 +54,12 @@ func probe(port string, tries []string) int {
 		}
 	}
 
-	if err := seatbelt.Apply([]uint16{uint16(p)}); err != nil { //nolint:gosec // a port of the test
+	var read []string
+	if dir := os.Getenv(readEnv); dir != "" {
+		read = append(read, dir)
+	}
+
+	if err := seatbelt.Apply([]uint16{uint16(p)}, read); err != nil { //nolint:gosec // a port of the test
 		fmt.Println("apply:", err)
 
 		return 1
@@ -68,8 +76,10 @@ func probe(port string, tries []string) int {
 		var err error
 
 		switch what {
-		case "read":
+		case "read", "readout":
 			_, err = os.ReadFile(arg) //nolint:gosec // a file of the test
+		case "list":
+			_, err = os.ReadDir(arg)
 		case "write":
 			err = os.WriteFile(arg, []byte("x"), 0o600) //nolint:gosec // a file of the test
 		case "connect":
@@ -153,8 +163,16 @@ func outcome(err error) string {
 func confined(t *testing.T, port int, tries ...string) map[string]string {
 	t.Helper()
 
+	return confinedReading(t, port, "", tries...)
+}
+
+// confinedReading runs the probe as confined does, but lets it read the
+// folder.
+func confinedReading(t *testing.T, port int, dir string, tries ...string) map[string]string {
+	t.Helper()
+
 	cmd := exec.Command(os.Args[0], tries...) //nolint:gosec // the test binary itself
-	cmd.Env = append(os.Environ(), probeEnv+"="+strconv.Itoa(port))
+	cmd.Env = append(os.Environ(), probeEnv+"="+strconv.Itoa(port), readEnv+"="+dir)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 
@@ -249,6 +267,33 @@ func TestAConfinedProcessNeitherReadsNorWritesFiles(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, "new"))
 }
 
+func TestAConfinedProcessReadsTheFoldersItIsGivenButWritesNothingThere(t *testing.T) {
+	// arrange
+	_, port := listen(t)
+	outside := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o600))
+
+	// t.TempDir is under /var, a link to /private/var, as a project may
+	// be under a link
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "justfile"), []byte("x"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "out")))
+
+	// act
+	got := confinedReading(t, port, dir,
+		"list="+dir,
+		"read="+filepath.Join(dir, "justfile"),
+		"readout="+filepath.Join(dir, "out"),
+		"write="+filepath.Join(dir, "new"))
+
+	// assert
+	assert.Equal(t, "allowed", got["list"])
+	assert.Equal(t, "allowed", got["read"])
+	assert.Equal(t, "refused", got["readout"], "a link must not lead the read out of the folder")
+	assert.Equal(t, "refused", got["write"])
+	assert.NoFileExists(t, filepath.Join(dir, "new"))
+}
+
 func TestAConfinedProcessReadsTheResolverFiles(t *testing.T) {
 	// arrange
 	_, port := listen(t)
@@ -275,7 +320,7 @@ func TestAConfinedProcessStartsNoProgram(t *testing.T) {
 
 func TestTheProfileAllowsEachPortOfTheAllowList(t *testing.T) {
 	// act
-	profile := seatbelt.Profile([]uint16{443, 8443})
+	profile := seatbelt.Profile([]uint16{443, 8443}, nil)
 
 	// assert
 	assert.Contains(t, profile, `(remote tcp "*:443")`)

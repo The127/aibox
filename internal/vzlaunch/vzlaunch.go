@@ -55,12 +55,13 @@ var (
 // the guest may take to connect, SessionEndDelay how long the session may go
 // on after the VM stopped and PowerOffWait how long the VM may take to power
 // off after the session before it is stopped. Confine is called once the VM
-// runs, with the TCP ports the proxy may still connect to.
+// runs, with the TCP ports the proxy may still connect to and the folders
+// aibox may still read.
 type Backend struct {
 	BootTimeout     time.Duration
 	SessionEndDelay time.Duration
 	PowerOffWait    time.Duration
-	Confine         func(ports []uint16) error
+	Confine         func(ports []uint16, read []string) error
 }
 
 var _ backend.Backend = Backend{}
@@ -183,7 +184,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 	// aibox needs nothing else of the machine once the VM runs, as on Linux
 	// once QEMU runs. The VM lives in a process of Virtualization.framework,
 	// which aibox already reaches.
-	if err := b.Confine(spec.Ports); err != nil {
+	if err := b.Confine(spec.Ports, spec.Read); err != nil {
 		err = errors.Join(fmt.Errorf("confine aibox: %w", err), stop(v, v.StateChangedNotify()))
 
 		return host.Result(err, stopTerminal(), spec.ConsoleLog)

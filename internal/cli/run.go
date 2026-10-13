@@ -172,6 +172,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.State = r.project.State
 	spec.Project = cwd
 	spec.Home = r.project.Home
+	// for the files the VM may have changed and the session to go on with
+	spec.Read = []string{cwd, r.project.Home}
 	spec.Shell = cmd.Bool("shell")
 	spec.Resume = resume
 	spec.ConsoleLog = r.project.ConsoleLog

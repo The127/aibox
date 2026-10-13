@@ -162,10 +162,11 @@ func TestRunFailsWithoutBubblewrapAndNamesTheWayAround(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 
-func TestRunConfinesItselfWithThePortsOfTheAllowListOnceQEMURuns(t *testing.T) {
+func TestRunConfinesItselfWithThePortsOfTheAllowListAndTheFoldersItReadsOnceQEMURuns(t *testing.T) {
 	// arrange
 	f := fakes(t)
 	f.ports = []uint16{443, 8443}
+	f.read = []string{"/project", "/home"}
 
 	// act
 	err := launch.Run(context.Background(), machine(t), f.options())
@@ -175,6 +176,7 @@ func TestRunConfinesItselfWithThePortsOfTheAllowListOnceQEMURuns(t *testing.T) {
 	assert.FileExists(t, filepath.Join(f.records, "qemu"))
 	assert.Equal(t, 1, f.confineCalls)
 	assert.Equal(t, []uint16{443, 8443}, f.confinedWith)
+	assert.Equal(t, []string{"/project", "/home"}, f.confinedReading)
 }
 
 func TestRunStopsWhenItCannotConfineItself(t *testing.T) {

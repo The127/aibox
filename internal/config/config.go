@@ -56,6 +56,13 @@ var ErrLoopbackTwice = errors.New("the VM has one loopback address, so allow the
 // import.
 const proxyPort = "3128"
 
+// ErrBadPort is a ports entry that is not a port from 1 to 65535, or two
+// of them as host:vm.
+var ErrBadPort = errors.New("must be a port from 1 to 65535, or host:vm with two of them")
+
+// ErrPortTwice are two ports entries with the same port of the host.
+var ErrPortTwice = errors.New("the port of the host is in the list twice")
+
 // ErrNoAllowList is a config without a list of allow entries in the plain
 // form, one per line, that AddPresets can add to.
 var ErrNoAllowList = errors.New("the config has no allow list with one entry per line")
@@ -290,6 +297,64 @@ type Config struct {
 	// Git are the repositories git in the VM may fetch from and push to
 	// with the git login of the host.
 	Git []GitRemote `yaml:"git"`
+	// Ports are servers in the VM that the host reaches on its loopback.
+	Ports []Port `yaml:"ports"`
+}
+
+// Port is a port on the loopback of the host whose connections go to a
+// port on the loopback of the VM. In the file it is written as host:vm, or
+// as one port for both.
+type Port struct {
+	Host uint16
+	VM   uint16
+}
+
+// UnmarshalYAML reads a port from its host:vm or port form.
+func (p *Port) UnmarshalYAML(value *yaml.Node) error {
+	var text string
+	if err := value.Decode(&text); err != nil {
+		return err
+	}
+
+	port, err := parsePort(text)
+	if err != nil {
+		return err
+	}
+
+	*p = port
+
+	return nil
+}
+
+func parsePort(text string) (Port, error) {
+	hostText, vmText, ok := strings.Cut(text, ":")
+	if !ok {
+		vmText = hostText
+	}
+
+	host, hostErr := strconv.ParseUint(hostText, 10, 16)
+	vm, vmErr := strconv.ParseUint(vmText, 10, 16)
+
+	if hostErr != nil || vmErr != nil || host == 0 || vm == 0 {
+		return Port{}, fmt.Errorf("ports entry %q: %w", text, ErrBadPort)
+	}
+
+	return Port{Host: uint16(host), VM: uint16(vm)}, nil
+}
+
+// checkPorts fails when two entries take the same port of the host.
+func checkPorts(ports []Port) error {
+	seen := map[uint16]bool{}
+
+	for _, port := range ports {
+		if seen[port.Host] {
+			return fmt.Errorf("ports entry %d: %w", port.Host, ErrPortTwice)
+		}
+
+		seen[port.Host] = true
+	}
+
+	return nil
 }
 
 // Variable is an environment variable for the command in the VM. With
@@ -551,6 +616,15 @@ allow:
 #     fetch: true
 #     push:
 #       - aibox/*
+
+# Servers in the VM you open from this machine, like a dev server in your
+# browser. aibox listens on 127.0.0.1 here and passes each connection to the
+# port on 127.0.0.1 in the VM. Write host:vm for another port here than in
+# the VM. Any program on this machine can connect, and a page from the VM
+# shares the cookies of the other servers on 127.0.0.1. For example:
+# ports:
+#   - 5173
+#   - 8080:3000
 `
 
 // Default is the config of a project that has no config file yet.
@@ -693,6 +767,10 @@ func parse(content []byte) (Config, error) {
 	}
 
 	if err := checkGit(cfg.Git); err != nil {
+		return Config{}, err
+	}
+
+	if err := checkPorts(cfg.Ports); err != nil {
 		return Config{}, err
 	}
 

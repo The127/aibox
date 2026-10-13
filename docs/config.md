@@ -178,6 +178,9 @@ Allowing its port lets the VM out. Only allow a port for a server you'd trust
 with whatever the VM asks of it. For your IDE, turn on [`ide`](#ide)
 instead of allowing its port.
 
+To reach a server in the VM from your machine, it's the other way around.
+See [ports](#ports).
+
 ### How it works
 
 aibox passes the ports to the VM's init on the kernel command line. The init
@@ -364,3 +367,57 @@ aibox refuses the variables it sets itself: `AIBOX`, `HOME`, `USER`,
 `ANTHROPIC_API_KEY` is the exception. Its value is never passed on. With
 `aibox run` and with tasks, the key stays on your machine and the VM gets a
 placeholder. See [API key](tasks.md#api-key).
+
+## ports
+
+When Claude Code starts a dev server in the VM, like `npm run dev`, you
+want to open it in your browser. The VM has no network card, so you can't
+reach it on its own. List the ports of its servers:
+
+```yaml
+ports:
+  - 5173
+  - 8080:3000
+```
+
+Then open `http://127.0.0.1:5173` on your machine for the server on port
+5173 in the VM. `8080:3000` puts the VM's port 3000 on port 8080 of your
+machine, for when 3000 is taken here.
+
+Use `127.0.0.1` and not `localhost`. Your machine may look up `localhost` as
+`[::1]` first, where aibox doesn't listen, and where another user could.
+
+The server in the VM has to listen on `127.0.0.1` or `localhost`. That's
+the default of most dev servers. aibox only listens on `127.0.0.1` on your
+machine, never on your network.
+
+aibox opens the ports before the VM starts. If another program already
+holds one, aibox stops and tells you which. It refuses ports 3128 to 3132
+of the VM, which aibox needs itself, and the loopback ports on your
+[allow list](#ports-on-your-machine), which lead back to your machine.
+Tasks never get the ports, only `aibox run` does.
+
+Keep in mind what a port opens up:
+
+- Any program and any user on your machine can connect to the port, not
+  only your browser. Any website you visit can send requests to it too.
+  Don't list a port that runs code or reads files for whoever asks, like
+  the debugger port of Node, 9229.
+- Your browser treats the VM's pages like those of any other server on
+  `127.0.0.1` or `localhost`. Cookies don't keep ports apart, so a page
+  from the VM can read and change the cookies of your other local servers
+  on the same name. It can also make your browser send requests to them.
+- What the VM's server sends is written by the VM. Treat it like a web
+  page from a stranger.
+
+### How it works
+
+The terminal of `aibox run` is an SSH session between aibox and the VM's
+init. aibox listens on `127.0.0.1` on your machine for each port. For each
+connection it opens a channel in that SSH session, like `ssh -L` does. The
+init connects the channel to the port on `127.0.0.1` in the VM, and to no
+other address. The ports close when the session ends.
+
+aibox locks itself down once the VM runs, so it can't open a port after
+that. That's why the ports come from the config and can't follow what the
+VM opens.

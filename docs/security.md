@@ -82,6 +82,12 @@ To report a vulnerability, see
   text a program chose back as input, as current terminals don't.
   A terminal that does lets any program type into it, with or without
   aibox.
+- Your browser, when it opens a server in the VM through the
+  [ports](config.md#ports). Cookies don't keep ports apart, so a page from
+  the VM can read and change the cookies of your other servers on
+  `127.0.0.1` or `localhost`. It can also make your browser send requests
+  to them. Any program or user on your machine, and any website you
+  visit, can connect to the ports too.
 - Gatekeeper on macOS. The VM can set and remove extended attributes on
   files in the project, including `com.apple.quarantine`, and files it
   creates have none. So Gatekeeper never checks a program that comes out of
@@ -149,6 +155,13 @@ it is uninstalled. The filters don't cover names: Windows looks them up
 for the helper outside its container, so a VM that took the helper over
 could look up any name, and send data out in the names it asks for. The
 helper holds no secret of aibox's to send.
+
+The [ports](config.md#ports) go the other way, from your machine into the
+VM. aibox listens on them on `127.0.0.1` and passes each connection as a
+channel of the terminal's SSH session. The VM's init only connects such a
+channel to its own `127.0.0.1`. aibox opens the ports before it locks
+itself down. The lock-down lets it accept connections on them, but not
+listen on new ones.
 
 ### The Windows service
 

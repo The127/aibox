@@ -316,6 +316,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		EndDelay:  b.SessionEndDelay,
 		OnPaste:   spec.OnPaste,
 		PasteAltV: spec.PasteAltV,
+		Forwards:  spec.Forwards,
 	})
 
 	// the service ends a VM that did not start, so there is none to stop

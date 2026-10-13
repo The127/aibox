@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,7 +88,7 @@ func Serve(conn net.Conn, start Starter) error {
 
 	for newChannel := range channels {
 		if newChannel.ChannelType() != "session" {
-			_ = newChannel.Reject(ssh.UnknownChannelType, "only a session is served")
+			go openOther(newChannel)
 
 			continue
 		}
@@ -97,12 +98,88 @@ func Serve(conn net.Conn, start Starter) error {
 			return fmt.Errorf("accept the session: %w", err)
 		}
 
+		go func() {
+			for newChannel := range channels {
+				go openOther(newChannel)
+			}
+		}()
+
 		s := &served{channel: channel, start: start, exited: make(chan result, 1)}
 
 		return s.serve(channelRequests)
 	}
 
 	return errNoSession
+}
+
+// vmLoopback is the address a client may connect to through the session:
+// the loopback of the VM, where its servers listen.
+const vmLoopback = "127.0.0.1"
+
+// directTCPIP is what a client sends to connect to a port, as RFC 4254
+// says in section 7.2.
+type directTCPIP struct {
+	Host       string
+	Port       uint32
+	OriginHost string
+	OriginPort uint32
+}
+
+// openOther serves a channel besides the session: a connection to a port
+// on the loopback of the VM. It turns away a second session and any other
+// channel.
+func openOther(newChannel ssh.NewChannel) {
+	if newChannel.ChannelType() != "direct-tcpip" {
+		_ = newChannel.Reject(ssh.UnknownChannelType, "only a session and connections to the loopback are served")
+
+		return
+	}
+
+	var target directTCPIP
+	if err := ssh.Unmarshal(newChannel.ExtraData(), &target); err != nil || target.Host != vmLoopback || target.Port == 0 || target.Port > math.MaxUint16 {
+		_ = newChannel.Reject(ssh.Prohibited, "only a port on "+vmLoopback+" is served")
+
+		return
+	}
+
+	conn, err := net.Dial("tcp", net.JoinHostPort(vmLoopback, strconv.Itoa(int(target.Port))))
+	if err != nil {
+		_ = newChannel.Reject(ssh.ConnectionFailed, err.Error())
+
+		return
+	}
+
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		_ = conn.Close()
+
+		return
+	}
+
+	go ssh.DiscardRequests(requests)
+	go join(channel, conn.(*net.TCPConn))
+}
+
+// join copies bytes between the channel and the connection until both
+// sides have stopped sending, and passes the end of each side on as a half
+// close.
+func join(channel ssh.Channel, conn *net.TCPConn) {
+	defer func() { _ = channel.Close() }()
+	defer func() { _ = conn.Close() }()
+
+	var directions sync.WaitGroup
+
+	directions.Go(func() {
+		_, _ = io.Copy(channel, conn)
+		_ = channel.CloseWrite()
+	})
+
+	directions.Go(func() {
+		_, _ = io.Copy(conn, channel)
+		_ = conn.CloseWrite()
+	})
+
+	directions.Wait()
 }
 
 // hostKey is new for every session. The host does not check it, because the

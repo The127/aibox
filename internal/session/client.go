@@ -1,11 +1,13 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,7 +35,13 @@ type Client struct {
 	// on. PasteAltV makes Alt+V a paste key too, which goes on as Ctrl+V.
 	OnPaste   func() []byte
 	PasteAltV bool
+	// Forward runs while the session does, or is nil. Its dial connects to
+	// a port on the loopback of the VM. It must return once ctx ends.
+	Forward func(ctx context.Context, dial Dial)
 }
+
+// Dial connects to a port on the loopback of the VM.
+type Dial func(port uint16) (net.Conn, error)
 
 // NewClient prepares the terminal on stdin for a session: raw mode, its size
 // and size changes. When stdin is not a terminal the client gets a default
@@ -198,6 +206,10 @@ func (c Client) Attach(conn net.Conn) (int, error) {
 		return 0, err
 	}
 
+	if c.Forward != nil {
+		defer runForward(client, c.Forward)()
+	}
+
 	stop := make(chan struct{})
 	defer close(stop)
 
@@ -252,6 +264,29 @@ func (e Exec) Run(conn net.Conn) (int, error) {
 	}
 
 	return exitCode(s.Wait())
+}
+
+// runForward starts forward on the connection to the VM. The returned
+// function ends it, closes the connection and waits for forward to return.
+// A dial waits for the VM to answer, which only closing the connection
+// ends, so the connection goes before the wait.
+func runForward(client *ssh.Client, forward func(ctx context.Context, dial Dial)) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		forward(ctx, func(port uint16) (net.Conn, error) {
+			return client.Dial("tcp", net.JoinHostPort(vmLoopback, strconv.Itoa(int(port))))
+		})
+	}()
+
+	return func() {
+		cancel()
+		_ = client.Close()
+		<-done
+	}
 }
 
 // open does the SSH handshake on the connection and opens a session.

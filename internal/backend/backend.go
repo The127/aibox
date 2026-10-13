@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 
 	"github.com/the127/aibox/internal/proxy"
@@ -88,6 +89,16 @@ type Spec struct {
 	// or nil to pass the key on. PasteAltV makes Alt+V a paste key too.
 	OnPaste   func() []byte
 	PasteAltV bool
+	// Forwards are listeners on the host whose connections go into the VM
+	// while its session runs.
+	Forwards []Forward
+}
+
+// Forward is a listener on the host whose connections go to Port on the
+// loopback of the VM.
+type Forward struct {
+	Listener net.Listener
+	Port     uint16
 }
 
 // Mount is a host folder that appears read-only at Guest in the VM.

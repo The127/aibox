@@ -234,7 +234,7 @@ func TestFindReturnsTheDeviceOfThePortWithTheName(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, "/dev/vport0p1", device)
+	assert.Equal(t, filepath.Join("/dev", "vport0p1"), device)
 }
 
 func TestFindSkipsAPortWhoseNameItCannotRead(t *testing.T) {
@@ -250,7 +250,7 @@ func TestFindSkipsAPortWhoseNameItCannotRead(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Equal(t, "/dev/vport0p1", device)
+	assert.Equal(t, filepath.Join("/dev", "vport0p1"), device)
 }
 
 func TestFindWithoutThePortIsNotExist(t *testing.T) {

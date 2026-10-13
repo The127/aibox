@@ -23,7 +23,8 @@ them. And it can't send anything to a host you didn't allow.
 You start Claude Code with `aibox run` in your project folder, and it works
 like it always does. Its changes show up in the folder right away, so you
 keep your editor open next to it. You log in with your Claude account like
-you would on your machine, and aibox keeps the login.
+you would on your machine, and Claude Code in the VM keeps your login
+between runs.
 
 You can bring your own tools, install more in the VM and run containers
 with podman. If you turn it on, Claude Code also connects to VS Code or
@@ -33,8 +34,10 @@ GoLand.
 
 Your API key never enters the VM. Claude Code gets a placeholder, and aibox
 puts in the real key on the way to the Claude API. A subscription token is
-different. It goes into the VM as it is, because Anthropic's terms don't
-allow anyone but you to handle it.
+different. aibox can't put it in on the way like the key, because
+[Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+don't allow a tool like aibox to collect, store or intermediate Claude.ai
+credentials. So it goes into the VM as it is.
 
 Your git login stays on your machine too. If you list repositories in the
 config, git in the VM can fetch from them and push to the branches you name.
@@ -120,9 +123,10 @@ in it. The first run downloads the VM image, which is about 150 MB, unless
 your package ships it. Log in to Claude Code like you would on your machine.
 
 You log in once for each project, because each project has a VM home of its
-own. aibox doesn't copy the login from one project to another. That would
-mean aibox handles your login, and Anthropic's terms don't allow anyone but
-you to do that.
+own. aibox doesn't copy the login from one project to another. That would mean
+aibox stores and passes on your login, which
+[Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+don't allow a tool like aibox to do.
 
 When a tool still can't reach a host, the error names it, and the preset
 that allows it if there is one. To allow more, run:

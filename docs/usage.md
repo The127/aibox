@@ -15,13 +15,14 @@ files in your project, like `go.mod` or `package.json`, and offers the
 them.
 
 `aibox run` boots the VM, mounts the project at `/project` and starts Claude
-Code there. Log in like you would on your machine. aibox keeps the login for the
-next run in this project.
+Code there. Log in like you would on your machine. Claude Code in the VM
+keeps your login for the next run in this project.
 
 Each project has a VM home of its own, so you log in once for each project.
 aibox doesn't copy the login from one project to another. That would mean
-aibox handles your login, and Anthropic's terms don't allow anyone but you to
-do that.
+aibox stores and passes on your login, which
+[Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+don't allow a tool like aibox to do.
 
 aibox won't start in your home folder or above it, because the VM would see
 all your files.

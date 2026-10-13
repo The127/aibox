@@ -210,8 +210,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 // identityVariables returns the variables that give git in the VM the
 // identity of the person, since the VM has a home of its own. They are
 // variables and not a file in that home, because the VM can put links into
-// the home that a write by the host would follow. A variable of the env setting wins, since the person set it
-// on purpose.
+// the home that a write by the host would follow. A variable of the env
+// setting wins, since the person set it on purpose.
 func identityVariables(identity gitconfig.Identity, env []string) []string {
 	var variables []string
 
@@ -956,14 +956,14 @@ func defaultImage(ctx context.Context, deps dependencies, parent string) (string
 		return dir, nil
 	}
 
-	_, _ = fmt.Fprintf(os.Stderr, "aibox: downloading the VM image of %s\n", version)
+	_, _ = fmt.Fprintf(deps.stderr, "aibox: downloading the VM image of %s\n", version)
 
 	if err := deps.fetchImage(ctx, version, runtime.GOARCH, digest, dir); err != nil {
 		return "", fmt.Errorf("download the VM image of %s: %w. --image runs with an image of your own instead", version, err)
 	}
 
 	if err := image.Prune(parent, version); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "aibox: remove the images of older releases: %v\n", err)
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: remove the images of older releases: %v\n", err)
 	}
 
 	return dir, nil

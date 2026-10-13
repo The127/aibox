@@ -18,7 +18,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode"
 
 	"github.com/the127/aibox/internal/session"
 	"github.com/the127/aibox/internal/task"
@@ -511,23 +510,10 @@ func message(text string) string {
 
 	var lines []string
 
-	for line := range strings.SplitSeq(strings.ToValidUTF8(text, "?"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	for line := range strings.SplitSeq(task.CleanText(text), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
 		}
-
-		lines = append(lines, strings.Map(func(r rune) rune {
-			if r == '\t' {
-				return ' '
-			}
-
-			if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) || r == unicode.ReplacementChar {
-				return '?'
-			}
-
-			return r
-		}, line))
 	}
 
 	return strings.Join(lines, " | ")

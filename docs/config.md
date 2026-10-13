@@ -86,6 +86,10 @@ aibox refuses a name that resolves to an address in your machine's own
 networks, like loopback, link-local or private addresses. The only way to
 allow such an address is to write it into the list.
 
+For IPv6, aibox only takes internet addresses, the ones in `2000::/3`. Some
+IPv6 addresses carry an IPv4 address, like NAT64 and 6to4 ones. aibox
+checks that IPv4 address like any other.
+
 A new config only allows the hosts Claude Code needs:
 
 | Host | Why |

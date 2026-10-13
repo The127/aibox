@@ -62,10 +62,10 @@ const (
 	reasonNotPublic  = "resolves only to addresses inside the host's own networks"
 )
 
-// notPublic are address ranges that IsGlobalUnicast counts as public but
+// notPublic are IPv4 ranges that IsGlobalUnicast counts as public but
 // that belong to the machine's own networks or to nobody: 0.0.0.0/8,
-// carrier-grade NAT (which Tailscale uses), and the ranges reserved for
-// documentation and benchmarks.
+// carrier-grade NAT (which Tailscale uses), the ranges reserved for
+// documentation and benchmarks, and 240.0.0.0/4, which is reserved.
 var notPublic = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -74,7 +74,32 @@ var notPublic = []netip.Prefix{
 	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
 }
+
+// internet6 is where the public IPv6 addresses are. IPv6 has room for many
+// ranges that are not the internet, so an address outside it is refused,
+// also one of a range nobody here knew of.
+var internet6 = netip.MustParsePrefix("2000::/3")
+
+// notPublic6 are the ranges in internet6 that are not the internet:
+// Teredo, which hides IPv4 addresses aibox cannot check, and the ranges
+// reserved for benchmarks and documentation.
+var notPublic6 = []netip.Prefix{
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("2001:2::/48"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("3fff::/20"),
+}
+
+// nat64 and sixToFour hold an IPv4 address in their IPv6 addresses, at
+// the byte the map says. A network with only IPv6 reaches IPv4 hosts
+// through NAT64, so such an address is as public as the IPv4 address in
+// it.
+var (
+	nat64     = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour = netip.MustParsePrefix("2002::/16")
+)
 
 // Serve accepts connections until the context ends.
 func Serve(ctx context.Context, listener net.Listener, options Options) error {
@@ -384,7 +409,9 @@ func lookup(ctx context.Context, host string) ([]net.IP, error) {
 }
 
 // isPublic says whether an address lies outside the machine's own networks:
-// not loopback, private, link-local, multicast, unspecified or in notPublic.
+// not loopback, private, link-local, multicast, unspecified or in notPublic,
+// and for IPv6 in internet6 and not in notPublic6. An IPv6 address that
+// holds an IPv4 address is as public as that.
 func isPublic(ip net.IP) bool {
 	addr, ok := netip.AddrFromSlice(ip)
 	if !ok {
@@ -392,11 +419,34 @@ func isPublic(ip net.IP) bool {
 	}
 
 	addr = addr.Unmap()
+
+	if inner, ok := heldIPv4(addr); ok {
+		addr = inner
+	}
+
 	if !addr.IsGlobalUnicast() || addr.IsPrivate() {
 		return false
 	}
 
+	if addr.Is6() {
+		return internet6.Contains(addr) && !slices.ContainsFunc(notPublic6, func(p netip.Prefix) bool { return p.Contains(addr) })
+	}
+
 	return !slices.ContainsFunc(notPublic, func(p netip.Prefix) bool { return p.Contains(addr) })
+}
+
+// heldIPv4 returns the IPv4 address a NAT64 or 6to4 address holds.
+func heldIPv4(addr netip.Addr) (netip.Addr, bool) {
+	b := addr.As16()
+
+	switch {
+	case nat64.Contains(addr):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
+	case sixToFour.Contains(addr):
+		return netip.AddrFrom4([4]byte(b[2:6])), true
+	}
+
+	return netip.Addr{}, false
 }
 
 // Log writes each target the proxy connected to or refused to a writer

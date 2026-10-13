@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/the127/aibox/internal/guest"
 )
@@ -303,4 +304,63 @@ func TestJoinFailsWithoutAFile(t *testing.T) {
 
 	// assert
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestDialPlan9TriesAgainOnANewSocketAfterASignal(t *testing.T) {
+	// arrange: the first two connects are interrupted
+	var opened, closed []int
+
+	next := 10
+	socket := func(int, int, int) (int, error) {
+		next++
+		opened = append(opened, next)
+
+		return next, nil
+	}
+
+	interrupted := 2
+	connect := func(int, unix.Sockaddr) error {
+		if interrupted > 0 {
+			interrupted--
+
+			return unix.EINTR
+		}
+
+		return nil
+	}
+
+	closeFD := func(fd int) error {
+		closed = append(closed, fd)
+
+		return nil
+	}
+
+	// act
+	fd, err := guest.DialPlan9(socket, connect, closeFD)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, 13, fd, "the third socket")
+	assert.Equal(t, []int{11, 12, 13}, opened)
+	assert.Equal(t, []int{11, 12}, closed, "the interrupted ones")
+}
+
+func TestDialPlan9FailsOnAnyOtherError(t *testing.T) {
+	// arrange
+	var closed []int
+
+	socket := func(int, int, int) (int, error) { return 7, nil }
+	connect := func(int, unix.Sockaddr) error { return unix.ECONNRESET }
+	closeFD := func(fd int) error {
+		closed = append(closed, fd)
+
+		return nil
+	}
+
+	// act
+	_, err := guest.DialPlan9(socket, connect, closeFD)
+
+	// assert
+	require.ErrorIs(t, err, unix.ECONNRESET)
+	assert.Equal(t, []int{7}, closed)
 }

@@ -45,3 +45,6 @@ var Plan9Options = plan9Options
 func SCSIDiskIn(class string, lun int, wait time.Duration) (string, error) {
 	return scsiDisk(class, lun, wait)
 }
+
+// DialPlan9 is dialPlan9.
+var DialPlan9 = dialPlan9

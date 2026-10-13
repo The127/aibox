@@ -258,7 +258,10 @@ the processors and the kernel command line it wants. The service checks
 them against what the machine has and boots its own copy of the kernel
 and the root disk. It never opens a folder or a file you name: it has
 Windows tell it who you are, and gives the VM the state disk you hold
-open, and nothing else of yours.
+open, and nothing else of yours. It adds that disk once the VM runs, so
+that the kernel finds only the root disk when it boots: Linux names its
+disks in the order it finds them, and the kernel looks for the root by
+its name.
 
 Your project, home and mounts are served to the VM by a helper, a copy of
 aibox, over 9p on Hyper-V sockets, as you: the VM can do with them what

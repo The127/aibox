@@ -48,6 +48,18 @@ aibox runs on Windows 11 on amd64 with Hyper-V, which Windows 11 Pro,
 Enterprise and Education have. Download `aibox.exe` from the
 [releases](https://github.com/The127/aibox/releases).
 
+Hyper-V is off until you turn it on. Do that once, from a PowerShell you
+opened as administrator, and restart Windows:
+
+```
+Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+```
+
+`aibox service install` tells you when Hyper-V is off, and so does `aibox
+run` when the service can't make a VM because of it. If you turn Hyper-V
+off later, the service no longer starts: run `aibox service install`
+again to see why.
+
 Hyper-V only lets administrators start VMs, so aibox comes with a Windows
 service that starts them for you. Install it once, from a terminal you
 opened as administrator:

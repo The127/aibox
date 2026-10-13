@@ -674,6 +674,41 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 	assert.Equal(t, "/sys/fs/cgroup/user/session", sys.startedIn)
 }
 
+func TestRunGivesTheUserTheFoldersAboveTheMountsInTheHomeOfATask(t *testing.T) {
+	// arrange: the skills, mounted below ~/.claude
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.task aibox.mount=mount0:/home/user/.claude/skills", noTerminal: true}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+
+	calls := strings.Join(sys.calls, "\n")
+	assert.Contains(t, calls, strings.Join([]string{
+		"own /home/user/.local",
+		"own /home/user/.local/share",
+		"mount /var/lib/aibox/state/containers /home/user/.local/share/containers",
+	}, "\n"))
+	assert.Contains(t, calls, strings.Join([]string{
+		"own /home/user/.claude",
+		"mount mount0 /home/user/.claude/skills",
+	}, "\n"))
+}
+
+func TestRunLeavesTheFoldersAboveTheMountsInTheSharedHomeAlone(t *testing.T) {
+	// arrange: in aibox run, the home is shared from the host
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.mount=mount0:/home/user/.claude/skills"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, sys.calls, "own /home/user/.claude")
+	assert.NotContains(t, sys.calls, "own /home/user/.local")
+}
+
 func TestRunPutsTheHomeAndTheProjectOfATaskOnTheStateDisk(t *testing.T) {
 	// arrange
 	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.task", noTerminal: true}

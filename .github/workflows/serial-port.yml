@@ -28,19 +28,20 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       # Ubuntu keeps unprivileged user namespaces from programs without an
       # AppArmor profile of their own, and bubblewrap needs them
-      - name: install QEMU and bubblewrap
+      - name: install bubblewrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 bubblewrap
+          sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # the virtiofsd of Ubuntu 24.04 has no --translate-uid, which aibox
-      # needs, so it comes from Nix
+      # the virtiofsd of Ubuntu 24.04 has no --translate-uid and its QEMU no
+      # -accel kvm,device=, which aibox both needs, so they come from Nix
       - uses: cachix/install-nix-action@v31
-      - name: install virtiofsd
+      - name: install QEMU and virtiofsd
         run: |
-          nix profile install nixpkgs#virtiofsd
+          nix profile install nixpkgs#virtiofsd nixpkgs#qemu_kvm
           echo "$HOME/.nix-profile/bin" >> "$GITHUB_PATH"
           "$HOME/.nix-profile/bin/virtiofsd" --version
+          "$HOME/.nix-profile/bin/qemu-system-x86_64" --version
       - name: show the kernel
         run: |
           uname -r
@@ -71,10 +72,11 @@ jobs:
           echo MARK-terminal-$((1+1))
           exit
           EOF
-          # the shell needs a terminal, which script gives it. The sleep
-          # keeps the input open until the VM is done, and bash waits for
-          # no process substitution, so it ends with aibox
-          script -q -e -c "$RUNNER_TEMP/aibox run --shell --image $RUNNER_TEMP/image" "$RUNNER_TEMP/session.log" < <(cat "$RUNNER_TEMP/commands"; sleep 900) > /dev/null
+          # the shell needs a terminal, which script gives it. script ends
+          # only when its input does, so the input stays open until aibox
+          # is gone
+          (cat "$RUNNER_TEMP/commands"; sleep 10; while pgrep -x aibox > /dev/null; do sleep 2; done) |
+            script -q -e -c "$RUNNER_TEMP/aibox run --shell --image $RUNNER_TEMP/image" "$RUNNER_TEMP/session.log" > /dev/null
       - name: show the results
         if: always()
         run: |

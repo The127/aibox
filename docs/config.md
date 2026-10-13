@@ -316,10 +316,10 @@ aibox sets it itself. Tasks never get the IDE, only `aibox run` does.
 
 ## clipboard
 
-When you press Ctrl+V in Claude Code, or Alt+V on Windows, it pastes the
-image on your clipboard. The VM can read your clipboard only right after
-you press the key, and only once. This is on by default. To turn it off,
-set:
+When you press Ctrl+V in Claude Code, or Alt+V on Windows, it pastes what's
+on your clipboard: an image, which the VM can read only right after you
+press the key, and only once, or text, which aibox types. This is on by
+default. To turn it off, set:
 
 ```yaml
 clipboard: false
@@ -327,7 +327,17 @@ clipboard: false
 
 The VM reaches the clipboard on port 3132 of its loopback, so with the
 clipboard on, `allow` can't name that port. Tasks never get the clipboard,
-only `aibox run` does. See [Pasting images](usage.md#pasting-images).
+only `aibox run` does. See [Pasting](usage.md#pasting).
+
+## paste-alt-v
+
+Whether Alt+V pastes too, as Ctrl+V does. Windows Terminal and the
+Windows console paste on Ctrl+V themselves, so on Windows this is on, and
+elsewhere off. To change that, set:
+
+```yaml
+paste-alt-v: false
+```
 
 ## path
 

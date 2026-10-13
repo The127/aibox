@@ -167,46 +167,58 @@ The bridge reads every message and passes on only the ones it knows, with
 It refuses paths outside the project, also through symlinks, and gives each
 request an ID of its own. `proxy.log` shows what it held back.
 
-## Pasting images
+## Pasting
 
-Press Ctrl+V in Claude Code to paste the image on your clipboard, like a
-screenshot. Pasting text works like in any terminal, and so does copying.
+Press Ctrl+V in Claude Code to paste what's on your clipboard. An image,
+like a screenshot, Claude Code reads from your clipboard. Text, aibox
+types into the VM the way your terminal pastes it. When the clipboard
+holds both, as when you copy cells from a spreadsheet, the image wins, as
+in Claude Code. Copying works like in any terminal.
 
-On Windows, press Alt+V, as in Claude Code on Windows. Windows Terminal
-and the Windows console paste on Ctrl+V themselves, so the key never
-reaches aibox. aibox passes Alt+V on to the VM as Ctrl+V, so Alt+V in
-another program in the VM is Ctrl+V there too.
+On Windows, press Alt+V for that too, as in Claude Code on Windows.
+Windows Terminal and the Windows console paste on Ctrl+V themselves:
+text then still arrives, but an image doesn't. Set `paste-alt-v` in the
+[project config](config.md#paste-alt-v) to turn Alt+V off on Windows, or
+on elsewhere.
 
 The VM can't read your clipboard whenever it likes. If it could, it would
 see every password you copy. aibox lets it read the clipboard only right
-after you press Ctrl+V, for 5 seconds, and only one image. If you don't want
-that either, set `clipboard: false` in the
-[project config](config.md#clipboard).
+after you press the key, for 5 seconds, and only one image. Text it
+doesn't read at all: it only gets it typed. If you don't want either,
+set `clipboard: false` in the [project config](config.md#clipboard).
 
-Note that aibox watches for the key, not for Claude Code. Ctrl+V in another
-program in the VM, like bash or vim, lets the VM read the clipboard too. If
-you bind image paste in Claude Code to another key, aibox doesn't see it and
-pasting images stops working.
+Note that aibox watches for the key, not for Claude Code. The key in
+another program in the VM, like bash or vim, pastes too: with text on the
+clipboard, Ctrl+V there types the text instead of doing what that program
+does with the key. If you bind image paste in Claude Code to another key,
+aibox doesn't see it and pasting stops working.
 
 On Linux aibox reads the clipboard with `wl-paste` under Wayland and with
 `xclip` under X. Install the one you need on your machine. On macOS it uses
-`osascript`.
+`osascript` for images and `pbpaste` for text.
 
 ### How it works
 
 aibox reads what you type before it goes to the VM. It looks for Ctrl+V as
 the terminal sends it: as a control character, in the kitty keyboard
 protocol or with xterm's modifyOtherKeys. Text you paste into the terminal
-doesn't count. On Windows it looks for Alt+V the same ways, and sends the
-VM Ctrl+V in its place. It does that only when Alt+V comes in one read,
-as it does from a terminal: holding back the escape it starts with until
-the next read would hold back the Escape key too.
+doesn't count. With `paste-alt-v` it looks for Alt+V the same ways.
 
-In the VM, `xclip` and `wl-paste` are aibox's init under another name. When
-Claude Code runs them for Ctrl+V, they ask aibox on port 3132 of the
-loopback. The first asks which types the clipboard holds, the second asks
-for the image. They answer nothing else, so Claude Code can't read text from
-your clipboard.
+On the key, aibox reads the clipboard. With an image, it passes Ctrl+V on,
+for Alt+V too, and keeps the image for the VM. In the VM, `xclip` and
+`wl-paste` are aibox's init under another name. When Claude Code runs them
+for Ctrl+V, they ask aibox on port 3132 of the loopback. The first asks
+which types the clipboard holds, the second asks for the image. They
+answer nothing else.
+
+With text and no image, aibox sends the text in place of the key. It ends
+lines with a carriage return, as the Enter key does, and leaves out
+control characters, so that text can't type keys of its own. When the
+program in the VM turned bracketed paste on, as Claude Code does, the text
+goes between its markers, as a terminal sends it. aibox replaces the key
+only when it comes in one read, as it does from a terminal: holding back
+the escape it starts with until the next read would hold back the Escape
+key too.
 
 Once the VM runs, aibox can't start programs any more. So before the VM
 starts, aibox starts a helper, a second aibox. The helper reads the

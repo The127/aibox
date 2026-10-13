@@ -170,6 +170,15 @@ func TestError(t *testing.T) {
 	assert.Equal(t, "list the compute systems: HRESULT 0x8037011B", withoutResult.Error())
 }
 
+func TestErrNoHyperV(t *testing.T) {
+	t.Parallel()
+
+	off := &hcs.Error{Op: "create the compute system", HRESULT: 0x80370102}
+	assert.ErrorIs(t, fmt.Errorf("create: %w", off), hcs.ErrNoHyperV)
+	assert.NotErrorIs(t, off, hcs.ErrAccessDenied)
+	assert.NotErrorIs(t, &hcs.Error{HRESULT: 0x8037011B}, hcs.ErrNoHyperV)
+}
+
 func TestErrAccessDenied(t *testing.T) {
 	t.Parallel()
 

@@ -8,3 +8,6 @@ var Check = check
 
 // OwnedBy is ownedBy.
 var OwnedBy = ownedBy
+
+// AvailableIn is availableIn.
+var AvailableIn = availableIn

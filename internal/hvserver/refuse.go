@@ -14,7 +14,8 @@ const eventLog = "the Application event log, source aibox"
 
 // refusal is what aibox is told of why the service could not do what it
 // asked, what being the verb of it. A request it got wrong, or one the
-// host has too little left for, is told as it is. Of anything else aibox
+// host has too little left for, is told as it is, and Hyper-V that is off
+// with how to turn it on. Of anything else aibox
 // learns no more than the HRESULT of the Host Compute Service: its result
 // document, and the errors of the service, may name the paths of the
 // installation and say what SYSTEM sees of the host, which are no
@@ -22,6 +23,12 @@ const eventLog = "the Application event log, source aibox"
 func refusal(what string, err error) hvservice.Reply {
 	if errors.Is(err, hvservice.ErrBadRequest) || errors.Is(err, ErrNoMemory) {
 		return hvservice.Refusal(err)
+	}
+
+	// its own words, which say how to turn Hyper-V on, and nothing of the
+	// result document
+	if errors.Is(err, hcs.ErrNoHyperV) {
+		return hvservice.Refusal(hcs.ErrNoHyperV)
 	}
 
 	var hcsErr *hcs.Error

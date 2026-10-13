@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
 
 	"github.com/the127/aibox/internal/hcs"
 )
@@ -194,4 +195,13 @@ func TestSystemWithoutAHandleRefusesCalls(t *testing.T) {
 	// assert
 	assert.ErrorIs(t, err, hcs.ErrClosed)
 	assert.NoError(t, s.Close())
+}
+
+func TestAWindowsWithoutTheServiceHasNoHyperV(t *testing.T) {
+	// act
+	err := hcs.AvailableIn(windows.NewLazySystemDLL("aibox-no-such-computecore.dll"))
+
+	// assert
+	require.ErrorIs(t, err, hcs.ErrNoHyperV)
+	assert.ErrorContains(t, err, "Enable-WindowsOptionalFeature")
 }

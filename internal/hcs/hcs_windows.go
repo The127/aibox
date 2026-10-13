@@ -14,6 +14,21 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Available tells whether Windows has the Host Compute Service. Without it
+// a call of this package would panic, as Go does for a function of a DLL
+// it can't load.
+func Available() error {
+	return availableIn(computecore)
+}
+
+func availableIn(dll *windows.LazyDLL) error {
+	if err := dll.Load(); err != nil {
+		return fmt.Errorf("%w (%v)", ErrNoHyperV, err) //nolint:errorlint // the cause is a detail, the error is ErrNoHyperV
+	}
+
+	return nil
+}
+
 // computecore is the DLL of the service. It is loaded on the first call,
 // so that a program only pays for it, and only needs it, when it talks to
 // the service.

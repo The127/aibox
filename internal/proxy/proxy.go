@@ -199,7 +199,7 @@ func (o Options) connected(target string) func() {
 func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, options Options) (host, port string, local http.Handler, ok bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 
-	request, err := http.ReadRequest(reader)
+	method, target, err := readConnect(reader)
 
 	switch {
 	case err != nil && limited.N == 0:
@@ -216,14 +216,14 @@ func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, o
 
 	_ = conn.SetReadDeadline(time.Time{})
 
-	if request.Method != http.MethodConnect {
+	if method != http.MethodConnect {
 		writeError(conn, http.StatusMethodNotAllowed, "")
 
 		return "", "", nil, false
 	}
 
-	host, port, err = net.SplitHostPort(request.Host)
-	if err != nil || !ValidTarget(request.Host) {
+	host, port, err = net.SplitHostPort(target)
+	if err != nil || !ValidTarget(target) {
 		writeError(conn, http.StatusBadRequest, "")
 
 		if options.OnRefused != nil {
@@ -240,7 +240,7 @@ func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, o
 	}
 
 	if options.Allow != nil && !options.Allow(host, port) {
-		refuse(conn, request.Host, reasonNotAllowed, options)
+		refuse(conn, target, reasonNotAllowed, options)
 
 		return "", "", nil, false
 	}
@@ -365,6 +365,46 @@ func (l *oneConn) Close() error {
 }
 
 func (l *oneConn) Addr() net.Addr { return l.conn.LocalAddr() }
+
+// errBadRequestLine is a first line that is not a method, a target and an
+// HTTP/1 version.
+var errBadRequestLine = errors.New("the request line is not a method, a target and a version")
+
+// readConnect reads a request up to its end and returns the method and the
+// target of its first line. It skips the header lines without keeping
+// them, since a CONNECT needs none of them, so that a request costs no more
+// memory than the reader has.
+func readConnect(reader *bufio.Reader) (method, target string, err error) {
+	line, err := reader.ReadSlice('\n')
+	if err != nil {
+		return "", "", err
+	}
+
+	method, rest, _ := strings.Cut(strings.TrimRight(string(line), "\r\n"), " ")
+	target, version, _ := strings.Cut(rest, " ")
+
+	if method == "" || target == "" || !strings.HasPrefix(version, "HTTP/1.") {
+		return "", "", errBadRequestLine
+	}
+
+	for {
+		header, err := reader.ReadSlice('\n')
+
+		// a header line longer than the buffer comes in parts
+		for errors.Is(err, bufio.ErrBufferFull) {
+			_, err = reader.ReadSlice('\n')
+			header = nil
+		}
+
+		if err != nil {
+			return "", "", err
+		}
+
+		if string(header) == "\r\n" || string(header) == "\n" {
+			return method, target, nil
+		}
+	}
+}
 
 // refuse answers with a 403 that says why, so that the program inside the
 // VM can report it. The hint says where to allow the host, which only helps
@@ -660,6 +700,9 @@ func writeTunnelOK(conn net.Conn) {
 }
 
 func writeError(conn net.Conn, status int, body string) {
+	// a client that reads nothing must not keep the proxy waiting
+	_ = conn.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+
 	_, _ = fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
 		status, http.StatusText(status), len(body), body)
 }

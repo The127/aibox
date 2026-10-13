@@ -1000,3 +1000,51 @@ func TestValidTarget(t *testing.T) {
 		})
 	}
 }
+
+// manyHeaders is a CONNECT request with a thousand header lines and one
+// longer than a reader holds.
+func manyHeaders(target string) string {
+	var b strings.Builder
+
+	b.WriteString("CONNECT " + target + " HTTP/1.1\r\n")
+
+	for i := range 1000 {
+		b.WriteString("X-" + strconv.Itoa(i) + ": a\r\n")
+	}
+
+	b.WriteString("X-Long: " + strings.Repeat("l", 10<<10) + "\r\n\r\n")
+
+	return b.String()
+}
+
+func TestServeSkipsTheHeadersOfARequest(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+
+	// act
+	r, _ := request(t, address, manyHeaders("localhost:3129"))
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", r.status)
+}
+
+func TestReadConnectKeepsNoHeaderLine(t *testing.T) {
+	// arrange
+	raw := manyHeaders("example.com:443")
+
+	// act
+	allocations := testing.AllocsPerRun(10, func() {
+		method, target, err := proxy.ReadConnect(bufio.NewReader(strings.NewReader(raw)))
+		if err != nil || method != "CONNECT" || target != "example.com:443" {
+			t.Fatalf("read %q %q %v", method, target, err)
+		}
+	})
+
+	// assert: the reader, its buffer and the first line, not a thousand
+	// header lines
+	assert.LessOrEqual(t, allocations, 10.0)
+}

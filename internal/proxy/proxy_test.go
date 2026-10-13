@@ -884,3 +884,89 @@ func (c deadlineConn) note(t time.Time) {
 		c.set.Add(1)
 	}
 }
+
+func TestServeAnswers431ToARequestThatIsTooLarge(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{})
+	conn := dial(t, address)
+
+	// act: a header that never ends
+	go func() {
+		_, _ = io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nX-Pad: "+strings.Repeat("a", 1<<20))
+	}()
+
+	status, err := bufio.NewReader(conn).ReadString('\n')
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "HTTP/1.1 431 Request Header Fields Too Large\r\n", status)
+}
+
+func TestServeLetsALocalTunnelCarryMoreThanTheLimitOfTheRequest(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+
+					return
+				}
+
+				_, _ = io.WriteString(w, strconv.Itoa(len(body)))
+			})
+		},
+	})
+	conn := dial(t, address)
+	body := strings.Repeat("b", 200<<10)
+
+	// act
+	_, err := io.WriteString(conn, "CONNECT localhost:3129 HTTP/1.1\r\nHost: localhost:3129\r\n\r\n"+
+		"POST /big HTTP/1.1\r\nHost: x\r\nContent-Length: "+strconv.Itoa(len(body))+"\r\n\r\n"+body)
+	require.NoError(t, err)
+
+	reader := bufio.NewReader(conn)
+	for line := "x"; line != "\r\n"; {
+		line, err = reader.ReadString('\n')
+		require.NoError(t, err)
+	}
+
+	// assert
+	assert.Equal(t, strconv.Itoa(len(body)), readBody(t, reader, "/big"))
+}
+
+func TestServeReportsAnInvalidTargetWithoutItsText(t *testing.T) {
+	// arrange
+	refused := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		Allow:     func(string, string) bool { return false },
+		OnRefused: func(target string) { refused <- target },
+	})
+
+	// act
+	status, _ := connect(t, address, strings.Repeat("a", 300)+".example:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 403 Forbidden", status)
+	assert.Equal(t, "an invalid target", <-refused)
+}
+
+func TestLogKeepsAThousandTargetsAndCountsTheRest(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+	log := proxy.NewLog(&out)
+
+	// act
+	for i := range 1002 {
+		log.Refused("host" + strconv.Itoa(i) + ".example:443")
+	}
+
+	log.Summarize()
+
+	// assert
+	_, refused := log.Targets()
+	assert.Len(t, refused, 1000)
+	assert.Equal(t, 1, strings.Count(out.String(), "refused more than 1000 targets, the log names no more of them"))
+	assert.Contains(t, out.String(), "summary refused other targets 2 times")
+}

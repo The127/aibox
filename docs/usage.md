@@ -50,7 +50,7 @@ The folder holds:
 | `home/` | The VM's home folder, so Claude Code's login and `~/.claude` survive restarts. Other projects don't see them. |
 | `state.ext4` | A disk for the VM's `/usr/local`, `~/.cache` and the tools of [mise](config.md#mise). |
 | `console.log` | The kernel and init messages of the last run. |
-| `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. |
+| `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. After 1000 different hosts of either kind, it only counts the rest, and a request that names no valid host shows as "an invalid target". |
 | `tasks/` | The project's [tasks](tasks.md). |
 | `path` | The project's path, for `aibox projects list`. |
 | `mise.sha256` | The hash of the mise files you approved last. |

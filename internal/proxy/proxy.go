@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +24,17 @@ import (
 const (
 	dialTimeout      = 30 * time.Second
 	handshakeTimeout = 10 * time.Second
+	// maxRequestBytes is how much of a CONNECT request the proxy reads, the
+	// default limit of Squid for the headers of a request. A real one is a
+	// few hundred bytes, and the VM can open many connections at once.
+	maxRequestBytes = 64 << 10
+	// maxTargets is how many different targets a log keeps, of each kind. A
+	// session refuses a handful, so more come from a VM that makes up names,
+	// and the rest are only counted.
+	maxTargets = 1000
+	// invalidTarget is what the log keeps for a target that is no host and
+	// port, instead of its text, which can be as long as the request.
+	invalidTarget = "an invalid target"
 )
 
 // Options control what the proxy lets through.
@@ -113,9 +126,10 @@ func Serve(ctx context.Context, listener net.Listener, options Options) error {
 // handle answers one CONNECT request and then joins the client with the
 // target.
 func handle(ctx context.Context, conn net.Conn, options Options) {
-	reader := bufio.NewReader(conn)
+	limited := &io.LimitedReader{R: conn, N: maxRequestBytes}
+	reader := bufio.NewReader(limited)
 
-	host, port, local, ok := handshake(conn, reader, options)
+	host, port, local, ok := handshake(conn, reader, limited, options)
 	if !ok {
 		return
 	}
@@ -177,15 +191,25 @@ func (o Options) connected(target string) func() {
 // handshake reads the CONNECT request and returns the host and port to
 // reach, or the handler that answers them. It answers the client itself
 // when there is nothing to reach.
-func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port string, local http.Handler, ok bool) {
+// The limit of limited covers the request only, the tunnel after it reads
+// on.
+func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, options Options) (host, port string, local http.Handler, ok bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 
 	request, err := http.ReadRequest(reader)
-	if err != nil {
+
+	switch {
+	case err != nil && limited.N == 0:
+		writeError(conn, http.StatusRequestHeaderFieldsTooLarge, "")
+
+		return "", "", nil, false
+	case err != nil:
 		writeError(conn, http.StatusBadRequest, "")
 
 		return "", "", nil, false
 	}
+
+	limited.N = math.MaxInt64
 
 	_ = conn.SetReadDeadline(time.Time{})
 
@@ -349,8 +373,48 @@ func refuse(conn net.Conn, target, reason string, options Options) {
 	writeError(conn, http.StatusForbidden, body)
 
 	if options.OnRefused != nil {
+		if !validTarget(target) {
+			target = invalidTarget
+		}
+
 		options.OnRefused(target)
 	}
+}
+
+// validTarget says whether the target is a host and port the proxy could
+// reach: an address, or a name of at most 253 characters in labels of at
+// most 63, and a port.
+func validTarget(target string) bool {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return false
+	}
+
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return false
+	}
+
+	if net.ParseIP(host) != nil {
+		return true
+	}
+
+	if host == "" || len(host) > 253 {
+		return false
+	}
+
+	for label := range strings.SplitSeq(strings.TrimSuffix(host, "."), ".") {
+		if label == "" || len(label) > 63 || strings.ContainsFunc(label, notInLabel) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// notInLabel says whether a character has no place in a label of a name:
+// anything but letters, digits, hyphens and underscores.
+func notInLabel(r rune) bool {
+	return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_'
 }
 
 // connect reaches the host on the port. An address in the request is dialed
@@ -465,6 +529,8 @@ type Log struct {
 type targets struct {
 	list []string
 	uses map[string]*use
+	// others counts the uses of targets beyond maxTargets
+	others int
 }
 
 // use is how often a target was used, and when last: when its last
@@ -533,6 +599,16 @@ func (l *Log) Summarize() {
 // The caller holds l.mu.
 func (l *Log) add(verb, target string, targets *targets, now time.Time) *use {
 	u := targets.uses[target]
+	if u == nil && len(targets.list) >= maxTargets {
+		if targets.others == 0 {
+			_, _ = fmt.Fprintf(l.w, "%s %s more than %d targets, the log names no more of them\n", stamp(now), verb, maxTargets)
+		}
+
+		targets.others++
+
+		return &use{}
+	}
+
 	if u == nil {
 		if targets.uses == nil {
 			targets.uses = map[string]*use{}
@@ -554,6 +630,10 @@ func (t *targets) summarize(w io.Writer, now time.Time, verb, last string) {
 	for _, target := range t.list {
 		u := t.uses[target]
 		_, _ = fmt.Fprintf(w, "%s summary %s %q %s, %s %s\n", stamp(now), verb, target, times(u.count), last, stamp(u.last))
+	}
+
+	if t.others > 0 {
+		_, _ = fmt.Fprintf(w, "%s summary %s other targets %s\n", stamp(now), verb, times(t.others))
 	}
 }
 

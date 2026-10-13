@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0](https://github.com/The127/aibox/compare/v2.0.1...v2.1.0) (2026-10-13)
+
+
+### Features
+
+* install the tools of a project with mise ([#189](https://github.com/The127/aibox/issues/189)) ([9e45692](https://github.com/The127/aibox/commit/9e456922667faa415a988a0513e56119e1bd178a))
+* name the command or flag you meant when you mistype one ([#188](https://github.com/The127/aibox/issues/188)) ([4baf69b](https://github.com/The127/aibox/commit/4baf69b8e470ab60bf54c9349d6dd092c2a43076)), closes [#183](https://github.com/The127/aibox/issues/183)
+* reach a server in the VM from your machine ([#184](https://github.com/The127/aibox/issues/184)) ([d8adf1e](https://github.com/The127/aibox/commit/d8adf1eee8041271b101385914815d9d8e3a8c6f)), closes [#133](https://github.com/The127/aibox/issues/133)
+* tell you when the VM changed files your machine runs ([#193](https://github.com/The127/aibox/issues/193)) ([139e308](https://github.com/The127/aibox/commit/139e308549fcb43a17cbdeb1aa41175a3783ce56))
+
+
+### Bug Fixes
+
+* bound what the VM can make the proxy keep ([#192](https://github.com/The127/aibox/issues/192)) ([e70af21](https://github.com/The127/aibox/commit/e70af21a2d07e9a242320b19895600735e278995))
+* close two smaller gaps in the proxy and in task output ([#187](https://github.com/The127/aibox/issues/187)) ([4981689](https://github.com/The127/aibox/commit/49816895c5978609022ddb3c046fd99c5780705e))
+* never let an IPv6 zone or a wildcard lead the proxy to an address ([#194](https://github.com/The127/aibox/issues/194)) ([33ee34e](https://github.com/The127/aibox/commit/33ee34e009b9cab2ddddd0869ae3125627a2056f))
+
 ## [2.0.1](https://github.com/The127/aibox/compare/v2.0.0...v2.0.1) (2026-10-13)
 
 

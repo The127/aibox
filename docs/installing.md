@@ -72,8 +72,10 @@ That downloads the VM image, puts the service under `C:\Program Files\aibox`
 and its kernel and root disk under `C:\ProgramData\aibox`, and starts it.
 From then on you run `aibox run` and `aibox task` as yourself, without
 administrator rights. Run `aibox service install` again after you update
-aibox; aibox tells you when a service is too old for it. Run `aibox
-service uninstall` to remove it all.
+aibox: aibox runs only with a service of its own version, since the
+service decides how the VM is made. Each `aibox run` and `aibox task`
+checks that before it makes a VM, and says so when they differ. Run
+`aibox service uninstall` to remove it all.
 
 ## Nix
 

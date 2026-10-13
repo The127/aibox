@@ -831,3 +831,16 @@ git -c user.name=Claude -c user.email=claude@example.com commit --quiet --messag
 	assert.Contains(t, f.progress.String(), "no network")
 	assert.Equal(t, "fix the README by Claude\n", f.fetch(r))
 }
+
+func TestTaskKeepsTheLinesOfTheInstallInOrder(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t, "true\n")
+	f.withMise("for i in 1 2 3 4 5 6; do echo out$i; echo err$i >&2; done\n")
+
+	// act
+	code, r := f.runWithMise()
+
+	// assert
+	require.Equal(t, 0, code, r.result.Error)
+	assert.Contains(t, f.progress.String(), "out1\nerr1\nout2\nerr2\nout3\nerr3\nout4\nerr4\nout5\nerr5\nout6\nerr6\n")
+}

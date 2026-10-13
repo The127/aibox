@@ -55,6 +55,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/image"
           gh release download --repo The127/aibox --pattern aibox-image_amd64.tar.gz --output - | tar -xz -C "$RUNNER_TEMP/image"
           ls -l "$RUNNER_TEMP/image"
+      # the init of the release knows no port yet, so the image gets the
+      # init of this branch
+      - name: put the init of this branch into the image
+        run: |
+          CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-init" ./cmd/aibox-init
+          debugfs -w -R "rm /sbin/init" "$RUNNER_TEMP/image/os.ext4"
+          debugfs -w -R "write $RUNNER_TEMP/aibox-init /sbin/init" "$RUNNER_TEMP/image/os.ext4"
+          debugfs -w -R "sif /sbin/init mode 0100755" "$RUNNER_TEMP/image/os.ext4"
+          debugfs -R "stat /sbin/init" "$RUNNER_TEMP/image/os.ext4" | head -3
       - name: write the config new projects start from
         run: |
           mkdir -p ~/.aibox

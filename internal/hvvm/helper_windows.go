@@ -122,13 +122,14 @@ func start(conn *hvchild.Conn, c Config, stderr io.Writer, listen func(guid.GUID
 	allow := config.Hosts(c.AllowList)
 
 	return host.ServeProxy(context.Background(), l, proxy.Options{
-		Allow:       allow.Allows,
-		Pinned:      allow.Pinned,
-		Hint:        config.AllowHint(c.AllowFile),
-		Local:       local,
-		OnConnected: report(proxyConnected),
-		OnRefused:   report(proxyRefused),
-		OnClosed:    report(proxyClosed),
+		Allow:          allow.Allows,
+		Pinned:         allow.Pinned,
+		Hint:           config.AllowHint(c.AllowFile),
+		Local:          local,
+		OnConnected:    report(proxyConnected),
+		OnRefused:      report(proxyRefused),
+		OnClosed:       report(proxyClosed),
+		MaxConnections: c.MaxConnections,
 	}, stderr), nil
 }
 

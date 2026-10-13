@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +24,23 @@ import (
 const (
 	dialTimeout      = 30 * time.Second
 	handshakeTimeout = 10 * time.Second
+	// maxRequestBytes is how much of a CONNECT request the proxy reads, the
+	// default limit of Squid for the headers of a request. A real one is a
+	// few hundred bytes, and the VM can open many connections at once.
+	maxRequestBytes = 64 << 10
+	// maxTargets is how many different targets a log keeps, of each kind. A
+	// session refuses a handful, so more come from a VM that makes up names,
+	// and the rest are only counted.
+	maxTargets = 1000
+)
+
+// InvalidTarget is what the proxy reports for a request whose target is no
+// host and port, instead of its text, which can be as long as the request.
+// TooManyConnections is what it reports for a connection beyond
+// Options.MaxConnections.
+const (
+	InvalidTarget      = "an invalid target"
+	TooManyConnections = "too many connections at once"
 )
 
 // Options control what the proxy lets through.
@@ -34,6 +53,9 @@ type Options struct {
 	OnConnected func(target string)
 	// OnRefused is called with the host:port of each refused request.
 	OnRefused func(target string)
+	// MaxConnections is how many connections the proxy serves at once, or
+	// 0 for any number.
+	MaxConnections int
 	// OnClosed is called with the host:port of each request the proxy
 	// reached once its tunnel has closed.
 	OnClosed func(target string)
@@ -103,9 +125,31 @@ var (
 	sixToFour = netip.MustParsePrefix("2002::/16")
 )
 
-// Serve accepts connections until the context ends.
+// Serve accepts connections until the context ends. A connection beyond
+// Options.MaxConnections gets a 503 and is closed, so that the client
+// learns why instead of waiting.
 func Serve(ctx context.Context, listener net.Listener, options Options) error {
+	var open chan struct{}
+	if options.MaxConnections > 0 {
+		open = make(chan struct{}, options.MaxConnections)
+	}
+
 	return tunnel.Serve(ctx, listener, func(ctx context.Context, conn net.Conn) {
+		if open != nil {
+			select {
+			case open <- struct{}{}:
+				defer func() { <-open }()
+			default:
+				writeError(conn, http.StatusServiceUnavailable, "aibox: "+TooManyConnections+"\n")
+
+				if options.OnRefused != nil {
+					options.OnRefused(TooManyConnections)
+				}
+
+				return
+			}
+		}
+
 		handle(ctx, conn, options)
 	})
 }
@@ -113,15 +157,18 @@ func Serve(ctx context.Context, listener net.Listener, options Options) error {
 // handle answers one CONNECT request and then joins the client with the
 // target.
 func handle(ctx context.Context, conn net.Conn, options Options) {
-	reader := bufio.NewReader(conn)
+	limited := &io.LimitedReader{R: conn, N: maxRequestBytes}
+	reader := bufio.NewReader(limited)
 
-	host, port, local, ok := handshake(conn, reader, options)
+	host, port, local, ok := handshake(conn, reader, limited, options)
 	if !ok {
 		return
 	}
 
+	target := net.JoinHostPort(host, port)
+
 	if local != nil {
-		defer options.connected(net.JoinHostPort(host, port))()
+		defer options.connected(target)()
 
 		serveLocal(ctx, conn, reader, local)
 
@@ -130,7 +177,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 
 	upstream, err := connect(ctx, host, port, options)
 	if errors.Is(err, errNotPublic) {
-		refuse(conn, net.JoinHostPort(host, port), reasonNotPublic, options)
+		refuse(conn, target, reasonNotPublic, options)
 
 		return
 	}
@@ -142,7 +189,7 @@ func handle(ctx context.Context, conn net.Conn, options Options) {
 	}
 
 	defer func() { _ = upstream.Close() }()
-	defer options.connected(net.JoinHostPort(host, port))()
+	defer options.connected(target)()
 
 	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
 	defer stop()
@@ -177,27 +224,41 @@ func (o Options) connected(target string) func() {
 // handshake reads the CONNECT request and returns the host and port to
 // reach, or the handler that answers them. It answers the client itself
 // when there is nothing to reach.
-func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port string, local http.Handler, ok bool) {
+// The limit of limited covers the request only, the tunnel after it reads
+// on.
+func handshake(conn net.Conn, reader *bufio.Reader, limited *io.LimitedReader, options Options) (host, port string, local http.Handler, ok bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 
-	request, err := http.ReadRequest(reader)
-	if err != nil {
+	method, target, err := readConnect(reader)
+
+	switch {
+	case err != nil && limited.N == 0:
+		writeError(conn, http.StatusRequestHeaderFieldsTooLarge, "")
+
+		return "", "", nil, false
+	case err != nil:
 		writeError(conn, http.StatusBadRequest, "")
 
 		return "", "", nil, false
 	}
 
+	limited.N = math.MaxInt64
+
 	_ = conn.SetReadDeadline(time.Time{})
 
-	if request.Method != http.MethodConnect {
+	if method != http.MethodConnect {
 		writeError(conn, http.StatusMethodNotAllowed, "")
 
 		return "", "", nil, false
 	}
 
-	host, port, err = net.SplitHostPort(request.Host)
-	if err != nil || host == "" || port == "" {
+	host, port, valid := splitTarget(target)
+	if !valid {
 		writeError(conn, http.StatusBadRequest, "")
+
+		if options.OnRefused != nil {
+			options.OnRefused(InvalidTarget)
+		}
 
 		return "", "", nil, false
 	}
@@ -209,7 +270,7 @@ func handshake(conn net.Conn, reader *bufio.Reader, options Options) (host, port
 	}
 
 	if options.Allow != nil && !options.Allow(host, port) {
-		refuse(conn, request.Host, reasonNotAllowed, options)
+		refuse(conn, target, reasonNotAllowed, options)
 
 		return "", "", nil, false
 	}
@@ -335,6 +396,46 @@ func (l *oneConn) Close() error {
 
 func (l *oneConn) Addr() net.Addr { return l.conn.LocalAddr() }
 
+// errBadRequestLine is a first line that is not a method, a target and an
+// HTTP/1 version.
+var errBadRequestLine = errors.New("the request line is not a method, a target and a version")
+
+// readConnect reads a request up to its end and returns the method and the
+// target of its first line. It skips the header lines without keeping
+// them, since a CONNECT needs none of them, so that a request costs no more
+// memory than the reader has.
+func readConnect(reader *bufio.Reader) (method, target string, err error) {
+	line, err := reader.ReadSlice('\n')
+	if err != nil {
+		return "", "", err
+	}
+
+	method, rest, _ := strings.Cut(strings.TrimRight(string(line), "\r\n"), " ")
+	target, version, _ := strings.Cut(rest, " ")
+
+	if method == "" || target == "" || !strings.HasPrefix(version, "HTTP/1.") {
+		return "", "", errBadRequestLine
+	}
+
+	for {
+		header, err := reader.ReadSlice('\n')
+
+		// a header line longer than the buffer comes in parts
+		for errors.Is(err, bufio.ErrBufferFull) {
+			_, err = reader.ReadSlice('\n')
+			header = nil
+		}
+
+		if err != nil {
+			return "", "", err
+		}
+
+		if string(header) == "\r\n" || string(header) == "\n" {
+			return method, target, nil
+		}
+	}
+}
+
 // refuse answers with a 403 that says why, so that the program inside the
 // VM can report it. The hint says where to allow the host, which only helps
 // when the host is missing from the list.
@@ -351,6 +452,51 @@ func refuse(conn net.Conn, target, reason string, options Options) {
 	if options.OnRefused != nil {
 		options.OnRefused(target)
 	}
+}
+
+// ValidTarget says whether the target is a host and port the proxy could
+// reach: an address, or a name of at most 253 characters in labels of at
+// most 63, and a port.
+func ValidTarget(target string) bool {
+	_, _, valid := splitTarget(target)
+
+	return valid
+}
+
+// splitTarget returns the host and port of a target and whether it is
+// valid, as ValidTarget says.
+func splitTarget(target string) (host, port string, valid bool) {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", "", false
+	}
+
+	// as written, so that zeros in front can't make it any length
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
+		return "", "", false
+	}
+
+	if net.ParseIP(host) != nil {
+		return host, port, true
+	}
+
+	if host == "" || len(host) > 253 {
+		return "", "", false
+	}
+
+	for label := range strings.SplitSeq(strings.TrimSuffix(host, "."), ".") {
+		if label == "" || len(label) > 63 || strings.ContainsFunc(label, notInLabel) {
+			return "", "", false
+		}
+	}
+
+	return host, port, true
+}
+
+// notInLabel says whether a character has no place in a label of a name:
+// anything but letters, digits, hyphens and underscores.
+func notInLabel(r rune) bool {
+	return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_'
 }
 
 // connect reaches the host on the port. An address in the request is dialed
@@ -465,6 +611,8 @@ type Log struct {
 type targets struct {
 	list []string
 	uses map[string]*use
+	// others counts the uses of targets beyond maxTargets
+	others int
 }
 
 // use is how often a target was used, and when last: when its last
@@ -533,6 +681,16 @@ func (l *Log) Summarize() {
 // The caller holds l.mu.
 func (l *Log) add(verb, target string, targets *targets, now time.Time) *use {
 	u := targets.uses[target]
+	if u == nil && len(targets.list) >= maxTargets {
+		if targets.others == 0 {
+			_, _ = fmt.Fprintf(l.w, "%s %s more than %d targets, the log names no more of them\n", stamp(now), verb, maxTargets)
+		}
+
+		targets.others++
+
+		return &use{}
+	}
+
 	if u == nil {
 		if targets.uses == nil {
 			targets.uses = map[string]*use{}
@@ -555,6 +713,10 @@ func (t *targets) summarize(w io.Writer, now time.Time, verb, last string) {
 		u := t.uses[target]
 		_, _ = fmt.Fprintf(w, "%s summary %s %q %s, %s %s\n", stamp(now), verb, target, times(u.count), last, stamp(u.last))
 	}
+
+	if t.others > 0 {
+		_, _ = fmt.Fprintf(w, "%s summary %s other targets %s\n", stamp(now), verb, times(t.others))
+	}
 }
 
 func times(n int) string {
@@ -576,6 +738,9 @@ func writeTunnelOK(conn net.Conn) {
 }
 
 func writeError(conn net.Conn, status int, body string) {
+	// a client that reads nothing must not keep the proxy waiting
+	_ = conn.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+
 	_, _ = fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
 		status, http.StatusText(status), len(body), body)
 }

@@ -422,6 +422,8 @@ func (r projectRun) spec(cmd *cli.Command) backend.Spec {
 			OnRefused:   r.proxyLog.Refused,
 			OnClosed:    r.proxyLog.Closed,
 			Hint:        config.AllowHint(r.project.Config),
+
+			MaxConnections: r.config.ConnectionLimit(),
 		},
 		Ports:     r.config.Allow.Ports(),
 		AllowList: r.config.Allow,

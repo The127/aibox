@@ -295,6 +295,8 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		Local:     services.local,
 		Services:  services.addr,
 		Token:     services.token,
+
+		MaxConnections: spec.Proxy.MaxConnections,
 	})
 	if err != nil {
 		return err

@@ -1,8 +1,6 @@
 package hvvm
 
 import (
-	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -10,6 +8,7 @@ import (
 	"github.com/Microsoft/go-winio/pkg/guid"
 
 	"github.com/the127/aibox/internal/hvchild"
+	"github.com/the127/aibox/internal/proxy"
 )
 
 // Config is what the helper serves: the proxy on the port of the VM, with
@@ -25,6 +24,8 @@ type Config struct {
 	Local     []uint16  `json:"local,omitempty"`
 	Services  string    `json:"services,omitempty"`
 	Token     string    `json:"token,omitempty"`
+	// MaxConnections is how many connections the proxy serves at once.
+	MaxConnections int `json:"maxConnections,omitempty"`
 }
 
 // The message aibox sends the helper: its config. aibox ends the helper
@@ -106,12 +107,5 @@ func fit(text string) string {
 // message of the helper holds. The helper sends no other, and aibox takes
 // no other from a helper a VM may have taken over.
 func isTarget(target string) bool {
-	host, port, err := net.SplitHostPort(target)
-	if err != nil || len(host) > maxHost || hvchild.Printable(host) != host {
-		return false
-	}
-
-	_, err = strconv.ParseUint(port, 10, 16)
-
-	return err == nil
+	return target == proxy.InvalidTarget || target == proxy.TooManyConnections || proxy.ValidTarget(target)
 }

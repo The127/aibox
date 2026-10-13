@@ -213,6 +213,25 @@ The size is fixed when the first run creates the disk. Changing it
 later has no effect, until you start the VM over with
 [`aibox projects reset`](usage.md#starting-over), which makes a new disk.
 
+## max-connections
+
+How many connections the VM may have open through the proxy at once. The
+default is 256:
+
+```yaml
+max-connections: 256
+```
+
+Each connection takes up a file handle of aibox, and aibox also needs
+them for your API key, your git login and the rest. Without a limit, the
+VM could open connections until aibox runs out of file handles. A browser
+opens about 6 connections to a host and npm about 15, so a session stays
+well below 256.
+
+Beyond the limit, the proxy answers with `503 Service Unavailable` and
+closes the connection, so the program in the VM gets an error instead of
+waiting. `proxy.log` shows it as "too many connections at once".
+
 ## mounts
 
 Folders on your machine that the VM can read, but not write. Write them as

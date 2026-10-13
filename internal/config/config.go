@@ -275,6 +275,8 @@ type Config struct {
 	CPUs *int `yaml:"cpus"`
 	// Disk is the size of the state disk of the project in GiB.
 	Disk *int `yaml:"disk"`
+	// MaxConnections is how many connections the proxy serves at once.
+	MaxConnections *int `yaml:"max-connections"`
 	// Mounts are folders of the host the VM sees read-only.
 	Mounts []Mount `yaml:"mounts"`
 	// Skills, Agents and Commands say whether the VM sees those folders of
@@ -571,6 +573,11 @@ allow:
 # effect. For example:
 # disk: 16   # GiB
 
+# How many connections the VM may have open through the proxy at once. Each
+# one takes up a file handle of aibox. Beyond it the proxy turns connections away.
+# For example:
+# max-connections: 256
+
 # Folders of the host the VM sees read-only, written host:guest, for example:
 # mounts:
 #   - ~/sdk/go:/opt/go
@@ -644,6 +651,21 @@ allow:
 #   - 5173
 #   - 8080:3000
 `
+
+// DefaultMaxConnections is how many connections the proxy serves at once
+// when the config doesn't say. A browser opens about 6 to a host and npm
+// about 15, so a session stays well below it, and aibox can keep twice as
+// many files open.
+const DefaultMaxConnections = 256
+
+// ConnectionLimit is how many connections the proxy serves at once.
+func (c Config) ConnectionLimit() int {
+	if c.MaxConnections != nil {
+		return *c.MaxConnections
+	}
+
+	return DefaultMaxConnections
+}
 
 // Default is the config of a project that has no config file yet.
 func Default() Config {
@@ -769,6 +791,10 @@ func parse(content []byte) (Config, error) {
 	}
 
 	if err := atLeastOne("disk", cfg.Disk); err != nil {
+		return Config{}, err
+	}
+
+	if err := atLeastOne("max-connections", cfg.MaxConnections); err != nil {
 		return Config{}, err
 	}
 

@@ -256,7 +256,7 @@ Each task has a folder `tasks/<start time>-<id>` in the project's folder in
 | `transcript.jsonl` | Everything Claude Code did, as `stream-json`, cut at 256 MiB. |
 | `claude.log` | What Claude Code wrote to standard error, cut at 1 MiB. |
 | `console.log` | The kernel and init messages of the VM. |
-| `proxy.log` | Every host and port the proxy connected to or refused for the task, once, with the time it first happened. When the task ends, a summary says how often and when last. A killed aibox writes no summary. aibox writes this file, not the VM. It shows the name the VM asked for, not what went through. |
+| `proxy.log` | Every host and port the proxy connected to or refused for the task, once, with the time it first happened. When the task ends, a summary says how often and when last. A killed aibox writes no summary. After 1000 different hosts of either kind, it only counts the rest. aibox writes this file, not the VM. It shows the name the VM asked for, not what went through. |
 | `share/` | The prompt, the settings and the bundle of the start commit with its full history, until `aibox tasks clean` removes it. |
 
 Next to the folder, `tasks/<start time>-<id>.lock` is locked while the task

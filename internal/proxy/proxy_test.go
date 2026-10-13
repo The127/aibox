@@ -884,3 +884,238 @@ func (c deadlineConn) note(t time.Time) {
 		c.set.Add(1)
 	}
 }
+
+func TestServeAnswers431ToARequestThatIsTooLarge(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{})
+	conn := dial(t, address)
+
+	// act: a header that never ends
+	go func() {
+		_, _ = io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nX-Pad: "+strings.Repeat("a", 1<<20))
+	}()
+
+	status, err := bufio.NewReader(conn).ReadString('\n')
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "HTTP/1.1 431 Request Header Fields Too Large\r\n", status)
+}
+
+func TestServeLetsALocalTunnelCarryMoreThanTheLimitOfTheRequest(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+
+					return
+				}
+
+				_, _ = io.WriteString(w, strconv.Itoa(len(body)))
+			})
+		},
+	})
+	conn := dial(t, address)
+	body := strings.Repeat("b", 200<<10)
+
+	// act
+	_, err := io.WriteString(conn, "CONNECT localhost:3129 HTTP/1.1\r\nHost: localhost:3129\r\n\r\n"+
+		"POST /big HTTP/1.1\r\nHost: x\r\nContent-Length: "+strconv.Itoa(len(body))+"\r\n\r\n"+body)
+	require.NoError(t, err)
+
+	reader := bufio.NewReader(conn)
+	for line := "x"; line != "\r\n"; {
+		line, err = reader.ReadString('\n')
+		require.NoError(t, err)
+	}
+
+	// assert
+	assert.Equal(t, strconv.Itoa(len(body)), readBody(t, reader, "/big"))
+}
+
+func TestServeReportsAnInvalidTargetWithoutItsText(t *testing.T) {
+	// arrange
+	refused := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		Allow:     func(string, string) bool { return false },
+		OnRefused: func(target string) { refused <- target },
+	})
+
+	// act
+	status, _ := connect(t, address, strings.Repeat("a", 300)+".example:443")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 400 Bad Request", status)
+	assert.Equal(t, proxy.InvalidTarget, <-refused)
+}
+
+func TestLogKeepsAThousandTargetsAndCountsTheRest(t *testing.T) {
+	// arrange
+	var out bytes.Buffer
+	log := proxy.NewLog(&out)
+
+	// act
+	for i := range 1002 {
+		log.Refused("host" + strconv.Itoa(i) + ".example:443")
+	}
+
+	log.Summarize()
+
+	// assert
+	_, refused := log.Targets()
+	assert.Len(t, refused, 1000)
+	assert.Equal(t, 1, strings.Count(out.String(), "refused more than 1000 targets, the log names no more of them"))
+	assert.Contains(t, out.String(), "summary refused other targets 2 times")
+}
+
+func TestValidTarget(t *testing.T) {
+	// arrange
+	tests := map[string]bool{
+		"example.com:443":                        true,
+		"example.com.:443":                       true,
+		"under_score.example:443":                true,
+		"93.184.216.34:443":                      true,
+		"[2606:4700::1111]:443":                  true,
+		"example.com":                            false,
+		"example.com:0":                          false,
+		"example.com:65536":                      false,
+		"example.com:https":                      false,
+		"example.com:0443":                       false,
+		"example.com:+443":                       false,
+		":443":                                   false,
+		"a..b:443":                               false,
+		"a b.example:443":                        false,
+		"\x1b[2Jexample.com:443":                 false,
+		strings.Repeat("a", 64) + ".example:443": false,
+		strings.Repeat("a.", 127) + "ab:443":     false,
+	}
+
+	for target, want := range tests {
+		t.Run(target, func(t *testing.T) {
+			// act and assert
+			assert.Equal(t, want, proxy.ValidTarget(target))
+		})
+	}
+}
+
+// manyHeaders is a CONNECT request with a thousand header lines and one
+// longer than a reader holds.
+func manyHeaders(target string) string {
+	var b strings.Builder
+
+	b.WriteString("CONNECT " + target + " HTTP/1.1\r\n")
+
+	for i := range 1000 {
+		b.WriteString("X-" + strconv.Itoa(i) + ": a\r\n")
+	}
+
+	b.WriteString("X-Long: " + strings.Repeat("l", 10<<10) + "\r\n\r\n")
+
+	return b.String()
+}
+
+func TestServeSkipsTheHeadersOfARequest(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+
+	// act
+	r, _ := request(t, address, manyHeaders("localhost:3129"))
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 200 Connection Established", r.status)
+}
+
+func TestReadConnectKeepsNoHeaderLine(t *testing.T) {
+	// arrange
+	raw := manyHeaders("example.com:443")
+
+	// act
+	allocations := testing.AllocsPerRun(10, func() {
+		method, target, err := proxy.ReadConnect(bufio.NewReader(strings.NewReader(raw)))
+		if err != nil || method != "CONNECT" || target != "example.com:443" {
+			t.Fatalf("read %q %q %v", method, target, err)
+		}
+	})
+
+	// assert: the reader, its buffer and the first line, not a thousand
+	// header lines
+	assert.LessOrEqual(t, allocations, 10.0)
+}
+
+func TestServeTurnsAwayAConnectionBeyondTheLimit(t *testing.T) {
+	// arrange
+	refused := make(chan string, 1)
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		OnRefused:      func(target string) { refused <- target },
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	first, _ := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", first)
+
+	// act
+	second, _ := connect(t, address, "localhost:3129")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 503 Service Unavailable", second)
+	assert.Equal(t, proxy.TooManyConnections, <-refused)
+}
+
+func TestServeServesAgainOnceAConnectionClosed(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	_, conn := connect(t, address, "localhost:3129")
+	require.NoError(t, conn.Close())
+
+	// act and assert
+	assert.Eventually(t, func() bool {
+		status, conn := connect(t, address, "localhost:3129")
+		_ = conn.Close()
+
+		return status == "HTTP/1.1 200 Connection Established"
+	}, timeout, 10*time.Millisecond)
+}
+
+func TestReadConnectTakesWhatClientsSend(t *testing.T) {
+	tests := map[string]string{
+		"bare LF":  "CONNECT example.com:443 HTTP/1.1\nHost: example.com:443\n\n",
+		"HTTP/1.0": "CONNECT example.com:443 HTTP/1.0\r\n\r\n",
+	}
+
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			// act
+			method, target, err := proxy.ReadConnect(bufio.NewReader(strings.NewReader(raw)))
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, "CONNECT", method)
+			assert.Equal(t, "example.com:443", target)
+		})
+	}
+}
+
+func TestServeAnswers400ToARequestLineLongerThanATarget(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{})
+
+	// act
+	r, _ := request(t, address, "CONNECT "+strings.Repeat("a", 8<<10)+".example:443 HTTP/1.1\r\n\r\n")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 400 Bad Request", r.status)
+}

@@ -125,11 +125,38 @@ func NewRootCommand() *cli.Command {
 }
 
 func newRootCommand(deps dependencies) *cli.Command {
-	return &cli.Command{
+	root := &cli.Command{
 		Name:     "aibox",
 		Usage:    "run Claude Code inside a microVM",
 		Version:  version.Get(),
 		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), projectsCommand(deps), configCommand(deps), clipboardCommand(), fenceCommand()}, platformCommands(deps)...),
+	}
+	suggestEverywhere(root)
+
+	return root
+}
+
+// urfave/cli puts the bare name of the closest command after "No help
+// topic for", where a flag gets a whole "Did you mean" sentence.
+func init() {
+	closest := cli.SuggestCommand
+	cli.SuggestCommand = func(commands []*cli.Command, provided string) string {
+		name := closest(commands, provided)
+		if name == "" {
+			return ""
+		}
+
+		return fmt.Sprintf(cli.SuggestDidYouMeanTemplate, name)
+	}
+}
+
+// suggestEverywhere makes cmd and all its subcommands name the closest
+// command or flag to a mistyped one. urfave/cli only suggests on a command
+// that turns it on itself, a subcommand does not take it from its parent.
+func suggestEverywhere(cmd *cli.Command) {
+	cmd.Suggest = true
+	for _, sub := range cmd.Commands {
+		suggestEverywhere(sub)
 	}
 }
 

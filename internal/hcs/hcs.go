@@ -6,6 +6,8 @@
 // nothing of aibox.
 package hcs
 
+import "fmt"
+
 // Plan9Flags are the flags of a Plan 9 share, which say how the service
 // serves the folder to the guest.
 type Plan9Flags uint32
@@ -150,6 +152,24 @@ type Attachment struct {
 	Path string `json:"Path"`
 	// ReadOnly keeps the guest from writing to the disk.
 	ReadOnly bool `json:"ReadOnly,omitempty"`
+}
+
+// Modification is a change to a running VM: the resource of the VM it is
+// for, such as a disk of a SCSI controller, what to do with it and the
+// settings it gets.
+type Modification struct {
+	ResourcePath string `json:"ResourcePath"`
+	RequestType  string `json:"RequestType"`
+	Settings     any    `json:"Settings,omitempty"`
+}
+
+// RequestAdd adds the resource of a Modification.
+const RequestAdd = "Add"
+
+// AttachmentPath is the resource of the disk at the LUN of the SCSI
+// controller of the name.
+func AttachmentPath(controller string, lun int) string {
+	return fmt.Sprintf("VirtualMachine/Devices/Scsi/%s/Attachments/%d", controller, lun)
 }
 
 // HvSocket is the Hyper-V socket of a VM, the vsock of the guest, and who

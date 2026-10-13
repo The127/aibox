@@ -135,6 +135,23 @@ func TestSCSIDiskWaitsForTheDiskToBeListed(t *testing.T) {
 	assert.Equal(t, "/dev/sdb", device)
 }
 
+func TestSCSIDiskWaitsWithoutALimitForADiskAddedLater(t *testing.T) {
+	// arrange: the service adds the state disk once the VM runs
+	class := scsiClass(t, map[string]string{"0:0:0:0": "sda"})
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = os.MkdirAll(filepath.Join(class, "0:0:0:1", "device", "block", "sdb"), 0o700)
+	}()
+
+	// act
+	device, err := guest.SCSIDiskIn(class, 1, -1)
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/sdb", device)
+}
+
 func TestSCSIDiskWaitsForTheBlockDeviceOfAListedDisk(t *testing.T) {
 	// arrange
 	class := t.TempDir()

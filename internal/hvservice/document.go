@@ -34,22 +34,16 @@ var sidPattern = regexp.MustCompile(`^S-1-[0-9]+(-[0-9]+)+$`)
 
 // Document describes the VM to the Host Compute Service: booted from the
 // installation with the client's kernel command line, its console on the
-// pipe, its state disk at the path, and the client let listen on its
-// Hyper-V sockets, over which it serves the guest its folders. The state
-// path is the only one of the client's in it, and the service reads it
-// from the handle the client sent, never from the request. Every word of
-// the command line is the client's to choose, as the guest is the
-// client's own, and the root disk is read-only. The console pipe is one
-// the service named and made itself, never after the request: HCS
-// connects to it as the VM. Document refuses a VM that doesn't pass
-// Check.
-func (c Create) Document(host Host, install Install, consolePipe, state string, clientSIDs []string) (hcs.Document, error) {
+// pipe, and the client let listen on its Hyper-V sockets, over which it
+// serves the guest its folders. The state disk comes once the VM runs,
+// with AddStateDisk. Every word of the command line is the client's to
+// choose, as the guest is the client's own, and the root disk is
+// read-only. The console pipe is one the service named and made itself,
+// never after the request: HCS connects to it as the VM. Document refuses
+// a VM that doesn't pass Check.
+func (c Create) Document(host Host, install Install, consolePipe string, clientSIDs []string) (hcs.Document, error) {
 	if err := c.Check(host); err != nil {
 		return hcs.Document{}, err
-	}
-
-	if state == "" {
-		return hcs.Document{}, fmt.Errorf("%w: no state disk", ErrBadRequest)
 	}
 
 	bind, err := socketSDDL(clientSIDs)
@@ -75,10 +69,10 @@ func (c Create) Document(host Host, install Install, consolePipe, state string, 
 			},
 			Devices: hcs.Devices{
 				ComPorts: map[string]hcs.ComPort{"0": {NamedPipe: consolePipe}},
-				// the guest finds the state disk at LUN 1
-				Scsi: map[string]hcs.Scsi{"0": {Attachments: map[string]hcs.Attachment{
+				// the root alone, so that it is the disk the kernel finds
+				// first, see AddStateDisk
+				Scsi: map[string]hcs.Scsi{stateController: {Attachments: map[string]hcs.Attachment{
 					"0": {Type: hcs.AttachmentVirtualDisk, Path: install.Rootfs, ReadOnly: true},
-					"1": {Type: hcs.AttachmentVirtualDisk, Path: state},
 				}}},
 				HvSocket: &hcs.HvSocket{HvSocketConfig: hcs.HvSocketConfig{
 					DefaultBindSecurityDescriptor: bind,
@@ -110,4 +104,26 @@ func socketSDDL(sids []string) (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+// The state disk is the disk at stateLUN of the SCSI controller the root
+// disk is on, where the guest looks it up.
+const (
+	stateController = "0"
+	stateLUN        = 1
+)
+
+// AddStateDisk is the change that adds the state disk at the path to the
+// VM once it runs. The kernel mounts the root by its name, /dev/sda, and
+// Linux names SCSI disks in the order it finds them, which is not always
+// that of their LUNs: with both disks at boot, it now and then took the
+// state disk for the root and found no init on it. The path is the only
+// one of the client's in a VM, and the service reads it from the handle
+// the client sent, never from the request.
+func AddStateDisk(path string) hcs.Modification {
+	return hcs.Modification{
+		ResourcePath: hcs.AttachmentPath(stateController, stateLUN),
+		RequestType:  hcs.RequestAdd,
+		Settings:     hcs.Attachment{Type: hcs.AttachmentVirtualDisk, Path: path},
+	}
 }

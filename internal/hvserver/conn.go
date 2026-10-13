@@ -16,6 +16,7 @@ import (
 type vm interface {
 	runtimeID(ctx context.Context) (guid.GUID, error)
 	Start(ctx context.Context) error
+	Modify(ctx context.Context, m hcs.Modification) error
 	Terminate(ctx context.Context) error
 	Close() error
 }
@@ -171,6 +172,15 @@ func (s *server) answer(ctx context.Context, sess *session, request hvservice.Re
 			return refusal("start", err)
 		}
 
+		// once the VM runs, so that the root is the only disk the kernel
+		// finds at boot; the guest waits for this one
+		if err := sess.vm.Modify(ctx, hvservice.AddStateDisk(sess.disk.path)); err != nil {
+			s.logf("add the state disk to a VM: %v", err)
+			s.end(ctx, sess)
+
+			return refusal("start", err)
+		}
+
 		sess.started = true
 	case hvservice.OpStop:
 		if sess.vm == nil {
@@ -237,7 +247,7 @@ func (s *server) createVM(ctx context.Context, sess *session, c hvservice.Create
 		sids = append(sids, containerSID)
 	}
 
-	doc, err := c.Document(host, s.install, pipe, disk.path, sids)
+	doc, err := c.Document(host, s.install, pipe, sids)
 	if err != nil {
 		s.revoke(disk)
 

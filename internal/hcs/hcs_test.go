@@ -196,3 +196,25 @@ func TestErrAccessDenied(t *testing.T) {
 	require.ErrorAs(t, fmt.Errorf("start: %w", denied), &e)
 	assert.Equal(t, uint32(0x8037011B), e.HRESULT)
 }
+
+func TestAModificationIsTheDocumentTheServiceTakes(t *testing.T) {
+	t.Parallel()
+
+	// arrange: a disk added to a running VM
+	m := hcs.Modification{
+		ResourcePath: hcs.AttachmentPath("0", 1),
+		RequestType:  hcs.RequestAdd,
+		Settings:     hcs.Attachment{Type: hcs.AttachmentVirtualDisk, Path: `C:\Users\me\state.vhdx`},
+	}
+
+	// act
+	b, err := json.Marshal(m)
+
+	// assert
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+	  "ResourcePath": "VirtualMachine/Devices/Scsi/0/Attachments/1",
+	  "RequestType": "Add",
+	  "Settings": {"Type": "VirtualDisk", "Path": "C:\\Users\\me\\state.vhdx"}
+	}`, string(b))
+}

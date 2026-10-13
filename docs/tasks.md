@@ -350,7 +350,9 @@ aibox checks what comes back:
   each row, so the terminal doesn't break one into a row without a mark.
   That holds at the width the terminal had when the line came. If you
   make the window narrower later, or read the output in a pager or a log
-  viewer that breaks lines, a row can lose its mark.
+  viewer that breaks lines, a row can lose its mark. On a terminal
+  narrower than about 30 columns a row can lose it too, but the VM then
+  controls at most 8 characters of that row, too few for a fake mark.
   `aibox run` passes the VM's terminal straight through, so this only
   applies to tasks.
 

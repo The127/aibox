@@ -42,6 +42,22 @@ builds:
       post:
         - codesign --force --sign - --entitlements cmd/aibox/aibox.entitlements {{ .Path }}
 
+  # cross-compiled on the Mac too, since it needs no cgo, so that the
+  # release takes no runner of Windows. No package puts the image in place
+  # on Windows: `aibox service install` downloads it.
+  - id: windows
+    main: ./cmd/aibox
+    binary: aibox
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/the127/aibox/internal/image.digests={{ envOrDefault "AIBOX_IMAGE_DIGESTS" "" }}
+      - -X github.com/the127/aibox/internal/image.kernelDigests={{ envOrDefault "AIBOX_KERNEL_DIGESTS" "" }}
+    goos:
+      - windows
+    goarch:
+      - amd64
+
 archives:
   - id: linux
     ids:
@@ -55,6 +71,14 @@ archives:
     ids:
       - darwin
     formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+  - id: windows
+    ids:
+      - windows
+    formats: [zip]
     files:
       - LICENSE
       - README.md

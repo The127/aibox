@@ -88,7 +88,9 @@ allow such an address is to write it into the list.
 
 For IPv6, aibox only takes internet addresses, the ones in `2000::/3`. Some
 IPv6 addresses carry an IPv4 address, like NAT64 and 6to4 ones. aibox
-checks that IPv4 address like any other.
+checks that IPv4 address like any other. It only knows the standard NAT64
+prefix, `64:ff9b::/96`. If your network has a NAT64 prefix of its own,
+aibox can't tell which IPv4 address such an address leads to.
 
 A new config only allows the hosts Claude Code needs:
 

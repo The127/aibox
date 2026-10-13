@@ -65,12 +65,14 @@ const (
 // notPublic are IPv4 ranges that IsGlobalUnicast counts as public but
 // that belong to the machine's own networks or to nobody: 0.0.0.0/8,
 // carrier-grade NAT (which Tailscale uses), the ranges reserved for
-// documentation and benchmarks, and 240.0.0.0/4, which is reserved.
+// documentation and benchmarks, the relays of 6to4, which is retired, and
+// 240.0.0.0/4, which is reserved.
 var notPublic = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
 	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
@@ -83,11 +85,11 @@ var notPublic = []netip.Prefix{
 var internet6 = netip.MustParsePrefix("2000::/3")
 
 // notPublic6 are the ranges in internet6 that are not the internet:
-// Teredo, which hides IPv4 addresses aibox cannot check, and the ranges
-// reserved for benchmarks and documentation.
+// 2001::/23, which IANA keeps for special uses like Teredo, which hides
+// IPv4 addresses aibox cannot check, and the ranges reserved for
+// documentation.
 var notPublic6 = []netip.Prefix{
-	netip.MustParsePrefix("2001::/32"),
-	netip.MustParsePrefix("2001:2::/48"),
+	netip.MustParsePrefix("2001::/23"),
 	netip.MustParsePrefix("2001:db8::/32"),
 	netip.MustParsePrefix("3fff::/20"),
 }

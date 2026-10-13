@@ -33,7 +33,7 @@ func NewLog(w io.Writer, id string, now func() time.Time) *Log {
 // when the line is written, and stamps every row. A terminal would break a
 // longer line itself, and the VM could then fill a line so that a row
 // without a stamp starts with text that looks like a line of aibox. A
-// width of 0 or less breaks no line.
+// width of 0 or less breaks no line, for output that is no terminal.
 func (l *Log) Wrap(width func() int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -124,6 +124,11 @@ func (w *LogWriter) flush() error {
 	return err
 }
 
+// minColumns is the fewest columns a row gets after its stamp. On a
+// terminal too narrow for that, the terminal breaks the row, but the part
+// it moves to the next row holds too little of the VM's text for a stamp.
+const minColumns = 8
+
 // columns is how many columns a row has after a stamp of stampWidth, or 0
 // for rows of any length. The last column stays empty: some terminals
 // break a line that fills the row.
@@ -132,7 +137,12 @@ func (l *Log) columns(stampWidth int) int {
 		return 0
 	}
 
-	return max(l.width()-stampWidth-1, 0)
+	width := l.width()
+	if width <= 0 {
+		return 0
+	}
+
+	return max(width-stampWidth-1, minColumns)
 }
 
 // rows breaks the text into rows of at most columns columns, or returns it
@@ -156,7 +166,7 @@ func rows(text string, columns int) []string {
 			width = 1
 		}
 
-		if used+width > columns {
+		if used+width > columns && i > start {
 			broken = append(broken, text[start:i])
 			start, used = i, 0
 		}

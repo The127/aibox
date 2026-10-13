@@ -182,7 +182,8 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 			return 0
 		}
 
-		return width
+		// a terminal that hides its width still breaks lines
+		return max(width, 1)
 	})
 
 	host, vm := log.Writer("aibox"), log.Writer("vm")

@@ -59,9 +59,9 @@ func (p paths) inside(host string) bool {
 
 	for name := host; ; name = filepath.Dir(name) {
 		if resolved, err := realpath.Of(name); err == nil {
-			rest, err := filepath.Rel(project, resolved)
+			_, ok := below(project, resolved)
 
-			return err == nil && rest != ".." && !strings.HasPrefix(rest, ".."+string(filepath.Separator))
+			return ok
 		}
 
 		if _, err := os.Lstat(name); err == nil {

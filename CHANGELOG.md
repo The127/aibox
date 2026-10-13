@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/The127/aibox/compare/v2.1.0...v2.1.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* read the project and the VM's home after the session ([#196](https://github.com/The127/aibox/issues/196)) ([9a23e54](https://github.com/The127/aibox/commit/9a23e5437475e3057b63de0b06d91ec766755230))
+
 ## [2.1.0](https://github.com/The127/aibox/compare/v2.0.1...v2.1.0) (2026-10-13)
 
 

@@ -349,6 +349,41 @@ func TestLoadRejectsAPathEntryThatIsNeitherAFolderNorAVariable(t *testing.T) {
 	}
 }
 
+func TestLoadReadsWatch(t *testing.T) {
+	// arrange
+	path := write(t, "watch:\n  - Makefile\n  - .github/workflows/\n  - ./scripts\n")
+
+	// act
+	cfg, err := config.Load(path, "")
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Makefile", ".github/workflows", "scripts"}, cfg.Watch)
+}
+
+func TestLoadRejectsAWatchEntryOutsideTheProject(t *testing.T) {
+	tests := map[string]string{
+		"absolute":          "/etc/passwd",
+		"above":             "../other",
+		"above in disguise": "scripts/../../other",
+		"empty":             "",
+		"control character": "Makefile\\u0001",
+	}
+
+	for name, entry := range tests {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			path := write(t, "watch:\n  - \""+entry+"\"\n")
+
+			// act
+			_, err := config.Load(path, "")
+
+			// assert
+			assert.ErrorIs(t, err, config.ErrBadWatch)
+		})
+	}
+}
+
 func TestLoadNamesThePathEntryItRejects(t *testing.T) {
 	// arrange
 	path := write(t, "path:\n  - opt/bin\n")

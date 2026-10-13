@@ -192,6 +192,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer closeForwards(spec.Forwards)
 
+	watch := append(slices.Clone(watched), r.config.Watch...)
+	files := takeSnapshot(cwd, watch)
 	before := sessions(r.project.Home)
 	err = deps.backend.Run(ctx, spec)
 	r.proxyLog.Summarize()
@@ -199,6 +201,8 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	if id, ok := lastSession(before, sessions(r.project.Home)); ok {
 		_, _ = fmt.Fprintf(deps.stderr, "aibox: to go on with this session, run aibox run --resume %s\n", id)
 	}
+
+	reportChanges(deps.stderr, files, takeSnapshot(cwd, watch))
 
 	return err
 }

@@ -144,7 +144,9 @@ aibox config edit
 the proxy connected to or refused.
 
 Note that the VM can change anything in your project folder, `.git`
-included. Treat those changes like a pull request from a stranger.
+included. Treat those changes like a pull request from a stranger. When a
+session ends, aibox tells you which files changed that programs on your
+machine run without asking, like `.git/config`.
 [What the VM writes](https://the127.github.io/aibox/what-the-vm-writes.html)
 explains why and what to look out for.
 

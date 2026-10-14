@@ -1,0 +1,8 @@
+[tools]
+go = "1.27.2"
+golangci-lint = "2.14.0"
+just = "latest"
+lefthook = "latest"
+"github:rust-lang/mdBook" = "0.5.4"
+zig = "0.17.0"
+"github:badboy/mdbook-mermaid" = "0.17.1"

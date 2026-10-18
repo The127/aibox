@@ -43,6 +43,7 @@ var (
 	errNotConfirmed   = errors.New("nothing changed")
 	errStillThere     = errors.New("a new run or task of the project started meanwhile, so its folder stays")
 	errNoProjectLock  = errors.New("the lock of the project is no plain file")
+	errProjectExists  = errors.New("aibox keeps a folder for the project in the current folder already, remove it first with aibox projects remove")
 )
 
 func projectsCommand(deps dependencies) *cli.Command {
@@ -74,6 +75,16 @@ func projectsCommand(deps dependencies) *cli.Command {
 			Flags:     []cli.Flag{yes},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
 				return runRemove(ctx, deps, cmd.Args().First(), cmd.Bool("yes"))
+			},
+		}, {
+			Name:  "move",
+			Usage: "after you moved or renamed the project in the current folder, take along what aibox keeps for it at its old path",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "from", Usage: "the old path of the project", Required: true},
+				yes,
+			},
+			Action: func(ctx context.Context, cmd *cli.Command) error {
+				return runMove(ctx, deps, cmd.String("from"), cmd.Bool("yes"))
 			},
 		}},
 	}
@@ -170,13 +181,10 @@ func runRemove(ctx context.Context, deps dependencies, path string, yes bool) er
 		return err
 	}
 
-	switch {
-	case path == "":
+	if path == "" {
 		path = cwd
-	case !filepath.IsAbs(path):
-		path = spelled(filepath.Join(cwd, path))
-	default:
-		path = spelled(path)
+	} else {
+		path = absolute(cwd, path)
 	}
 
 	p, err := existingProject(aibox, path)
@@ -188,19 +196,8 @@ func runRemove(ctx context.Context, deps dependencies, path string, yes bool) er
 		return err
 	}
 
-	runLock, err := lockRun(p)
+	release, err := lockAlone(p)
 	if err != nil {
-		return err
-	}
-
-	tasksLock, err := lockProject(p.Dir, tasksLockFile, false)
-	if errors.Is(err, filelock.ErrLocked) {
-		err = errTaskRuns
-	}
-
-	if err != nil {
-		_ = runLock.Close()
-
 		return err
 	}
 
@@ -208,8 +205,7 @@ func runRemove(ctx context.Context, deps dependencies, path string, yes bool) er
 
 	// Windows removes the lock files once they are closed, and only then
 	// the folder they were in
-	_ = runLock.Close()
-	_ = tasksLock.Close()
+	release()
 
 	if err != nil {
 		return err
@@ -226,6 +222,213 @@ func runRemove(ctx context.Context, deps dependencies, path string, yes bool) er
 	_, _ = fmt.Fprintf(deps.stderr, "aibox: removed everything aibox kept for %s\n", path)
 
 	return nil
+}
+
+func runMove(ctx context.Context, deps dependencies, from string, yes bool) error {
+	cwd, aibox, err := folders(deps)
+	if err != nil {
+		return err
+	}
+
+	from = absolute(cwd, from)
+
+	old, err := existingProject(aibox, from)
+	if err != nil {
+		return err
+	}
+
+	base := filepath.Join(aibox, "projects")
+
+	p, err := project.At(base, cwd)
+	if err != nil {
+		return err
+	}
+
+	// on macOS and Windows a rename that only changes case keeps the
+	// folder, and only its path file is out of date
+	same, err := sameFolder(old.Dir, p.Dir)
+	if err != nil {
+		return err
+	}
+
+	if same {
+		if _, err := project.Open(base, cwd); err != nil {
+			return err
+		}
+
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: aibox finds what it keeps for %s already, there is nothing to move\n", cwd)
+
+		return nil
+	}
+
+	if err := emptyProject(p.Dir); err != nil {
+		return err
+	}
+
+	if err := confirm(ctx, deps, fmt.Sprintf("Move everything aibox keeps for %s to %s? That is its config, the VM's home folder with the login, the state disk, the logs and the tasks.", from, cwd), yes); err != nil {
+		return err
+	}
+
+	releaseOld, err := lockAlone(old)
+	if err != nil {
+		return err
+	}
+
+	defer func() { releaseOld() }()
+
+	releaseNew, err := lockAlone(p)
+	if err != nil {
+		return err
+	}
+
+	defer releaseNew()
+
+	// checked again under the lock, as a run may have started there while
+	// aibox asked
+	if err := emptyProject(p.Dir); err != nil {
+		return err
+	}
+
+	if err := moveEntries(old.Dir, p.Dir); err != nil {
+		return err
+	}
+
+	if _, err := project.Open(base, cwd); err != nil {
+		return fmt.Errorf("everything aibox kept for %s is in %s now, but %w", from, p.Dir, err)
+	}
+
+	if err := removeProject(old); err != nil {
+		return fmt.Errorf("everything aibox kept for %s is in %s now, but %w", from, p.Dir, err)
+	}
+
+	// Windows removes the lock files once they are closed, and only then
+	// the folder they were in
+	releaseOld()
+	releaseOld = func() {}
+
+	// a run that started at the old path meanwhile keeps the folder, as it
+	// is a new project there
+	if err := os.Remove(old.Dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if entries, _ := os.ReadDir(old.Dir); len(entries) == 0 {
+			return fmt.Errorf("remove the old folder of the project: %w", err)
+		}
+	}
+
+	_, _ = fmt.Fprintf(deps.stderr, "aibox: moved everything aibox kept for %s to %s\n", from, cwd)
+
+	return nil
+}
+
+// lockAlone takes the lock of aibox run and the tasks lock of the project,
+// both alone, so that neither a run nor a task uses its folder.
+func lockAlone(p project.Project) (release func(), err error) {
+	runLock, err := lockRun(p)
+	if err != nil {
+		return nil, err
+	}
+
+	tasksLock, err := lockProject(p.Dir, tasksLockFile, false)
+	if errors.Is(err, filelock.ErrLocked) {
+		err = errTaskRuns
+	}
+
+	if err != nil {
+		_ = runLock.Close()
+
+		return nil, err
+	}
+
+	return func() {
+		_ = runLock.Close()
+		_ = tasksLock.Close()
+	}, nil
+}
+
+// sameFolder says whether both folders exist and are one: the same name,
+// or two names that differ only in case on macOS and Windows.
+func sameFolder(a, b string) (bool, error) {
+	infoA, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+
+	infoB, err := os.Stat(b)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	return os.SameFile(infoA, infoB), nil
+}
+
+// emptyProject fails with errProjectExists when the folder of a project
+// holds more than lock files, which a run that never started leaves.
+func emptyProject(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.Name() != runLockFile && entry.Name() != tasksLockFile {
+			return errProjectExists
+		}
+	}
+
+	return nil
+}
+
+// moveEntries moves what the folder from holds into the folder to, apart
+// from the lock files, which stay locked in from. Renaming the folder
+// itself would fail on Windows while the lock files in it are open. If an
+// entry fails to move, the ones moved already go back.
+func moveEntries(from, to string) error {
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		return fmt.Errorf("read the folder of the project: %w", err)
+	}
+
+	var moved []string
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == runLockFile || name == tasksLockFile {
+			continue
+		}
+
+		if err := os.Rename(filepath.Join(from, name), filepath.Join(to, name)); err != nil {
+			err = fmt.Errorf("move %s of the project: %w", name, err)
+
+			for _, back := range moved {
+				if backErr := os.Rename(filepath.Join(to, back), filepath.Join(from, back)); backErr != nil {
+					err = errors.Join(err, fmt.Errorf("move %s back, it stays in %s: %w", back, to, backErr))
+				}
+			}
+
+			return err
+		}
+
+		moved = append(moved, name)
+	}
+
+	return nil
+}
+
+// absolute returns the path, made absolute against cwd when it is
+// relative.
+func absolute(cwd, path string) string {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+
+	return spelled(path)
 }
 
 // existingProject returns the folders of the project at path, or

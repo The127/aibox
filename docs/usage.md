@@ -114,6 +114,28 @@ disk, the logs and the tasks. Your project folder itself stays as it is.
 This works for a project whose folder you already moved or deleted too.
 aibox asks first, and refuses while the project or one of its tasks runs.
 
+## Moving a project
+
+aibox finds a project's folder by the project's path. If you move or rename
+the project, the next run starts without your config, login, state disk and
+tasks. To take them along, run this in the project's new folder and pass
+its old path:
+
+```
+aibox projects move --from ~/projects/old-app
+```
+
+A relative path works too, like `--from ../old-app`. aibox asks first, and
+refuses while aibox or one of its tasks runs at either path. It also refuses if it
+already keeps a folder for the new path, for example because you ran
+`aibox run` there before the move. If you want the old folder to win,
+remove the new one first with `aibox projects remove`.
+
+Note that on macOS and Windows, a rename that only changes the case of
+letters, like `MyApp` to `myapp`, keeps the same folder. aibox still finds
+it, so there is nothing to move. `aibox projects move` then only updates
+the path that `aibox projects list` shows, and so does your next run.
+
 ## In your IDE
 
 Claude Code can work with your IDE, like VS Code or GoLand: it sees the

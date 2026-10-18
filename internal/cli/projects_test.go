@@ -24,6 +24,9 @@ func newProjectsFixture(t *testing.T) *projectsFixture {
 	t.Helper()
 
 	f := &projectsFixture{fixture: newFixture(t)}
+	// the real getwd spells the path, which on Windows turns a short name
+	// like RUNNER~1 in the temporary folder into the long one
+	f.cwd = spelled(f.cwd)
 	f.p = f.project(t)
 
 	for _, name := range []string{
@@ -316,4 +319,208 @@ func TestListShowsThePathsOfTheProjects(t *testing.T) {
 	assert.Contains(t, f.stdout.String(), filepath.Clean(f.cwd)+"\n")
 	assert.Contains(t, f.stdout.String(), gone+" (the folder is gone)\n")
 	assert.Contains(t, f.stdout.String(), "-from-an-older-aibox (folder "+old.Dir+", its path is known after its next run)\n")
+}
+
+// moveProject moves the project folder to a new name and goes there, as a
+// person does before aibox projects move. It returns the old path.
+func (f *projectsFixture) moveProject(t *testing.T) string {
+	t.Helper()
+
+	old := f.cwd
+	f.cwd = filepath.Join(filepath.Dir(old), "renamed")
+	require.NoError(t, os.Rename(old, f.cwd))
+
+	return old
+}
+
+func TestMoveTakesEverythingAlong(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	old := f.moveProject(t)
+
+	// act
+	err := f.projects("y\n", "move", "--from", old)
+
+	// assert
+	require.NoError(t, err)
+	assert.NoDirExists(t, f.p.Dir)
+
+	moved := f.project(t)
+	assert.FileExists(t, moved.Config)
+	assert.FileExists(t, moved.State)
+	assert.FileExists(t, filepath.Join(moved.Home, ".claude", credentialsFile))
+	assert.FileExists(t, filepath.Join(moved.Dir, "tasks", "20261012-100000-abcdef", "result.json"))
+
+	written, err := os.ReadFile(moved.Path)
+	require.NoError(t, err)
+	assert.Equal(t, f.cwd+"\n", string(written))
+}
+
+func TestMoveTakesARelativePath(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	old := f.moveProject(t)
+
+	// act
+	err := f.projects("y\n", "move", "--from", filepath.Join("..", filepath.Base(old)))
+
+	// assert
+	require.NoError(t, err)
+	assert.NoDirExists(t, f.p.Dir)
+	assert.FileExists(t, f.project(t).Config)
+}
+
+func TestMoveNeedsTheOldPath(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	f.moveProject(t)
+
+	// act
+	err := f.projects("y\n", "move")
+
+	// assert
+	require.Error(t, err)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveRefusesAnOldPathAiboxKeepsNothingFor(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+
+	// act
+	err := f.projects("y\n", "move", "--from", t.TempDir())
+
+	// assert
+	require.ErrorIs(t, err, errNoProject)
+}
+
+func TestMoveRefusesANewPathAiboxKeepsAFolderFor(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	old := f.moveProject(t)
+	f.project(t)
+
+	// act
+	err := f.projects("y\n", "move", "--from", old)
+
+	// assert
+	require.ErrorIs(t, err, errProjectExists)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveAsksFirst(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	old := f.moveProject(t)
+
+	// act
+	err := f.projects("n\n", "move", "--from", old)
+
+	// assert
+	require.ErrorIs(t, err, errNotConfirmed)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveRefusesAProjectThatRuns(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	f.running(t)
+	old := f.moveProject(t)
+
+	// act
+	err := f.projects("y\n", "move", "--from", old)
+
+	// assert
+	require.ErrorIs(t, err, errProjectRuns)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveRefusesAProjectWithATaskThatRuns(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	lock, err := lockTasksOf(f.p.Dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Close() })
+	old := f.moveProject(t)
+
+	// act
+	err = f.projects("y\n", "move", "--from", old)
+
+	// assert
+	require.ErrorIs(t, err, errTaskRuns)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveFromTheSamePathMovesNothing(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+
+	// act
+	err := f.projects("", "move", "--from", ".")
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveTakesANewPathWithOnlyLockFiles(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	old := f.moveProject(t)
+	at, err := project.At(filepath.Join(f.aiboxDir, "projects"), f.cwd)
+	require.NoError(t, err)
+	lock, err := lockRunOf(at.Dir)
+	require.NoError(t, err)
+	require.NoError(t, lock.Close())
+
+	// act
+	err = f.projects("y\n", "move", "--from", old)
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, at.Config)
+	assert.NoDirExists(t, f.p.Dir)
+}
+
+func TestMoveRefusesANewPathThatRuns(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	old := f.moveProject(t)
+	at, err := project.At(filepath.Join(f.aiboxDir, "projects"), f.cwd)
+	require.NoError(t, err)
+	lock, err := lockRunOf(at.Dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Close() })
+
+	// act
+	err = f.projects("y\n", "move", "--from", old)
+
+	// assert
+	require.ErrorIs(t, err, errProjectRuns)
+	assert.FileExists(t, f.p.Config)
+}
+
+func TestMoveTakesARenameThatOnlyChangesCase(t *testing.T) {
+	// arrange
+	f := newProjectsFixture(t)
+	require.NoError(t, f.projects("y\n", "move", "--from", f.moveProject(t)))
+	lower := f.project(t)
+	old := f.cwd
+	f.cwd = filepath.Join(filepath.Dir(old), "RENAMED")
+	require.NoError(t, os.Rename(old, f.cwd))
+
+	if _, err := os.Stat(old); err != nil {
+		t.Skip("the file system tells case apart, so the folders differ")
+	}
+
+	// act
+	err := f.projects("", "move", "--from", old)
+
+	// assert
+	require.NoError(t, err)
+	assert.FileExists(t, lower.Config)
+
+	written, err := os.ReadFile(lower.Path)
+	require.NoError(t, err)
+	assert.Equal(t, f.cwd+"\n", string(written))
 }

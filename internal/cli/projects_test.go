@@ -24,6 +24,9 @@ func newProjectsFixture(t *testing.T) *projectsFixture {
 	t.Helper()
 
 	f := &projectsFixture{fixture: newFixture(t)}
+	// the real getwd spells the path, which on Windows turns a short name
+	// like RUNNER~1 in the temporary folder into the long one
+	f.cwd = spelled(f.cwd)
 	f.p = f.project(t)
 
 	for _, name := range []string{
@@ -504,8 +507,9 @@ func TestMoveTakesARenameThatOnlyChangesCase(t *testing.T) {
 	lower := f.project(t)
 	old := f.cwd
 	f.cwd = filepath.Join(filepath.Dir(old), "RENAMED")
+	require.NoError(t, os.Rename(old, f.cwd))
 
-	if _, err := os.Stat(f.cwd); err != nil {
+	if _, err := os.Stat(old); err != nil {
 		t.Skip("the file system tells case apart, so the folders differ")
 	}
 

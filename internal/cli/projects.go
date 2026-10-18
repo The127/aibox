@@ -44,7 +44,6 @@ var (
 	errStillThere     = errors.New("a new run or task of the project started meanwhile, so its folder stays")
 	errNoProjectLock  = errors.New("the lock of the project is no plain file")
 	errProjectExists  = errors.New("aibox keeps a folder for the project in the current folder already, remove it first with aibox projects remove")
-	errSamePath       = errors.New("the old path is the project in the current folder")
 )
 
 func projectsCommand(deps dependencies) *cli.Command {
@@ -238,24 +237,32 @@ func runMove(ctx context.Context, deps dependencies, from string, yes bool) erro
 		return err
 	}
 
-	p, err := project.At(filepath.Join(aibox, "projects"), cwd)
+	base := filepath.Join(aibox, "projects")
+
+	p, err := project.At(base, cwd)
 	if err != nil {
 		return err
 	}
 
-	if old.Dir == p.Dir {
-		return fmt.Errorf("%w: %s", errSamePath, cwd)
-	}
-
+	// on macOS and Windows a rename that only changes case keeps the
+	// folder, and only its path file is out of date
 	same, err := sameFolder(old.Dir, p.Dir)
 	if err != nil {
 		return err
 	}
 
-	if !same {
-		if err := emptyProject(p.Dir); err != nil {
+	if same {
+		if _, err := project.Open(base, cwd); err != nil {
 			return err
 		}
+
+		_, _ = fmt.Fprintf(deps.stderr, "aibox: aibox finds what it keeps for %s already, there is nothing to move\n", cwd)
+
+		return nil
+	}
+
+	if err := emptyProject(p.Dir); err != nil {
+		return err
 	}
 
 	if err := confirm(ctx, deps, fmt.Sprintf("Move everything aibox keeps for %s to %s? That is its config, the VM's home folder with the login, the state disk, the logs and the tasks.", from, cwd), yes); err != nil {
@@ -269,47 +276,41 @@ func runMove(ctx context.Context, deps dependencies, from string, yes bool) erro
 
 	defer func() { releaseOld() }()
 
-	if !same {
-		releaseNew, err := lockAlone(p)
-		if err != nil {
-			return err
-		}
-
-		defer releaseNew()
-
-		// checked again under the lock, as a run may have started there
-		// while aibox asked
-		if err := emptyProject(p.Dir); err != nil {
-			return err
-		}
-
-		if err := moveEntries(old.Dir, p.Dir); err != nil {
-			return err
-		}
+	releaseNew, err := lockAlone(p)
+	if err != nil {
+		return err
 	}
 
-	// a folder that differs only in case is the same one on macOS and
-	// Windows, and only its path file is out of date
-	if _, err := project.Open(filepath.Join(aibox, "projects"), cwd); err != nil {
+	defer releaseNew()
+
+	// checked again under the lock, as a run may have started there while
+	// aibox asked
+	if err := emptyProject(p.Dir); err != nil {
+		return err
+	}
+
+	if err := moveEntries(old.Dir, p.Dir); err != nil {
+		return err
+	}
+
+	if _, err := project.Open(base, cwd); err != nil {
 		return fmt.Errorf("everything aibox kept for %s is in %s now, but %w", from, p.Dir, err)
 	}
 
-	if !same {
-		if err := removeProject(old); err != nil {
-			return fmt.Errorf("everything aibox kept for %s is in %s now, but %w", from, p.Dir, err)
-		}
+	if err := removeProject(old); err != nil {
+		return fmt.Errorf("everything aibox kept for %s is in %s now, but %w", from, p.Dir, err)
+	}
 
-		// Windows removes the lock files once they are closed, and only then
-		// the folder they were in
-		releaseOld()
-		releaseOld = func() {}
+	// Windows removes the lock files once they are closed, and only then
+	// the folder they were in
+	releaseOld()
+	releaseOld = func() {}
 
-		// a run that started at the old path meanwhile keeps the folder,
-		// as it is a new project there
-		if err := os.Remove(old.Dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			if entries, _ := os.ReadDir(old.Dir); len(entries) == 0 {
-				return fmt.Errorf("remove the old folder of the project: %w", err)
-			}
+	// a run that started at the old path meanwhile keeps the folder, as it
+	// is a new project there
+	if err := os.Remove(old.Dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if entries, _ := os.ReadDir(old.Dir); len(entries) == 0 {
+			return fmt.Errorf("remove the old folder of the project: %w", err)
 		}
 	}
 
@@ -343,8 +344,8 @@ func lockAlone(p project.Project) (release func(), err error) {
 	}, nil
 }
 
-// sameFolder says whether both folders exist and are one, as two names
-// that differ only in case are on macOS and Windows.
+// sameFolder says whether both folders exist and are one: the same name,
+// or two names that differ only in case on macOS and Windows.
 func sameFolder(a, b string) (bool, error) {
 	infoA, err := os.Stat(a)
 	if err != nil {

@@ -133,8 +133,8 @@ remove the new one first with `aibox projects remove`.
 
 Note that on macOS and Windows, a rename that only changes the case of
 letters, like `MyApp` to `myapp`, keeps the same folder. aibox still finds
-it, and `aibox projects move` only updates the path that
-`aibox projects list` shows.
+it, so there is nothing to move. `aibox projects move` then only updates
+the path that `aibox projects list` shows, and so does your next run.
 
 ## In your IDE
 

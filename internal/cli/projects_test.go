@@ -451,15 +451,15 @@ func TestMoveRefusesAProjectWithATaskThatRuns(t *testing.T) {
 	assert.FileExists(t, f.p.Config)
 }
 
-func TestMoveRefusesTheSamePath(t *testing.T) {
+func TestMoveFromTheSamePathMovesNothing(t *testing.T) {
 	// arrange
 	f := newProjectsFixture(t)
 
 	// act
-	err := f.projects("y\n", "move", "--from", ".")
+	err := f.projects("", "move", "--from", ".")
 
 	// assert
-	require.ErrorIs(t, err, errSamePath)
+	require.NoError(t, err)
 	assert.FileExists(t, f.p.Config)
 }
 
@@ -514,7 +514,7 @@ func TestMoveTakesARenameThatOnlyChangesCase(t *testing.T) {
 	}
 
 	// act
-	err := f.projects("y\n", "move", "--from", old)
+	err := f.projects("", "move", "--from", old)
 
 	// assert
 	require.NoError(t, err)

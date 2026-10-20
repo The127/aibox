@@ -110,7 +110,13 @@ var reservedVariables = []string{
 	"AIBOX", "HOME", "USER", "LOGNAME", "SHELL", "PATH", "TERM", "LANG",
 	"HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy",
 	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "GOMODCACHE",
+	// the name setting fills this one
+	"AIBOX_SESSION_NAME",
 }
+
+// NamePath is the name setting that names the session after the project's
+// path on the host.
+const NamePath = "path"
 
 var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -306,6 +312,10 @@ type Config struct {
 	// Windows, whose terminals paste on Ctrl+V themselves, and not
 	// elsewhere.
 	PasteAltV *bool `yaml:"paste-alt-v"`
+	// Name is the name of the Claude Code session: NamePath for the
+	// project's path on the host, any other text as it is, or empty for
+	// none.
+	Name string `yaml:"name"`
 	// Path are folders in the VM that go in front of its PATH, or names of
 	// variables of the host whose folders do.
 	Path []string `yaml:"path"`
@@ -625,6 +635,13 @@ allow:
 # on Ctrl+V themselves, so on Windows it is on unless you turn it off, and
 # elsewhere off unless you turn it on:
 # paste-alt-v: true
+
+# The name of the Claude Code session, which it shows in the prompt box and
+# the terminal title. In the VM the project is always /project, so without a
+# name every session looks the same. path names it after the project's path
+# on this machine, which the VM otherwise doesn't know. Any other text is
+# the name. For example:
+# name: path
 
 # Folders in the VM that go in front of its PATH. A name such as PATH stands
 # for the folders in that variable of the host, which then need a mount at

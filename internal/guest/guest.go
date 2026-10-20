@@ -422,11 +422,19 @@ func parsePort(key, value string) (uint32, error) {
 // run as the user on the terminal with the TERM and the variables of the
 // request. Without a terminal the caller gives it its standard files, and
 // TERM is dumb. The folders of a PATH in the request go in front of the PATH
-// of the image. The other variables aibox sets itself keep their values.
+// of the image. The other variables aibox sets itself keep their values. A
+// session name in the request names the Claude Code session.
 func Command(options Options, terminal *os.File, request session.Request) *exec.Cmd {
 	name, args := claude, []string{"--append-system-prompt-file", prompt}
 	if options.Resume != "" {
 		args = append(args, "--resume", options.Resume)
+	}
+
+	sessionName, env := takeVariable(request.Env, vm.SessionNameVariable)
+	request.Env = env
+
+	if sessionName != "" {
+		args = append(args, "--name", sessionName)
 	}
 
 	if options.Shell {

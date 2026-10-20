@@ -189,6 +189,101 @@ func TestRunWithShell(t *testing.T) {
 	assert.True(t, f.launch.spec.Shell)
 }
 
+func TestRunNamesTheSessionWithTheFlag(t *testing.T) {
+	for _, flag := range []string{"--name", "-n"} {
+		t.Run(flag, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.writeConfig(t, "name: from the config\n")
+
+			// act
+			err := f.run("--image", image, flag, `my "session"`)
+
+			// assert
+			require.NoError(t, err)
+			assert.Contains(t, f.launch.spec.Env, `AIBOX_SESSION_NAME=my "session"`)
+			assert.NotContains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME=from the config")
+		})
+	}
+}
+
+func TestRunNamesTheSessionAsTheConfigSays(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: network config\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME=network config")
+}
+
+func TestRunNamesTheSessionAfterTheProjectPathWhenTheConfigSaysPath(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.cwd = filepath.Join(f.homeDir, "projects", "my-app")
+	require.NoError(t, os.MkdirAll(f.cwd, 0o700))
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME="+filepath.Join("~", "projects", "my-app"))
+}
+
+func TestRunNamesTheSessionNotWithoutAName(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunRefusesNameWithShell(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--shell", "--name", "my session")
+
+	// assert
+	require.ErrorIs(t, err, errNameShell)
+	assert.False(t, f.launch.called)
+}
+
+func TestAbbreviateHome(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), "home", "me")
+	tests := map[string]string{
+		filepath.Join(home, "projects", "my-app"): filepath.Join("~", "projects", "my-app"),
+		home: "~",
+		filepath.Join(string(filepath.Separator), "work"):                filepath.Join(string(filepath.Separator), "work"),
+		filepath.Join(string(filepath.Separator), "home", "meow", "app"): filepath.Join(string(filepath.Separator), "home", "meow", "app"),
+	}
+
+	for path, want := range tests {
+		t.Run(path, func(t *testing.T) {
+			// act
+			got := abbreviateHome(path, home)
+
+			// assert
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
 func TestRunWithResume(t *testing.T) {
 	// arrange
 	f := newFixture(t)

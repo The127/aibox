@@ -44,6 +44,8 @@ var errNoTerminal = errors.New("run needs a terminal on stdin")
 
 var errResumeShell = errors.New("--resume goes on with a session of Claude Code, so it does not go with --shell")
 
+var errNameShell = errors.New("--name names a session of Claude Code, so it does not go with --shell")
+
 // The project folder is shared into the VM read-write. From the home or
 // above it the VM would get the configs and logins of every project, the
 // shell files and keys of the person, and could change its own allow list.
@@ -67,6 +69,7 @@ func runCommand(deps dependencies) *cli.Command {
 		Flags: append(vmFlags(),
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
 			&cli.StringFlag{Name: "resume", Usage: "go on with the Claude Code session with this ID"},
+			&cli.StringFlag{Name: "name", Aliases: []string{"n"}, Usage: "name the Claude Code session, instead of what the name setting of the config says"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -104,6 +107,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		}
 	}
 
+	if cmd.String("name") != "" && cmd.Bool("shell") {
+		return errNameShell
+	}
+
 	cwd, aibox, err := folders(deps)
 	if err != nil {
 		return err
@@ -126,6 +133,10 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	defer r.close()
 
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
+
+	if name := sessionName(cmd.String("name"), r.config.Name, cwd, home); name != "" {
+		r.env = append(r.env, vm.SessionNameVariable+"="+name)
+	}
 
 	// git in the VM reads the files of the project as git on the host wrote
 	// them, with the line endings the config of the host chose; without it,
@@ -207,6 +218,37 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	reportChanges(deps.stderr, files, takeSnapshot(cwd, watch))
 
 	return err
+}
+
+// sessionName is the name of the Claude Code session: the flag, else the
+// name setting, which may stand for the project's path on the host.
+func sessionName(flag, setting, cwd, home string) string {
+	switch {
+	case flag != "":
+		return flag
+	case setting == config.NamePath:
+		return abbreviateHome(cwd, home)
+	default:
+		return setting
+	}
+}
+
+// abbreviateHome writes the path with ~ for the home folder, as Claude Code
+// shows the folder it runs in.
+func abbreviateHome(path, home string) string {
+	if home == "" {
+		return path
+	}
+
+	if path == home {
+		return "~"
+	}
+
+	if rest, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
+		return "~" + string(filepath.Separator) + rest
+	}
+
+	return path
 }
 
 // identityVariables returns the variables that give git in the VM the

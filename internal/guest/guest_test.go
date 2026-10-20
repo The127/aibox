@@ -630,6 +630,20 @@ func TestCommandResumesTheSessionWhenAsked(t *testing.T) {
 	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md", "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"}, cmd.Args)
 }
 
+func TestCommandNamesTheSessionWhenAsked(t *testing.T) {
+	// arrange
+	tty := newConsoleFile(t)
+	request := session.Request{Term: "xterm", Env: []string{"GOFLAGS=-mod=mod", `AIBOX_SESSION_NAME=~/projects/my "app"`}}
+
+	// act
+	cmd := guest.Command(guest.Options{Console: tty.Name()}, tty, request)
+
+	// assert
+	assert.Equal(t, []string{"/usr/bin/claude", "--append-system-prompt-file", "/run/aibox/prompt.md", "--name", `~/projects/my "app"`}, cmd.Args)
+	assert.Contains(t, cmd.Env, "GOFLAGS=-mod=mod")
+	assert.NotContains(t, strings.Join(cmd.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
 func TestCommandRunsAShellWhenAsked(t *testing.T) {
 	// arrange
 	tty := newConsoleFile(t)

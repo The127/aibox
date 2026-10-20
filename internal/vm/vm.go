@@ -27,6 +27,11 @@ const PortName = "aibox"
 // wl-paste in the VM reach the clipboard of the host.
 const ClipboardPort uint16 = 3132
 
+// SessionNameVariable carries the name of the Claude Code session from the
+// host to the VM, in the environment of the session. The guest takes it out
+// and gives it to Claude Code as --name, so it is no variable of the command.
+const SessionNameVariable = "AIBOX_SESSION_NAME"
+
 // RootCmdline boots the root disk read-only on the virtio console, whichever
 // VMM boots the VM. The root stays read-only, as the VMM opened it: the init
 // mounts an overlay for what it has to write.

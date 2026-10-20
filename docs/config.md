@@ -429,9 +429,11 @@ the name itself:
 name: my app
 ```
 
-`aibox run --name <name>`, or `-n`, names one run, whatever the config says.
-Tasks never get a name, only `aibox run` does. Your `env` can't set
-`AIBOX_SESSION_NAME`, because aibox sets it itself.
+`aibox run --name <name>`, or `-n`, names one run, whatever the config says,
+and `--name ""` leaves one run without a name. A session you go on with
+`--resume` keeps the name it has, unless you pass `--name`. Tasks never get
+a name, only `aibox run` does. Your `env` can't set `AIBOX_SESSION_NAME`,
+because aibox sets it itself.
 
 ## path
 

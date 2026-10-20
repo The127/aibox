@@ -118,6 +118,20 @@ var reservedVariables = []string{
 // path on the host.
 const NamePath = "path"
 
+// ErrBadName is a session name with a control character, which the
+// terminal would act on in its title.
+var ErrBadName = errors.New("a session name must have no control characters")
+
+// CheckName returns ErrBadName unless the name can be the name of a Claude
+// Code session.
+func CheckName(name string) error {
+	if strings.ContainsFunc(name, unicode.IsControl) {
+		return fmt.Errorf("%q: %w", name, ErrBadName)
+	}
+
+	return nil
+}
+
 var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ErrCmdlineFull are mounts and loopback ports that together do not fit on
@@ -848,6 +862,10 @@ func parse(content []byte) (Config, error) {
 
 	if err := checkPorts(cfg.Ports); err != nil {
 		return Config{}, err
+	}
+
+	if err := CheckName(cfg.Name); err != nil {
+		return Config{}, fmt.Errorf("name %w", err)
 	}
 
 	for i, entry := range cfg.Path {

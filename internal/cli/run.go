@@ -107,8 +107,14 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		}
 	}
 
-	if cmd.String("name") != "" && cmd.Bool("shell") {
-		return errNameShell
+	if cmd.IsSet("name") {
+		if cmd.Bool("shell") {
+			return errNameShell
+		}
+
+		if err := config.CheckName(cmd.String("name")); err != nil {
+			return fmt.Errorf("--name %w", err)
+		}
 	}
 
 	cwd, aibox, err := folders(deps)
@@ -134,8 +140,11 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
 
-	if name := sessionName(cmd.String("name"), r.config.Name, cwd, home); name != "" {
-		r.env = append(r.env, vm.SessionNameVariable+"="+name)
+	// a shell has no session to name, and would get the variable
+	if !cmd.Bool("shell") {
+		if name := sessionName(cmd, r.config.Name, cwd, home); name != "" {
+			r.env = append(r.env, vm.SessionNameVariable+"="+name)
+		}
 	}
 
 	// git in the VM reads the files of the project as git on the host wrote
@@ -220,12 +229,16 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	return err
 }
 
-// sessionName is the name of the Claude Code session: the flag, else the
-// name setting, which may stand for the project's path on the host.
-func sessionName(flag, setting, cwd, home string) string {
+// sessionName is the name of the Claude Code session: the --name flag, also
+// an empty one, else the name setting, which may stand for the project's
+// path on the host. A session that goes on keeps the name it has, so a
+// --resume without --name gives none.
+func sessionName(cmd *cli.Command, setting, cwd, home string) string {
 	switch {
-	case flag != "":
-		return flag
+	case cmd.IsSet("name"):
+		return cmd.String("name")
+	case cmd.String("resume") != "":
+		return ""
 	case setting == config.NamePath:
 		return abbreviateHome(cwd, home)
 	default:
@@ -234,21 +247,15 @@ func sessionName(flag, setting, cwd, home string) string {
 }
 
 // abbreviateHome writes the path with ~ for the home folder, as Claude Code
-// shows the folder it runs in.
+// shows the folder it runs in. Both are taken as they resolve, so a link
+// or a trailing separator in either does not keep them apart.
 func abbreviateHome(path, home string) string {
-	if home == "" {
+	rel, err := filepath.Rel(realpath.Resolved(home), realpath.Resolved(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return path
 	}
 
-	if path == home {
-		return "~"
-	}
-
-	if rest, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
-		return "~" + string(filepath.Separator) + rest
-	}
-
-	return path
+	return filepath.Join("~", rel)
 }
 
 // identityVariables returns the variables that give git in the VM the

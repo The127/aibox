@@ -326,6 +326,18 @@ func TestLoadReadsTheName(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsANameWithAControlCharacter(t *testing.T) {
+	// arrange
+	path := write(t, "name: \"app\\e]0;owned\\a\"\n")
+
+	// act
+	_, err := config.Load(path, "")
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrBadName)
+	assert.ErrorContains(t, err, "name")
+}
+
 func TestLoadReadsThePath(t *testing.T) {
 	// arrange
 	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n  - PATH\n  - DIRENV_PATH\n")

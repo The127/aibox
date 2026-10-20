@@ -238,6 +238,75 @@ func TestRunNamesTheSessionAfterTheProjectPathWhenTheConfigSaysPath(t *testing.T
 	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME="+filepath.Join("~", "projects", "my-app"))
 }
 
+func TestRunNamesTheSessionNotWithAnEmptyFlag(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image, "--name", "")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunLeavesAResumedSessionItsName(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image, "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunRenamesAResumedSessionWithTheFlag(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "--name", "release fix")
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME=release fix")
+}
+
+func TestRunGivesAShellNoSessionName(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image, "--shell")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunRefusesANameWithAControlCharacter(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--name", "app\x1b]0;owned\a")
+
+	// assert
+	require.ErrorIs(t, err, config.ErrBadName)
+	assert.ErrorContains(t, err, "--name")
+	assert.False(t, f.launch.called)
+}
+
 func TestRunNamesTheSessionNotWithoutAName(t *testing.T) {
 	// arrange
 	f := newFixture(t)
@@ -265,23 +334,43 @@ func TestRunRefusesNameWithShell(t *testing.T) {
 }
 
 func TestAbbreviateHome(t *testing.T) {
-	home := filepath.Join(string(filepath.Separator), "home", "me")
-	tests := map[string]string{
-		filepath.Join(home, "projects", "my-app"): filepath.Join("~", "projects", "my-app"),
-		home: "~",
-		filepath.Join(string(filepath.Separator), "work"):                filepath.Join(string(filepath.Separator), "work"),
-		filepath.Join(string(filepath.Separator), "home", "meow", "app"): filepath.Join(string(filepath.Separator), "home", "meow", "app"),
+	root := string(filepath.Separator)
+	home := filepath.Join(root, "home", "me")
+	tests := map[string]struct {
+		path, home, want string
+	}{
+		"a project in the home":                      {filepath.Join(home, "projects", "my-app"), home, filepath.Join("~", "projects", "my-app")},
+		"the home itself":                            {home, home, "~"},
+		"a home with a trailing separator":           {filepath.Join(home, "projects", "my-app"), home + root, filepath.Join("~", "projects", "my-app")},
+		"a project with a trailing separator":        {filepath.Join(home, "projects", "my-app") + root, home, filepath.Join("~", "projects", "my-app")},
+		"a project outside the home":                 {filepath.Join(root, "work"), home, filepath.Join(root, "work")},
+		"a folder whose name starts with the home's": {filepath.Join(root, "home", "meow", "app"), home, filepath.Join(root, "home", "meow", "app")},
+		"the folder above the home":                  {filepath.Join(root, "home"), home, filepath.Join(root, "home")},
 	}
 
-	for path, want := range tests {
-		t.Run(path, func(t *testing.T) {
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
 			// act
-			got := abbreviateHome(path, home)
+			got := abbreviateHome(test.path, test.home)
 
 			// assert
-			assert.Equal(t, want, got)
+			assert.Equal(t, test.want, got)
 		})
 	}
+}
+
+func TestAbbreviateHomeFollowsALinkToTheHome(t *testing.T) {
+	// arrange
+	home := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home")
+	require.NoError(t, os.Symlink(home, link))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "projects", "my-app"), 0o700))
+
+	// act
+	got := abbreviateHome(filepath.Join(link, "projects", "my-app"), home)
+
+	// assert
+	assert.Equal(t, filepath.Join("~", "projects", "my-app"), got)
 }
 
 func TestRunWithResume(t *testing.T) {

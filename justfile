@@ -30,6 +30,13 @@ vm-arch := if os() == "macos" { "arm64" } else { "amd64" }
 init arch=vm-arch:
     GOOS=linux GOARCH={{arch}} CGO_ENABLED=0 go build -o image/aibox-init ./cmd/aibox-init
 
+# copy the docs into image/docs, which the image copies in for Claude Code in
+# the VM to read. SUMMARY.md is the table of contents of the site only.
+image-docs:
+    rm -rf image/docs
+    mkdir -p image/docs
+    for f in docs/*.md; do [ "$f" = docs/SUMMARY.md ] || cp "$f" image/docs/; done
+
 # build the VM image into out/
 [linux]
 image: image-kernel image-root
@@ -41,12 +48,12 @@ image-kernel:
 
 # build the root disk of the VM image for amd64 into out/
 [linux]
-image-root: init
+image-root: init image-docs
     miso build -o out image
 
 # build the VM image for arm64 into out/, with Apple's container tool until miso runs on macOS
 [macos]
-image: init
+image: init image-docs
     rm -rf out/build
     container build --file image/kernel.Containerfile --target out --output type=local,dest=out/build/kernel --cpus 8 --memory 8g image
     container build --file image/Containerfile --target out --output type=local,dest=out/build/root --cpus 8 --memory 8g image
@@ -65,7 +72,7 @@ image-docker-arm64: image-docker-arm64-kernel image-docker-arm64-root
 image-docker-arm64-kernel: (docker-build "kernel.Containerfile" "vmlinuz")
 
 # build the root disk of the VM image for arm64 into out/ with docker
-image-docker-arm64-root: (init "arm64") (docker-build "Containerfile" "os.ext4")
+image-docker-arm64-root: (init "arm64") image-docs (docker-build "Containerfile" "os.ext4")
 
 # docker writes into a folder of its own, so that a build leaves the other files in out/ as they are
 [private]

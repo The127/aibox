@@ -69,7 +69,9 @@ On Linux, `just image` builds the image for amd64 with
 [miso](https://github.com/The127/miso), which needs `/dev/kvm`. It builds the
 kernels from `image/kernel.Imagefile` and the root disk from
 `image/Imagefile`. `just image-kernel` and `just image-root` build one of the
-two.
+two. Before the root disk, `just image-docs` copies the pages of `docs/` into
+`image/docs/`, which the image puts at `/usr/share/doc/aibox` for Claude
+Code in the VM to read.
 
 On macOS, miso does not run yet, so `just image` builds the image for arm64
 with Apple's [container](https://github.com/apple/container) tool from

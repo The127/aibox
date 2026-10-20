@@ -57,6 +57,19 @@ func mistype(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+func TestHelpPointsToTheDocumentation(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {}} {
+		t.Run(fmt.Sprint(args), func(t *testing.T) {
+			// act
+			out, err := mistype(t, args...)
+
+			// assert
+			require.NoError(t, err)
+			assert.Contains(t, out, "The documentation is at https://the127.github.io/aibox")
+		})
+	}
+}
+
 func TestMistypedCommandNamesTheClosestOne(t *testing.T) {
 	// act
 	_, err := mistype(t, "rnu")

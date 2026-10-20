@@ -44,6 +44,8 @@ var errNoTerminal = errors.New("run needs a terminal on stdin")
 
 var errResumeShell = errors.New("--resume goes on with a session of Claude Code, so it does not go with --shell")
 
+var errNameShell = errors.New("--name names a session of Claude Code, so it does not go with --shell")
+
 // The project folder is shared into the VM read-write. From the home or
 // above it the VM would get the configs and logins of every project, the
 // shell files and keys of the person, and could change its own allow list.
@@ -67,6 +69,7 @@ func runCommand(deps dependencies) *cli.Command {
 		Flags: append(vmFlags(),
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
 			&cli.StringFlag{Name: "resume", Usage: "go on with the Claude Code session with this ID"},
+			&cli.StringFlag{Name: "name", Aliases: []string{"n"}, Usage: "name the Claude Code session, instead of what the name setting of the config says"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -104,6 +107,16 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 		}
 	}
 
+	if cmd.IsSet("name") {
+		if cmd.Bool("shell") {
+			return errNameShell
+		}
+
+		if err := config.CheckName(cmd.String("name")); err != nil {
+			return fmt.Errorf("--name %w", err)
+		}
+	}
+
 	cwd, aibox, err := folders(deps)
 	if err != nil {
 		return err
@@ -126,6 +139,13 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	defer r.close()
 
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
+
+	// a shell has no session to name, and would get the variable
+	if !cmd.Bool("shell") {
+		if name := sessionName(cmd, r.config.Name, cwd, home); name != "" {
+			r.env = append(r.env, vm.SessionNameVariable+"="+name)
+		}
+	}
 
 	// git in the VM reads the files of the project as git on the host wrote
 	// them, with the line endings the config of the host chose; without it,
@@ -207,6 +227,35 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	reportChanges(deps.stderr, files, takeSnapshot(cwd, watch))
 
 	return err
+}
+
+// sessionName is the name of the Claude Code session: the --name flag, also
+// an empty one, else the name setting, which may stand for the project's
+// path on the host. A session that goes on keeps the name it has, so a
+// --resume without --name gives none.
+func sessionName(cmd *cli.Command, setting, cwd, home string) string {
+	switch {
+	case cmd.IsSet("name"):
+		return cmd.String("name")
+	case cmd.String("resume") != "":
+		return ""
+	case setting == config.NamePath:
+		return abbreviateHome(cwd, home)
+	default:
+		return setting
+	}
+}
+
+// abbreviateHome writes the path with ~ for the home folder, as Claude Code
+// shows the folder it runs in. Both are taken as they resolve, so a link
+// or a trailing separator in either does not keep them apart.
+func abbreviateHome(path, home string) string {
+	rel, err := filepath.Rel(realpath.Resolved(home), realpath.Resolved(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+
+	return filepath.Join("~", rel)
 }
 
 // identityVariables returns the variables that give git in the VM the

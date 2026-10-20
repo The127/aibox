@@ -310,6 +310,34 @@ func TestLoadReadsWhetherTheIDEIsTurnedOn(t *testing.T) {
 	}
 }
 
+func TestLoadReadsTheName(t *testing.T) {
+	for content, want := range map[string]string{"name: path\n": "path", "name: network config\n": "network config", "": ""} {
+		t.Run(content, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			cfg, err := config.Load(path, "")
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, want, cfg.Name)
+		})
+	}
+}
+
+func TestLoadRejectsANameWithAControlCharacter(t *testing.T) {
+	// arrange
+	path := write(t, "name: \"app\\e]0;owned\\a\"\n")
+
+	// act
+	_, err := config.Load(path, "")
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrBadName)
+	assert.ErrorContains(t, err, "name")
+}
+
 func TestLoadReadsThePath(t *testing.T) {
 	// arrange
 	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n  - PATH\n  - DIRENV_PATH\n")
@@ -454,7 +482,7 @@ func TestLoadRejectsAVariableItCannotRead(t *testing.T) {
 }
 
 func TestLoadRejectsAVariableAiboxSetsItself(t *testing.T) {
-	for _, name := range []string{"HOME", "PATH", "TERM", "HTTPS_PROXY", "no_proxy", "AIBOX", "USER", "GOMODCACHE"} {
+	for _, name := range []string{"HOME", "PATH", "TERM", "HTTPS_PROXY", "no_proxy", "AIBOX", "USER", "GOMODCACHE", "AIBOX_SESSION_NAME"} {
 		t.Run(name, func(t *testing.T) {
 			// arrange
 			path := write(t, "env:\n  - "+name+"=x\n")

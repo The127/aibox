@@ -409,6 +409,32 @@ elsewhere off. To change that, set:
 paste-alt-v: false
 ```
 
+## name
+
+Claude Code shows the folder it runs in at the top right of the prompt box
+and in the terminal title. In the VM that's always `/project`, so every
+session looks the same. To name the session after the project's path on
+your machine instead, set:
+
+```yaml
+name: path
+```
+
+The session then shows `~/projects/my-app`, like Claude Code does outside
+the VM. This is off by default, because the VM doesn't otherwise know where
+your project is, and the path has your user name in it. Any other text is
+the name itself:
+
+```yaml
+name: my app
+```
+
+`aibox run --name <name>`, or `-n`, names one run, whatever the config says,
+and `--name ""` leaves one run without a name. A session you go on with
+`--resume` keeps the name it has, unless you pass `--name`. Tasks never get
+a name, only `aibox run` does. Your `env` can't set `AIBOX_SESSION_NAME`,
+because aibox sets it itself.
+
 ## path
 
 Folders in the VM to put in front of its `PATH`, for Claude Code and the

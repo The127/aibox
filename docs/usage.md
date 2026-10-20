@@ -31,6 +31,7 @@ all your files.
 |---|---|
 | `--shell` | Opens a shell in the VM instead of Claude Code. |
 | `--resume <id>` | Goes on with the Claude Code session that has this ID. When you quit Claude Code, aibox prints the command to go on with the session you were in. |
+| `--name <name>`, `-n` | Names the Claude Code session. Claude Code shows the name in the prompt box, the `/resume` picker and the terminal title. With `--resume`, it renames the session. To name every run, set [`name`](config.md#name) in the config. |
 | `--memory` | Sets the VM's memory in MiB. The default is 2048, or what the config says. |
 | `--cpus` | Sets the VM's number of CPUs. The default is 2, or what the config says. |
 | `--image` | Boots a folder with `vmlinuz` and `os.ext4` instead of the image your package installed or aibox downloaded. aibox doesn't check its kernel. |

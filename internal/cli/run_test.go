@@ -189,6 +189,190 @@ func TestRunWithShell(t *testing.T) {
 	assert.True(t, f.launch.spec.Shell)
 }
 
+func TestRunNamesTheSessionWithTheFlag(t *testing.T) {
+	for _, flag := range []string{"--name", "-n"} {
+		t.Run(flag, func(t *testing.T) {
+			// arrange
+			f := newFixture(t)
+			image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+			f.writeConfig(t, "name: from the config\n")
+
+			// act
+			err := f.run("--image", image, flag, `my "session"`)
+
+			// assert
+			require.NoError(t, err)
+			assert.Contains(t, f.launch.spec.Env, `AIBOX_SESSION_NAME=my "session"`)
+			assert.NotContains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME=from the config")
+		})
+	}
+}
+
+func TestRunNamesTheSessionAsTheConfigSays(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: network config\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME=network config")
+}
+
+func TestRunNamesTheSessionAfterTheProjectPathWhenTheConfigSaysPath(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.cwd = filepath.Join(f.homeDir, "projects", "my-app")
+	require.NoError(t, os.MkdirAll(f.cwd, 0o700))
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME="+filepath.Join("~", "projects", "my-app"))
+}
+
+func TestRunNamesTheSessionNotWithAnEmptyFlag(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image, "--name", "")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunLeavesAResumedSessionItsName(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image, "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunRenamesAResumedSessionWithTheFlag(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--resume", "0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "--name", "release fix")
+
+	// assert
+	require.NoError(t, err)
+	assert.Contains(t, f.launch.spec.Env, "AIBOX_SESSION_NAME=release fix")
+}
+
+func TestRunGivesAShellNoSessionName(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+	f.writeConfig(t, "name: path\n")
+
+	// act
+	err := f.run("--image", image, "--shell")
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunRefusesANameWithAControlCharacter(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--name", "app\x1b]0;owned\a")
+
+	// assert
+	require.ErrorIs(t, err, config.ErrBadName)
+	assert.ErrorContains(t, err, "--name")
+	assert.False(t, f.launch.called)
+}
+
+func TestRunNamesTheSessionNotWithoutAName(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(f.launch.spec.Env, "\n"), "AIBOX_SESSION_NAME")
+}
+
+func TestRunRefusesNameWithShell(t *testing.T) {
+	// arrange
+	f := newFixture(t)
+	image := writeImage(t, t.TempDir(), "vmlinuz", "os.ext4")
+
+	// act
+	err := f.run("--image", image, "--shell", "--name", "my session")
+
+	// assert
+	require.ErrorIs(t, err, errNameShell)
+	assert.False(t, f.launch.called)
+}
+
+func TestAbbreviateHome(t *testing.T) {
+	root := string(filepath.Separator)
+	home := filepath.Join(root, "home", "me")
+	tests := map[string]struct {
+		path, home, want string
+	}{
+		"a project in the home":                      {filepath.Join(home, "projects", "my-app"), home, filepath.Join("~", "projects", "my-app")},
+		"the home itself":                            {home, home, "~"},
+		"a home with a trailing separator":           {filepath.Join(home, "projects", "my-app"), home + root, filepath.Join("~", "projects", "my-app")},
+		"a project with a trailing separator":        {filepath.Join(home, "projects", "my-app") + root, home, filepath.Join("~", "projects", "my-app")},
+		"a project outside the home":                 {filepath.Join(root, "work"), home, filepath.Join(root, "work")},
+		"a folder whose name starts with the home's": {filepath.Join(root, "home", "meow", "app"), home, filepath.Join(root, "home", "meow", "app")},
+		"the folder above the home":                  {filepath.Join(root, "home"), home, filepath.Join(root, "home")},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// act
+			got := abbreviateHome(test.path, test.home)
+
+			// assert
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
+func TestAbbreviateHomeFollowsALinkToTheHome(t *testing.T) {
+	// arrange
+	home := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home")
+	require.NoError(t, os.Symlink(home, link))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "projects", "my-app"), 0o700))
+
+	// act
+	got := abbreviateHome(filepath.Join(link, "projects", "my-app"), home)
+
+	// assert
+	assert.Equal(t, filepath.Join("~", "projects", "my-app"), got)
+}
+
 func TestRunWithResume(t *testing.T) {
 	// arrange
 	f := newFixture(t)

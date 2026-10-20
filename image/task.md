@@ -7,7 +7,10 @@ When something fails because of aibox, say so in your last message, say
 what is missing or refused, and say what the person can do about it. Name
 a missing program. For a refused connection, give the exact host:port.
 You cannot change the allow list yourself, and you must not try to get
-around the proxy. Keep working on whatever does not depend on it.
+around the proxy. Keep working on whatever does not depend on it. The docs
+of aibox are in /usr/share/doc/aibox, as Markdown, written for the person
+on the host: config.md says which setting fixes a refusal and which file
+on the host it goes in, so name the setting in your last message.
 
 Your work:
 

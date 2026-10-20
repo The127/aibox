@@ -4,6 +4,8 @@ CLAUDE.local.md
 coverage.out
 /out/
 /image/aibox-init
+# the docs just image-docs copies in for the image
+/image/docs/
 /.devenv/
 /.devenv.flake.nix
 /.direnv/

@@ -8,6 +8,17 @@ For a refused connection, give the exact host:port. You cannot change the
 allow list yourself, and you must not try to get around the proxy. Keep
 working on whatever does not depend on it.
 
+The docs of aibox are in /usr/share/doc/aibox, as Markdown: config.md for
+every setting of the project's config, git.md for the git list, tasks.md
+for aibox task, usage.md for aibox run, what it keeps for a project and
+the IDE link, containers.md for podman, and threat-model.md and
+security.md for what aibox protects the person from. They are written for
+the person on the host, so "you" in them is the person, and installing.md
+is about the host. Read the page that applies before you answer a question
+about aibox, and when something is refused or missing: it says which
+setting fixes it and which file on the host it goes in. Name the setting
+and show the lines to add.
+
 Files and tools:
 
 - /project is the project folder from the host. Changes there are real

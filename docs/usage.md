@@ -37,6 +37,14 @@ all your files.
 | `--image` | Boots a folder with `vmlinuz` and `os.ext4` instead of the image your package installed or aibox downloaded. aibox doesn't check its kernel. |
 | `--no-sandbox` | Runs QEMU without its bubblewrap sandbox, for debugging. Linux only. |
 
+## Asking Claude Code about aibox
+
+The VM has these docs in `/usr/share/doc/aibox`, and Claude Code knows
+they are there. So when something is refused or missing, or you wonder how
+a setting works, ask Claude Code in the VM. It reads the page and tells you
+which setting to change and which file it's in. It can't change the config
+itself, since the config lives on your machine.
+
 ## What aibox keeps for a project
 
 Each project gets a folder in `~/.aibox/projects`, named after the project's

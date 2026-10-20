@@ -77,6 +77,9 @@ COPY gitconfig /etc/gitconfig
 COPY containers/ /etc/containers/
 COPY aibox.md /etc/aibox/prompt.md
 COPY task.md /etc/aibox/task.md
+# the docs of aibox, which just image-docs copies into image/docs, for
+# Claude Code to answer questions about aibox from
+COPY docs/ /usr/share/doc/aibox/
 # the part of the host each prompt ends with: the init picks the one of
 # Windows on Hyper-V, and the one of Linux elsewhere
 COPY host/linux.md /etc/aibox/host.md

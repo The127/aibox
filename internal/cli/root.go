@@ -126,8 +126,10 @@ func NewRootCommand() *cli.Command {
 
 func newRootCommand(deps dependencies) *cli.Command {
 	root := &cli.Command{
-		Name:     "aibox",
-		Usage:    "run Claude Code inside a microVM",
+		Name:  "aibox",
+		Usage: "run Claude Code inside a microVM",
+		Description: "The documentation is at https://the127.github.io/aibox: installing, the config,\n" +
+			"tasks, git, containers, and what aibox protects you from and what it doesn't.",
 		Version:  version.Get(),
 		Commands: append([]*cli.Command{runCommand(deps), taskCommand(deps), tasksCommand(deps), projectsCommand(deps), configCommand(deps), clipboardCommand(), fenceCommand()}, platformCommands(deps)...),
 	}

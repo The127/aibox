@@ -5,6 +5,10 @@
 Let [Claude Code](https://code.claude.com) work on your project without
 giving it your whole computer.
 
+The documentation is at <https://the127.github.io/aibox>: installing,
+the config, tasks, git, containers, and what aibox protects you from and
+what it doesn't.
+
 aibox runs Claude Code in a small virtual machine that only sees the folders
 you share and only reaches the hosts you allow. The VM has its own kernel and
 no network card. Its only way to the network is a proxy on your machine that

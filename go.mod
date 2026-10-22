@@ -1,6 +1,6 @@
 module github.com/the127/aibox
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/BurntSushi/toml v0.4.1 // indirect

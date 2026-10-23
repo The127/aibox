@@ -125,6 +125,33 @@ jobs:
             mkdir -p "$RUNNER_TEMP/mounts/m$i"
             echo "content $i" > "$RUNNER_TEMP/mounts/m$i/file"
           done
+      # the console is a virtio device, so a kernel that finds no virtio
+      # devices says nothing there. A QEMU wrapper turns on early output to
+      # the serial port, which needs no driver
+      - name: boot the ACPI kernel once with early output on the serial port
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/debug-bin"
+          cat > "$RUNNER_TEMP/debug-bin/qemu-system-x86_64" <<EOF
+          #!/bin/bash
+          args=()
+          while [ \$# -gt 0 ]; do
+            if [ "\$1" = -append ]; then
+              args+=(-append "\${2/ quiet/} earlyprintk=ttyS0,keep loglevel=8 ignore_loglevel")
+              shift 2
+              continue
+            fi
+            args+=("\$1")
+            shift
+          done
+          echo "QEMU \${args[*]}" > "$RUNNER_TEMP/debug-qemu-args"
+          exec $HOME/.nix-profile/bin/qemu-system-x86_64 "\${args[@]}" -serial file:$RUNNER_TEMP/serial.out
+          EOF
+          chmod +x "$RUNNER_TEMP/debug-bin/qemu-system-x86_64"
+          echo exit | PATH="$RUNNER_TEMP/debug-bin:$PATH" timeout 60 "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/debug "$RUNNER_TEMP/debug.log" --no-sandbox || true
+          cat "$RUNNER_TEMP/debug-qemu-args" || true
+          echo '--- serial'
+          cat "$RUNNER_TEMP/serial.out" || true
       - name: boot each once, so that the state disk exists for the timing
         run: |
           echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-main" "$RUNNER_TEMP/image-main" ~/time-main "$RUNNER_TEMP/warm-main.log" --no-sandbox

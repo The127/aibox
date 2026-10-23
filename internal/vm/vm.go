@@ -156,8 +156,9 @@ func (m Machine) QEMUArgs(files Files) []string {
 
 	args := []string{
 		// Without an RTC the kernel spends seconds at boot waiting for the
-		// time. Option ROMs would be files QEMU reads from the host.
-		"-machine", "microvm,rtc=on,memory-backend=mem,x-option-roms=off",
+		// time. With ACPI, the firmware is SeaBIOS, which loads the kernel
+		// through an option ROM.
+		"-machine", "microvm,rtc=on,memory-backend=mem",
 		"-add-fd", fdset(files.KVM, kvmSet),
 		"-accel", "kvm,device=" + fdsetPath(kvmSet),
 		"-cpu", "host",

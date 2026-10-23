@@ -131,7 +131,8 @@ jobs:
       # devices says nothing there. A QEMU wrapper turns on early output to
       # the serial port, which needs no driver. Main's aibox has acpi=off, so
       # the two binaries and two images make all four pairs
-      - name: boot the old and the new kernel, with ACPI and without
+      - name: boot the new kernel with ACPI and early output
+        continue-on-error: true
         run: |
           mkdir -p "$RUNNER_TEMP/debug-bin"
           cat > "$RUNNER_TEMP/debug-bin/qemu-system-x86_64" <<'EOF'
@@ -149,8 +150,8 @@ jobs:
           exec "$HOME/.nix-profile/bin/qemu-system-x86_64" "${args[@]}" -serial "file:$SERIAL_OUT"
           EOF
           chmod +x "$RUNNER_TEMP/debug-bin/qemu-system-x86_64"
-          for binary in main acpi; do
-            for image in main acpi; do
+          for binary in acpi; do
+            for image in acpi; do
               name="binary-$binary-image-$image"
               echo exit | SERIAL_OUT="$RUNNER_TEMP/$name.serial" PATH="$RUNNER_TEMP/debug-bin:$PATH" \
                 timeout 40 "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$binary" "$RUNNER_TEMP/image-$image" ~/$name "$RUNNER_TEMP/$name.log" --no-sandbox || true
@@ -158,8 +159,6 @@ jobs:
               head -c 200000 "$RUNNER_TEMP/$name.serial" | tail -n 80 || true
             done
           done
-          # only the four boots are of interest for now
-          exit 1
       - name: boot each once, so that the state disk exists for the timing
         run: |
           echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-main" "$RUNNER_TEMP/image-main" ~/time-main "$RUNNER_TEMP/warm-main.log" --no-sandbox

@@ -116,10 +116,11 @@ root read-only again. In the VM, only `/tmp`, `/run`, `/dev/shm`, the home,
 the project and the state disk can be written to.
 
 The kernel has no modules, no network drivers, no `bpf()` syscall, no ftrace
-and no kprobes. The kernel QEMU boots on amd64 has no PCI and no ACPI either.
-The arm64 kernel has them. The amd64 image also carries `vmlinuz-hyperv`, a
-kernel for Hyper-V on Windows, which needs both; Linux never boots it. On
-Windows the shares are 9p, served by aibox itself, which enforces the
+and no kprobes. It has ACPI and PCI, but QEMU on Linux gives the VM no PCI
+devices. ACPI is what lets QEMU give the VM more than 8 virtio devices, and
+the kernel can only load the ACPI tables with PCI. The amd64 image also
+carries `vmlinuz-hyperv`, a kernel for Hyper-V on Windows. Linux never boots
+it. On Windows the shares are 9p, served by aibox itself, which enforces the
 read-only ones as virtio-fs does elsewhere.
 
 ### The network
@@ -188,9 +189,10 @@ file system. Its only environment variable is `LD_LIBRARY_PATH`, which
 names the folders its libraries are in. It only sees its own program,
 libraries and firmware and a copy of the kernel. Before QEMU starts, aibox
 asks your system's loader which libraries QEMU loads and binds only those
-files. Devices, disks and sockets come in as open files from aibox. QEMU
-also filters its own syscalls. `aibox run --no-sandbox` runs it without
-bubblewrap, for debugging.
+files. It also asks QEMU which folders it loads firmware from, and binds
+only the two firmware files the VM boots with. Devices, disks and sockets
+come in as open files from aibox. QEMU also filters its own syscalls.
+`aibox run --no-sandbox` runs it without bubblewrap, for debugging.
 
 Once QEMU runs, aibox locks itself down too. It gives up the right to gain
 new privileges. Landlock rules only let it read `/etc` for DNS, the project

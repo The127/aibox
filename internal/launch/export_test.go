@@ -20,10 +20,11 @@ func Start(cmd *exec.Cmd) error {
 	return start(cmd)
 }
 
-// Firmware is the firmware of the QEMU at the path, as Run binds it into
-// the sandbox when the options name none.
-func Firmware(qemu string) string {
-	return firmware(qemu)
+// FirmwareIn is the firmware QEMU loads, each file from the first of the
+// folders that has it, as Run binds it into the sandbox when the options
+// name none.
+func FirmwareIn(dirs []string) ([]string, error) {
+	return firmwareIn(dirs)
 }
 
 // Libraries are the loader and the libraries of the program, as Run binds

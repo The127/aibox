@@ -149,16 +149,20 @@ const (
 	stateSet  = 3
 )
 
+// MaxShares is how many shares fit into the 24 virtio slots of QEMU's
+// microvm, next to the console, the two disks and vsock.
+const MaxShares = 20
+
 // QEMUArgs returns the arguments for qemu-system-x86_64. QEMU gets every
 // file through the numbers in files, so that it opens no path of the host.
 func (m Machine) QEMUArgs(files Files) []string {
 	memory := strconv.Itoa(m.MemoryMiB) + "M"
 
 	args := []string{
-		// the kernel has no ACPI, see image/microvm.config. Without an RTC the
-		// kernel spends seconds at boot waiting for the time. Option ROMs would
-		// be files QEMU reads from the host.
-		"-machine", "microvm,acpi=off,rtc=on,memory-backend=mem,x-option-roms=off",
+		// Without an RTC the kernel spends seconds at boot waiting for the
+		// time. With ACPI, the firmware is SeaBIOS, which loads the kernel
+		// through an option ROM.
+		"-machine", "microvm,rtc=on,memory-backend=mem",
 		"-add-fd", fdset(files.KVM, kvmSet),
 		"-accel", "kvm,device=" + fdsetPath(kvmSet),
 		"-cpu", "host",

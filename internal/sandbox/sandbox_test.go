@@ -13,7 +13,7 @@ func spec() sandbox.Spec {
 		Bubblewrap: "/usr/bin/bwrap",
 		Program:    "/usr/bin/qemu-system-x86_64",
 		Libraries:  []string{"/lib64/ld-linux-x86-64.so.2", "/usr/lib/libc.so.6", "/usr/lib/libz.so.1"},
-		Firmware:   "/usr/share/qemu/qboot.rom",
+		Firmware:   []string{"/usr/share/seabios/bios-microvm.bin", "/usr/share/qemu/linuxboot_dma.bin"},
 		KernelFD:   5,
 	}
 }
@@ -31,7 +31,8 @@ func TestCommandRunsTheProgramInBubblewrapWithNothingButWhatItNeeds(t *testing.T
 		"--ro-bind", "/usr/lib/libz.so.1", "/usr/lib/libz.so.1",
 		"--setenv", "LD_LIBRARY_PATH", "/lib64:/usr/lib",
 		"--ro-bind", "/usr/bin/qemu-system-x86_64", "/usr/bin/qemu-system-x86_64",
-		"--ro-bind", "/usr/share/qemu/qboot.rom", "/usr/share/qemu/qboot.rom",
+		"--ro-bind", "/usr/share/seabios/bios-microvm.bin", "/usr/share/seabios/bios-microvm.bin",
+		"--ro-bind", "/usr/share/qemu/linuxboot_dma.bin", "/usr/share/qemu/linuxboot_dma.bin",
 		"--ro-bind-data", "5", "/kernel",
 		"--dev-bind", "/dev/null", "/dev/null",
 		"--",

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,7 +92,7 @@ type fakeProcesses struct {
 	env              []string
 	consoleLog       string
 	libraries        []string
-	firmware         string
+	firmware         []string
 	ports            []uint16
 	confinedWith     []uint16
 	read             []string
@@ -116,7 +117,11 @@ func fakes(t *testing.T) *fakeProcesses {
 	require.NoError(t, os.Symlink(self, f.virtiofsd))
 	require.NoError(t, os.Symlink(self, f.aibox))
 	require.NoError(t, os.Mkdir(f.records, 0o700))
-	require.NoError(t, os.WriteFile(f.firmware, nil, 0o600))
+
+	for _, file := range f.firmware {
+		require.NoError(t, os.WriteFile(file, nil, 0o600))
+	}
+
 	t.Setenv("AIBOX_FAKE_RECORDS", f.records)
 	t.Setenv("AIBOX_FAKE_DIR", dir)
 
@@ -133,7 +138,7 @@ func fakesIn(dir string) *fakeProcesses {
 		records:          filepath.Join(dir, "records"),
 		consoleLog:       filepath.Join(dir, "console.log"),
 		libraries:        []string{filepath.Join(dir, "libqemu.so")},
-		firmware:         filepath.Join(dir, "qboot.rom"),
+		firmware:         []string{filepath.Join(dir, "bios-microvm.bin"), filepath.Join(dir, "linuxboot_dma.bin")},
 		proxyListener:    make(chan net.Listener, 1),
 		terminalListener: make(chan net.Listener, 1),
 	}
@@ -407,6 +412,13 @@ func fakeBwrap(args []string) {
 // fakeQEMU records the descriptors it was given, what kind of file each is,
 // and prints a line on the console.
 func fakeQEMU(args []string) int {
+	// QEMU lists the folders it finds its firmware in, one on each line
+	if slices.Equal(args, []string{"-L", "help"}) {
+		fmt.Println(os.Getenv("AIBOX_FAKE_DATA_DIRS"))
+
+		return 0
+	}
+
 	// the signal may come right after the start
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM)

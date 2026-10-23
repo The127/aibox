@@ -17,12 +17,12 @@ const Kernel = "/kernel"
 // Spec is what QEMU needs inside the sandbox: the programs and files of
 // the host that are bound in, and the number of the inherited file
 // bubblewrap copies the kernel from. Libraries are the loader and the
-// libraries of the program.
+// libraries of the program, Firmware the files QEMU loads into the VM.
 type Spec struct {
 	Bubblewrap string
 	Program    string
 	Libraries  []string
-	Firmware   string
+	Firmware   []string
 	KernelFD   int
 }
 
@@ -50,9 +50,13 @@ func (s Spec) Command(args []string) (string, []string) {
 	// folders it would not search on its own
 	wrapped = append(wrapped, "--setenv", "LD_LIBRARY_PATH", strings.Join(folders, ":"))
 
+	wrapped = append(wrapped, "--ro-bind", s.Program, s.Program)
+
+	for _, file := range s.Firmware {
+		wrapped = append(wrapped, "--ro-bind", file, file)
+	}
+
 	wrapped = append(wrapped,
-		"--ro-bind", s.Program, s.Program,
-		"--ro-bind", s.Firmware, s.Firmware,
 		"--ro-bind-data", strconv.Itoa(s.KernelFD), Kernel,
 		// QEMU probes file locking on /dev/null at start
 		"--dev-bind", "/dev/null", "/dev/null",

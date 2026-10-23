@@ -66,7 +66,8 @@ jobs:
           "$HOME/.nix-profile/bin/qemu-system-x86_64" --version
       - name: build aibox of main and of this branch
         run: |
-          CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-acpi" ./cmd/aibox
+          git worktree add "$RUNNER_TEMP/pr" origin/feat/acpi-slots
+          (cd "$RUNNER_TEMP/pr" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-acpi" ./cmd/aibox)
           git worktree add "$RUNNER_TEMP/main" origin/main
           (cd "$RUNNER_TEMP/main" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-main" ./cmd/aibox)
       - name: build the kernel with ACPI
@@ -166,22 +167,38 @@ jobs:
       # the input stays open after exit, so the time comes from the shell in
       # the VM: its clock against the start on the runner, which kvmclock
       # keeps close, and the uptime of its kernel
-      # the sandbox has to bind every file QEMU loads, which its trace names
-      - name: list the files QEMU loads, with ACPI and without
+      # QEMU finds its firmware next to its own path. From the profile, the
+      # sandbox shows it at the profile path, so the second run puts the
+      # QEMU of the store first on the PATH
+      - name: run the pull request in the sandbox, from the profile and from the store
+        continue-on-error: true
         run: |
-          "$HOME/.nix-profile/bin/qemu-system-x86_64" -L help
-          mkdir -p "$RUNNER_TEMP/trace-bin"
-          cat > "$RUNNER_TEMP/trace-bin/qemu-system-x86_64" <<'EOF'
-          #!/bin/bash
-          exec "$HOME/.nix-profile/bin/qemu-system-x86_64" "$@" -trace load_file -trace 'rom_*' -D "$TRACE_OUT"
-          EOF
-          chmod +x "$RUNNER_TEMP/trace-bin/qemu-system-x86_64"
-          for kind in main acpi; do
-            echo exit | TRACE_OUT="$RUNNER_TEMP/trace-$kind" PATH="$RUNNER_TEMP/trace-bin:$PATH" \
-              "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/time-$kind "$RUNNER_TEMP/trace-$kind.log" --no-sandbox || true
-            echo "=== $kind"
-            cat "$RUNNER_TEMP/trace-$kind" || true
+          store="$(dirname "$(readlink -f "$HOME/.nix-profile/bin/qemu-system-x86_64")")"
+          echo "store: $store"
+          for from in profile store; do
+            path="$PATH"
+            [ "$from" = store ] && path="$store:$PATH"
+            echo exit | PATH="$path" "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/sandbox-$from "$RUNNER_TEMP/sandbox-$from.log" || true
+            echo "=== sandbox, QEMU from the $from: shell reached: $(grep -a -c 'bash-.*exit' "$RUNNER_TEMP/sandbox-$from.log")"
+            grep -a -v virtiofsd "$RUNNER_TEMP/sandbox-$from.log" | tail -8
           done
+      - name: boot the pull request in the sandbox with 18 mounts
+        continue-on-error: true
+        run: |
+          store="$(dirname "$(readlink -f "$HOME/.nix-profile/bin/qemu-system-x86_64")")"
+          { echo 'mounts:'; for i in $(seq 1 18); do echo "  - $RUNNER_TEMP/mounts/m$i:/opt/m$i"; done; } >> ~/.aibox/config.yaml
+          PATH="$store:$PATH" "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/many "$RUNNER_TEMP/many.log" <<'EOF' || true
+          echo MARK-mounts-$(grep -c ' /opt/m[0-9]* virtiofs ' /proc/mounts)
+          echo MARK-content-$(cat /opt/m*/file | wc -l)
+          exit
+          EOF
+          grep -a -E 'MARK|^aibox' "$RUNNER_TEMP/many.log"
+      - name: run the pull request with 19 mounts, more than fit
+        continue-on-error: true
+        run: |
+          echo "  - $RUNNER_TEMP/mounts/m19:/opt/m19" >> ~/.aibox/config.yaml
+          echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/too-many "$RUNNER_TEMP/too-many.log" --no-sandbox || true
+          grep -a -v virtiofsd "$RUNNER_TEMP/too-many.log" | tail -6
       - name: show the logs
         if: always()
         run: |

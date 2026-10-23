@@ -62,7 +62,7 @@ jobs:
           CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-acpi" ./cmd/aibox
           git worktree add "$RUNNER_TEMP/main" origin/main
           (cd "$RUNNER_TEMP/main" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-main" ./cmd/aibox)
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         id: kernel
         with:
           path: out/vmlinuz
@@ -70,6 +70,12 @@ jobs:
       - name: build the kernel with ACPI
         if: steps.kernel.outputs.cache-hit != 'true'
         run: just image-kernel
+      # saved at once, so that a run that fails later doesn't build it again
+      - if: steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/vmlinuz
+          key: ${{ steps.kernel.outputs.cache-primary-key }}
       - name: make an image of the latest release and one with the new kernel
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,7 +115,7 @@ jobs:
           rm "$fifo"
           # a process of aibox that outlives the run would be a bug
           sleep 1
-          pgrep -a -f "$binary" >&2 && echo "LEFT OVER after $binary run" >&2
+          pgrep -a -x "$(basename "$binary")" >&2 && echo "LEFT OVER after $binary run" >&2
           exit "$status"
           EOF
           chmod +x "$RUNNER_TEMP/in-vm"

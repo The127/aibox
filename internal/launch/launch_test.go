@@ -363,6 +363,26 @@ func TestFirmwareInTakesEachFileFromTheFirstFolderThatHasIt(t *testing.T) {
 	}, files)
 }
 
+func TestFirmwareInSkipsFoldersThatAreNotAbsolute(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	for _, name := range []string{"bios-microvm.bin", "linuxboot_dma.bin"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
+	}
+
+	// act
+	files, err := launch.FirmwareIn([]string{"", ".", dir})
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		filepath.Join(dir, "bios-microvm.bin"),
+		filepath.Join(dir, "linuxboot_dma.bin"),
+	}, files)
+}
+
 func TestFirmwareInFailsAndNamesTheFoldersWhenAFileIsMissing(t *testing.T) {
 	// arrange
 	dir := t.TempDir()

@@ -599,6 +599,11 @@ func findVirtiofsd(options *Options) error {
 func firmware(qemu string) ([]string, error) {
 	out, err := exec.Command(qemu, "-L", "help").Output()
 	if err != nil {
+		var exited *exec.ExitError
+		if errors.As(err, &exited) {
+			return nil, fmt.Errorf("ask %s for its firmware folders: %w: %s", qemu, err, bytes.TrimSpace(exited.Stderr))
+		}
+
 		return nil, fmt.Errorf("ask %s for its firmware folders: %w", qemu, err)
 	}
 
@@ -606,12 +611,17 @@ func firmware(qemu string) ([]string, error) {
 }
 
 // firmwareIn takes each file of firmwareFiles from the first of the
-// folders that has it, as QEMU does.
+// folders that has it, as QEMU does. bubblewrap binds only absolute paths,
+// and QEMU in the sandbox has no working folder of the host.
 func firmwareIn(dirs []string) ([]string, error) {
 	files := make([]string, 0, len(firmwareFiles))
 
 	for _, name := range firmwareFiles {
 		index := slices.IndexFunc(dirs, func(dir string) bool {
+			if !filepath.IsAbs(dir) {
+				return false
+			}
+
 			_, err := os.Stat(filepath.Join(dir, name))
 
 			return err == nil

@@ -25,12 +25,18 @@ jobs:
           go-version-file: go.mod
       - uses: extractions/setup-just@v4
       - uses: sigstore/cosign-installer@v4.1.2
+      - uses: actions/cache/restore@v6
+        id: kernel
+        with:
+          path: out/vmlinuz
+          key: acpi-slots-kernel-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config') }}
       - name: open KVM to the runner user
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: install miso, checked against its signed checksums
+        if: steps.kernel.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           MISO_VERSION: v1.0.0
@@ -62,11 +68,6 @@ jobs:
           CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-acpi" ./cmd/aibox
           git worktree add "$RUNNER_TEMP/main" origin/main
           (cd "$RUNNER_TEMP/main" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-main" ./cmd/aibox)
-      - uses: actions/cache/restore@v6
-        id: kernel
-        with:
-          path: out/vmlinuz
-          key: acpi-slots-kernel-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config') }}
       - name: build the kernel with ACPI
         if: steps.kernel.outputs.cache-hit != 'true'
         run: just image-kernel

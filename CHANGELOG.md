@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.0](https://github.com/The127/aibox/compare/v2.1.1...v2.2.0) (2026-10-23)
+
+
+### Features
+
+* give Claude Code in the VM the docs ([#212](https://github.com/The127/aibox/issues/212)) ([5b2542e](https://github.com/The127/aibox/commit/5b2542e255e77d7850aea8d786b036a2fb59ab9c)), closes [#208](https://github.com/The127/aibox/issues/208)
+* make room for 18 mounts on Linux by booting the VM with ACPI ([#214](https://github.com/The127/aibox/issues/214)) ([ac8279b](https://github.com/The127/aibox/commit/ac8279b3096c20c534eaf0c5f8070d116f78020c))
+* move what aibox keeps for a project after you move it ([#205](https://github.com/The127/aibox/issues/205)) ([4f750f7](https://github.com/The127/aibox/commit/4f750f749c394054a013ab6f85167cf0cccdaa4f))
+* name the Claude Code session ([#209](https://github.com/The127/aibox/issues/209)) ([556d239](https://github.com/The127/aibox/commit/556d239552fd9b70a79af7d35ebd2b0bb8a9b8b3))
+
 ## [2.1.1](https://github.com/The127/aibox/compare/v2.1.0...v2.1.1) (2026-10-13)
 
 

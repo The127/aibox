@@ -127,31 +127,37 @@ jobs:
           done
       # the console is a virtio device, so a kernel that finds no virtio
       # devices says nothing there. A QEMU wrapper turns on early output to
-      # the serial port, which needs no driver
-      - name: boot the ACPI kernel once with early output on the serial port
-        continue-on-error: true
+      # the serial port, which needs no driver. Main's aibox has acpi=off, so
+      # the two binaries and two images make all four pairs
+      - name: boot the old and the new kernel, with ACPI and without
         run: |
           mkdir -p "$RUNNER_TEMP/debug-bin"
-          cat > "$RUNNER_TEMP/debug-bin/qemu-system-x86_64" <<EOF
+          cat > "$RUNNER_TEMP/debug-bin/qemu-system-x86_64" <<'EOF'
           #!/bin/bash
           args=()
-          while [ \$# -gt 0 ]; do
-            if [ "\$1" = -append ]; then
-              args+=(-append "\${2/ quiet/} earlyprintk=ttyS0,keep loglevel=8 ignore_loglevel")
+          while [ $# -gt 0 ]; do
+            if [ "$1" = -append ]; then
+              args+=(-append "${2/ quiet/} earlyprintk=ttyS0,keep loglevel=8 ignore_loglevel")
               shift 2
               continue
             fi
-            args+=("\$1")
+            args+=("$1")
             shift
           done
-          echo "QEMU \${args[*]}" > "$RUNNER_TEMP/debug-qemu-args"
-          exec $HOME/.nix-profile/bin/qemu-system-x86_64 "\${args[@]}" -serial file:$RUNNER_TEMP/serial.out
+          exec "$HOME/.nix-profile/bin/qemu-system-x86_64" "${args[@]}" -serial "file:$SERIAL_OUT"
           EOF
           chmod +x "$RUNNER_TEMP/debug-bin/qemu-system-x86_64"
-          echo exit | PATH="$RUNNER_TEMP/debug-bin:$PATH" timeout 60 "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/debug "$RUNNER_TEMP/debug.log" --no-sandbox || true
-          cat "$RUNNER_TEMP/debug-qemu-args" || true
-          echo '--- serial'
-          cat "$RUNNER_TEMP/serial.out" || true
+          for binary in main acpi; do
+            for image in main acpi; do
+              name="binary-$binary-image-$image"
+              echo exit | SERIAL_OUT="$RUNNER_TEMP/$name.serial" PATH="$RUNNER_TEMP/debug-bin:$PATH" \
+                timeout 40 "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$binary" "$RUNNER_TEMP/image-$image" ~/$name "$RUNNER_TEMP/$name.log" --no-sandbox || true
+              echo "=== $name: shell reached: $(grep -a -c 'bash-.*exit' "$RUNNER_TEMP/$name.log")"
+              head -c 200000 "$RUNNER_TEMP/$name.serial" | tail -n 80 || true
+            done
+          done
+          # only the four boots are of interest for now
+          exit 1
       - name: boot each once, so that the state disk exists for the timing
         run: |
           echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-main" "$RUNNER_TEMP/image-main" ~/time-main "$RUNNER_TEMP/warm-main.log" --no-sandbox

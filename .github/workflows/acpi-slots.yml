@@ -166,82 +166,22 @@ jobs:
       # the input stays open after exit, so the time comes from the shell in
       # the VM: its clock against the start on the runner, which kvmclock
       # keeps close, and the uptime of its kernel
-      # the helper waits 1 s after the run, which the times leave out. Each
-      # run keeps its log and the kernel's warnings from the serial port, so
-      # a slow run can be looked at. Both kinds get the serial port
-      - name: time 30 runs of each, taking turns
+      # the sandbox has to bind every file QEMU loads, which its trace names
+      - name: list the files QEMU loads, with ACPI and without
         run: |
-          mkdir -p "$RUNNER_TEMP/serial-bin" "$RUNNER_TEMP/runs"
-          cat > "$RUNNER_TEMP/serial-bin/qemu-system-x86_64" <<'EOF'
+          "$HOME/.nix-profile/bin/qemu-system-x86_64" -L help
+          mkdir -p "$RUNNER_TEMP/trace-bin"
+          cat > "$RUNNER_TEMP/trace-bin/qemu-system-x86_64" <<'EOF'
           #!/bin/bash
-          args=()
-          while [ $# -gt 0 ]; do
-            if [ "$1" = -append ]; then
-              args+=(-append "$2 earlyprintk=ttyS0,keep")
-              shift 2
-              continue
-            fi
-            args+=("$1")
-            shift
-          done
-          exec "$HOME/.nix-profile/bin/qemu-system-x86_64" "${args[@]}" -serial "file:$SERIAL_OUT"
+          exec "$HOME/.nix-profile/bin/qemu-system-x86_64" "$@" -trace load_file -trace 'rom_*' -D "$TRACE_OUT"
           EOF
-          chmod +x "$RUNNER_TEMP/serial-bin/qemu-system-x86_64"
-          for i in $(seq 1 30); do
-            for kind in main acpi; do
-              run="$RUNNER_TEMP/runs/$kind-$i"
-              start=$(date +%s.%N)
-              echo exit | SERIAL_OUT="$run.serial" PATH="$RUNNER_TEMP/serial-bin:$PATH" \
-                "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/time-$kind "$run.log" --no-sandbox || echo "$kind-$i failed"
-              end=$(date +%s.%N)
-              cp ~/.aibox/projects/-home-runner-time_2d$kind/console.log "$run.console" || true
-              awk -v k=$kind -v i=$i -v s=$start -v e=$end 'BEGIN { printf "%s %d %.3f\n", k, i, e - s - 1 }' | tee -a "$RUNNER_TEMP/times"
-            done
-          done
+          chmod +x "$RUNNER_TEMP/trace-bin/qemu-system-x86_64"
           for kind in main acpi; do
-            grep "^$kind " "$RUNNER_TEMP/times" | sort -k3 -n | awk -v k=$kind '{ t[NR] = $3; s += $3 } END { printf "%s: median %.3f s, mean %.3f s, slowest %.3f s, of %d runs\n", k, t[int((NR+1)/2)], s/NR, t[NR], NR }'
+            echo exit | TRACE_OUT="$RUNNER_TEMP/trace-$kind" PATH="$RUNNER_TEMP/trace-bin:$PATH" \
+              "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/time-$kind "$RUNNER_TEMP/trace-$kind.log" --no-sandbox || true
+            echo "=== $kind"
+            cat "$RUNNER_TEMP/trace-$kind" || true
           done
-          awk '$3 > 2 { print $1 "-" $2 }' "$RUNNER_TEMP/times" | while read -r slow; do
-            echo "=== slow run $slow"
-            echo '--- log'
-            grep -a -v -E 'virtiofsd::(limits|sandbox|passthrough)' "$RUNNER_TEMP/runs/$slow.log"
-            echo '--- console.log'
-            cat "$RUNNER_TEMP/runs/$slow.console" || true
-            echo '--- serial'
-            cat "$RUNNER_TEMP/runs/$slow.serial" || true
-          done
-          echo '=== serial of one normal run of each, to compare'
-          for kind in main acpi; do echo "--- $kind-1"; cat "$RUNNER_TEMP/runs/$kind-1.serial" || true; done
-      # QEMU from Nix exited at once in the sandbox in #162 already, so main
-      # runs there too, to tell that apart from ACPI
-      - name: try the sandbox with main and with ACPI
-        continue-on-error: true
-        run: |
-          for kind in main acpi; do
-            echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/sandboxed-$kind "$RUNNER_TEMP/sandboxed-$kind.log" || true
-            echo "=== $kind in the sandbox: shell reached: $(grep -a -c 'bash-.*exit' "$RUNNER_TEMP/sandboxed-$kind.log")"
-            grep -a -E '^aibox:' "$RUNNER_TEMP/sandboxed-$kind.log" || true
-          done
-      - name: boot with 18 mounts, the most that fit in 24 slots
-        run: |
-          { echo 'mounts:'; for i in $(seq 1 18); do echo "  - $RUNNER_TEMP/mounts/m$i:/opt/m$i"; done; } >> ~/.aibox/config.yaml
-          "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/many "$RUNNER_TEMP/many.log" --no-sandbox <<'EOF'
-          echo MARK-mounts-$(grep -c ' /opt/m[0-9]* virtiofs ' /proc/mounts)
-          echo MARK-content-$(cat /opt/m*/file | wc -l)
-          exit
-          EOF
-          grep -a MARK "$RUNNER_TEMP/many.log"
-          grep -a -q MARK-mounts-18 "$RUNNER_TEMP/many.log"
-          grep -a -q MARK-content-18 "$RUNNER_TEMP/many.log"
-      # a new project starts from this config, so it gets all 19
-      - name: boot with 19 mounts, one more than fits, to see the error
-        continue-on-error: true
-        run: |
-          echo "  - $RUNNER_TEMP/mounts/m19:/opt/m19" >> ~/.aibox/config.yaml
-          echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/too-many "$RUNNER_TEMP/too-many.log" --no-sandbox || true
-          echo "mounts in the config: $(grep -c /opt/m ~/.aibox/projects/-home-runner-too_2dmany/config.yaml)"
-          echo "virtiofsd connections: $(grep -a -c 'Client connected' "$RUNNER_TEMP/too-many.log")"
-          grep -a -v virtiofsd "$RUNNER_TEMP/too-many.log" | tail -20
       - name: show the logs
         if: always()
         run: |

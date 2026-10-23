@@ -1,0 +1,159 @@
+# TEMPORARY for issue #151: boots aibox's VM with ACPI on, which gives
+# QEMU's microvm 24 virtio slots instead of 8. It checks that many mounts
+# fit and compares boot time and kernel size with main. Remove it before
+# the pull request merges.
+name: acpi slots
+
+on:
+  push:
+    branches: [spike/acpi-slots]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: extractions/setup-just@v4
+      - uses: sigstore/cosign-installer@v4.1.2
+      - name: open KVM to the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: install miso, checked against its signed checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MISO_VERSION: v1.0.0
+        run: |
+          cd "$RUNNER_TEMP"
+          gh release download "$MISO_VERSION" --repo The127/miso --pattern 'miso_*_linux_amd64.deb' --pattern 'checksums.txt*'
+          cosign verify-blob checksums.txt \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity https://github.com/The127/miso/.github/workflows/release.yml@refs/heads/main \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          sha256sum --ignore-missing -c checksums.txt
+          sudo apt-get update
+          sudo apt-get install -y ./miso_*_linux_amd64.deb
+      # Ubuntu keeps unprivileged user namespaces from programs without an
+      # AppArmor profile of their own, and bubblewrap needs them
+      - name: install bubblewrap
+        run: |
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # the virtiofsd and QEMU of Ubuntu 24.04 are too old for aibox, #161
+      - uses: cachix/install-nix-action@v31
+      - name: install QEMU and virtiofsd
+        run: |
+          nix profile install nixpkgs#virtiofsd nixpkgs#qemu_kvm
+          echo "$HOME/.nix-profile/bin" >> "$GITHUB_PATH"
+          "$HOME/.nix-profile/bin/qemu-system-x86_64" --version
+      - name: build aibox of main and of this branch
+        run: |
+          CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-acpi" ./cmd/aibox
+          git worktree add "$RUNNER_TEMP/main" origin/main
+          (cd "$RUNNER_TEMP/main" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/aibox-main" ./cmd/aibox)
+      - name: build the kernel with ACPI
+        run: just image-kernel
+      - name: make an image of the latest release and one with the new kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-main"
+          gh release download --repo The127/aibox --pattern aibox-image_amd64.tar.gz --output - | tar -xz -C "$RUNNER_TEMP/image-main"
+          cp -r "$RUNNER_TEMP/image-main" "$RUNNER_TEMP/image-acpi"
+          cp out/vmlinuz "$RUNNER_TEMP/image-acpi/vmlinuz"
+          ls -l "$RUNNER_TEMP"/image-*/vmlinuz
+      - name: write the config new projects start from
+        run: |
+          mkdir -p ~/.aibox
+          printf 'allow:\n  - preset:github\n' > ~/.aibox/config.yaml
+      - name: write the helper that runs commands in the VM's shell
+        run: |
+          # the shell needs a terminal, which script gives it. script ends
+          # only when its input does, so the input stays open until aibox
+          # is gone
+          cat > "$RUNNER_TEMP/in-vm" <<'EOF'
+          #!/bin/bash
+          # in-vm BINARY IMAGE PROJECT LOG [FLAGS...] runs stdin in the VM
+          set -eu
+          binary=$1 image=$2 project=$3 log=$4
+          shift 4
+          commands=$(cat)
+          mkdir -p "$project"
+          cd "$project"
+          (echo "$commands"; sleep 10; while pgrep -x "$(basename "$binary")" > /dev/null; do sleep 1; done) |
+            script -q -e -c "$binary run --shell $* --image $image" "$log" > /dev/null
+          EOF
+          chmod +x "$RUNNER_TEMP/in-vm"
+      - name: write 19 folders to mount
+        run: |
+          for i in $(seq 1 19); do
+            mkdir -p "$RUNNER_TEMP/mounts/m$i"
+            echo "content $i" > "$RUNNER_TEMP/mounts/m$i/file"
+          done
+      - name: boot each once, so that the state disk exists for the timing
+        run: |
+          echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-main" "$RUNNER_TEMP/image-main" ~/time-main "$RUNNER_TEMP/warm-main.log" --no-sandbox
+          echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/time-acpi "$RUNNER_TEMP/warm-acpi.log" --no-sandbox
+      # the input stays open after exit, so the time comes from the shell in
+      # the VM: its clock against the start on the runner, which kvmclock
+      # keeps close, and the uptime of its kernel
+      - name: time 10 boots of each, taking turns
+        run: |
+          for i in $(seq 1 10); do
+            for kind in main acpi; do
+              start=$(date +%s.%N)
+              printf 'echo MARK-at-$(date +%%s.%%N)-$(cut -d" " -f1 /proc/uptime)\nexit\n' |
+                "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/time-$kind "$RUNNER_TEMP/time-$kind.log" --no-sandbox
+              mark=$(grep -a -o 'MARK-at-[0-9.]*-[0-9.]*' "$RUNNER_TEMP/time-$kind.log" | tail -1)
+              at=$(echo "$mark" | cut -d- -f3)
+              uptime=$(echo "$mark" | cut -d- -f4)
+              awk -v k=$kind -v a=$at -v s=$start -v u=$uptime 'BEGIN { printf "%s %.3f %s\n", k, a - s, u }' | tee -a "$RUNNER_TEMP/times"
+            done
+          done
+          for kind in main acpi; do
+            grep "^$kind " "$RUNNER_TEMP/times" | awk -v k=$kind '{ s += $2; u += $3; n++ } END { printf "%s: start to shell %.3f s, kernel uptime at shell %.3f s, mean of %d\n", k, s/n, u/n, n }'
+          done
+      - name: boot with 18 mounts, the most that fit in 24 slots
+        run: |
+          mkdir -p ~/many
+          { echo 'mounts:'; for i in $(seq 1 18); do echo "  - $RUNNER_TEMP/mounts/m$i:/opt/m$i"; done; } > "$RUNNER_TEMP/mounts.yaml"
+          cat "$RUNNER_TEMP/mounts.yaml" >> ~/.aibox/config.yaml
+          "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/many "$RUNNER_TEMP/many.log" --no-sandbox <<'EOF'
+          echo MARK-mounts-$(grep -c ' /opt/m[0-9]* virtiofs ' /proc/mounts)
+          echo MARK-content-$(cat /opt/m*/file | wc -l)
+          cat /proc/cmdline
+          exit
+          EOF
+          grep -a MARK "$RUNNER_TEMP/many.log"
+          grep -a -q MARK-mounts-18 "$RUNNER_TEMP/many.log"
+          grep -a -q MARK-content-18 "$RUNNER_TEMP/many.log"
+      - name: boot with 19 mounts, one more than fits, to see the error
+        continue-on-error: true
+        run: |
+          echo "  - $RUNNER_TEMP/mounts/m19:/opt/m19" >> ~/.aibox/projects/-home-runner-many/config.yaml
+          echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/many "$RUNNER_TEMP/too-many.log" --no-sandbox
+      - name: try the sandbox with 18 mounts
+        continue-on-error: true
+        run: |
+          mkdir -p ~/sandboxed
+          "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/sandboxed "$RUNNER_TEMP/sandboxed.log" <<'EOF'
+          echo MARK-mounts-$(grep -c ' /opt/m[0-9]* virtiofs ' /proc/mounts)
+          exit
+          EOF
+          grep -a MARK "$RUNNER_TEMP/sandboxed.log"
+      - name: show the logs
+        if: always()
+        run: |
+          for f in "$RUNNER_TEMP"/*.log; do echo "--- $f"; tail -c 3000 "$f"; echo; done
+          for f in ~/.aibox/projects/*/console.log; do echo "--- $f"; tail -40 "$f"; done

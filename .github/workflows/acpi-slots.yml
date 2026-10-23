@@ -167,28 +167,45 @@ jobs:
       # the input stays open after exit, so the time comes from the shell in
       # the VM: its clock against the start on the runner, which kvmclock
       # keeps close, and the uptime of its kernel
-      # QEMU in the sandbox exits with 255 and nothing on the terminal. A
-      # bwrap wrapper keeps the arguments and what bwrap and QEMU print
-      - name: show why QEMU exits in the sandbox
+      - name: look at the QEMU of Nix
         continue-on-error: true
         run: |
-          mkdir -p "$RUNNER_TEMP/bwrap-bin"
-          cat > "$RUNNER_TEMP/bwrap-bin/bwrap" <<'EOF'
-          #!/bin/bash
-          printf '%s\n' "$@" > "$BWRAP_ARGS"
-          exec /usr/bin/bwrap "$@" 2> "$BWRAP_ERR"
+          store="$(dirname "$(readlink -f "$HOME/.nix-profile/bin/qemu-system-x86_64")")"
+          ls -la "$store" | grep -i x86_64
+          file "$store/qemu-system-x86_64" "$store/.qemu-system-x86_64-wrapped" || true
+          head -c 300 "$store/qemu-system-x86_64" | strings | head -5 || true
+      # the QEMU of a distribution, as most people have it, with SeaBIOS in
+      # /usr/share/seabios as on Debian and Fedora
+      - name: run the pull request in the sandbox on Ubuntu 26.04
+        run: |
+          cat > "$RUNNER_TEMP/ubuntu.sh" <<'EOF'
+          set -eu
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq qemu-system-x86 virtiofsd bubblewrap util-linux procps > /dev/null
+          qemu-system-x86_64 --version | head -1
+          qemu-system-x86_64 -L help
+          ls -l /usr/share/qemu/bios-microvm.bin /usr/share/seabios/bios-microvm.bin /usr/share/qemu/linuxboot_dma.bin 2>&1 || true
+          useradd -m tester
+          chmod 666 /dev/kvm
+          cp -r /work/image-acpi /work/mounts /home/tester/
+          cp /work/aibox-acpi /work/in-vm /usr/local/bin/
+          chown -R tester /home/tester
+          su tester -c '
+            set -eu
+            mkdir -p ~/.aibox
+            { echo "mounts:"; for i in $(seq 1 18); do echo "  - /home/tester/mounts/m$i:/opt/m$i"; done; } > ~/.aibox/config.yaml
+            printf "echo MARK-mounts-\$(grep -c \" /opt/m[0-9]* virtiofs \" /proc/mounts)\nexit\n" |
+              in-vm /usr/local/bin/aibox-acpi /home/tester/image-acpi /home/tester/project /tmp/sandbox.log || true
+            grep -a -v virtiofsd /tmp/sandbox.log | tail -15
+            echo "--- console.log"
+            tail -5 ~/.aibox/projects/*/console.log || true
+            grep -a -q MARK-mounts-18 /tmp/sandbox.log
+          '
           EOF
-          chmod +x "$RUNNER_TEMP/bwrap-bin/bwrap"
-          for kind in main acpi; do
-            echo exit | BWRAP_ARGS="$RUNNER_TEMP/bwrap-args-$kind" BWRAP_ERR="$RUNNER_TEMP/bwrap-err-$kind" PATH="$RUNNER_TEMP/bwrap-bin:$PATH" \
-              "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/bwrap-$kind "$RUNNER_TEMP/bwrap-$kind.log" || true
-            echo "=== $kind: shell reached: $(grep -a -c 'bash-.*exit' "$RUNNER_TEMP/bwrap-$kind.log")"
-            echo '--- stderr of bwrap and QEMU'
-            cat "$RUNNER_TEMP/bwrap-err-$kind" || true
-            echo '--- arguments of bwrap up to QEMU'
-            sed '/^--$/q' "$RUNNER_TEMP/bwrap-args-$kind" | tr '\n' ' '
-            echo
-          done
+          mkdir -p "$RUNNER_TEMP/work"
+          cp -r "$RUNNER_TEMP/image-acpi" "$RUNNER_TEMP/mounts" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/work/"
+          docker run --rm --privileged --device /dev/kvm -v "$RUNNER_TEMP/work:/work" -v "$RUNNER_TEMP/ubuntu.sh:/ubuntu.sh" ubuntu:26.04 bash /ubuntu.sh
       - name: show the logs
         if: always()
         run: |

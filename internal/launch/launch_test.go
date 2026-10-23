@@ -290,7 +290,10 @@ func TestRunBindsTheLibrariesAndFirmwareOfTheOptionsIntoTheSandbox(t *testing.T)
 	// assert
 	require.ErrorIs(t, err, launch.ErrNoTerminal)
 	assert.Contains(t, f.record(t, "bwrap"), f.libraries[0])
-	assert.Contains(t, f.record(t, "bwrap"), f.firmware)
+
+	for _, file := range f.firmware {
+		assert.Contains(t, f.record(t, "bwrap"), file)
+	}
 }
 
 func TestRunStartsTheVirtiofsdOnThePathWhenTheOptionsNameNone(t *testing.T) {
@@ -308,20 +311,57 @@ func TestRunStartsTheVirtiofsdOnThePathWhenTheOptionsNameNone(t *testing.T) {
 	assert.Contains(t, f.record(t, "virtiofsd-project.sock"), "--shared-dir=/home/someone/project")
 }
 
-func TestFirmwareOfAQEMUOfTheSystem(t *testing.T) {
+func TestFirmwareInTakesEachFileFromTheFirstFolderThatHasIt(t *testing.T) {
+	// arrange
+	first, second := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(first, "linuxboot_dma.bin"), nil, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(second, "bios-microvm.bin"), nil, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(second, "linuxboot_dma.bin"), nil, 0o600))
+
 	// act
-	firmware := launch.Firmware("/usr/bin/qemu-system-x86_64")
+	files, err := launch.FirmwareIn([]string{first, second})
 
 	// assert
-	assert.Equal(t, "/usr/share/qemu/qboot.rom", firmware)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		filepath.Join(second, "bios-microvm.bin"),
+		filepath.Join(first, "linuxboot_dma.bin"),
+	}, files)
 }
 
-func TestFirmwareOfAQEMUFromNix(t *testing.T) {
+func TestFirmwareInFailsAndNamesTheFoldersWhenAFileIsMissing(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "linuxboot_dma.bin"), nil, 0o600))
+
 	// act
-	firmware := launch.Firmware("/nix/store/abc-qemu-11.1.1/bin/qemu-system-x86_64")
+	_, err := launch.FirmwareIn([]string{dir})
 
 	// assert
-	assert.Equal(t, "/nix/store/abc-qemu-11.1.1/share/qemu/qboot.rom", firmware)
+	require.ErrorContains(t, err, "bios-microvm.bin")
+	require.ErrorContains(t, err, dir)
+}
+
+func TestRunBindsTheFirmwareFromTheFoldersQEMUNames(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	options := f.options()
+	options.Firmware = nil
+	dir := t.TempDir()
+
+	for _, name := range []string{"bios-microvm.bin", "linuxboot_dma.bin"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
+	}
+
+	t.Setenv("AIBOX_FAKE_DATA_DIRS", filepath.Join(dir, "missing")+"\n"+dir)
+
+	// act
+	err := launch.Run(context.Background(), machine(t), options)
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+	assert.Contains(t, f.record(t, "bwrap"), filepath.Join(dir, "bios-microvm.bin"))
+	assert.Contains(t, f.record(t, "bwrap"), filepath.Join(dir, "linuxboot_dma.bin"))
 }
 
 func TestListedAreTheLoaderAndTheFilesTheLoaderFound(t *testing.T) {
@@ -383,13 +423,13 @@ func TestRunFailsBeforeQEMUWithoutTheFirmwareForTheSandbox(t *testing.T) {
 	// arrange
 	f := fakes(t)
 	options := f.options()
-	options.Firmware = filepath.Join(t.TempDir(), "gone.rom")
+	options.Firmware = []string{filepath.Join(t.TempDir(), "gone.bin")}
 
 	// act
 	err := launch.Run(context.Background(), machine(t), options)
 
 	// assert
-	require.ErrorContains(t, err, options.Firmware)
+	require.ErrorContains(t, err, options.Firmware[0])
 	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 

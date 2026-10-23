@@ -50,8 +50,11 @@ const (
 	// systemVirtiofsd is where Debian, Ubuntu and Fedora put virtiofsd,
 	// which is not on the PATH
 	systemVirtiofsd = "/usr/libexec/virtiofsd"
-	firmwareOfQEMU  = "share/qemu/qboot.rom"
 )
+
+// firmwareFiles are what QEMU loads into the VM. With ACPI, microvm boots
+// SeaBIOS, which loads the kernel through the linuxboot option ROM.
+var firmwareFiles = []string{"bios-microvm.bin", "linuxboot_dma.bin"}
 
 // Options are the programs Run starts, the terminal of the person on Stdin
 // and Stdout, where the messages of aibox and of the programs go, and how
@@ -104,10 +107,10 @@ type Options struct {
 	// throws it away.
 	ConsoleLog string
 	// Libraries and Firmware are what QEMU is made of on the host, bound
-	// into its sandbox. Empty means those of the QEMU found, see libraries
+	// into its sandbox. Nil means those of the QEMU found, see libraries
 	// and firmware.
 	Libraries []string
-	Firmware  string
+	Firmware  []string
 	// StopDelay is how long a stopped program may take before it is
 	// killed, and SessionEndDelay how long the session may go on after
 	// QEMU exited, to show the last output of the VM. Zero means the
@@ -552,12 +555,16 @@ func findPrograms(options *Options) error {
 		}
 	}
 
-	if options.Firmware == "" {
-		options.Firmware = firmware(resolved)
+	if options.Firmware == nil {
+		if options.Firmware, err = firmware(options.QEMU); err != nil {
+			return fmt.Errorf("the sandbox of QEMU needs its firmware, run with --no-sandbox on this host: %w", err)
+		}
 	}
 
-	if _, err := os.Stat(options.Firmware); err != nil {
-		return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", options.Firmware, err)
+	for _, file := range options.Firmware {
+		if _, err := os.Stat(file); err != nil {
+			return fmt.Errorf("the sandbox of QEMU needs %s, run with --no-sandbox on this host: %w", file, err)
+		}
 	}
 
 	return nil
@@ -582,10 +589,37 @@ func findVirtiofsd(options *Options) error {
 	return nil
 }
 
-// firmware is the firmware of the QEMU at the real path, next to its bin
-// folder, as /usr/share/qemu or <store path>/share/qemu.
-func firmware(qemu string) string {
-	return filepath.Join(filepath.Dir(filepath.Dir(qemu)), firmwareOfQEMU)
+// firmware is the firmware of the QEMU, from the folders it names. Debian
+// puts bios-microvm.bin into /usr/share/seabios and the rest into
+// /usr/share/qemu, so only QEMU knows where it looks.
+func firmware(qemu string) ([]string, error) {
+	out, err := exec.Command(qemu, "-L", "help").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ask %s for its firmware folders: %w", qemu, err)
+	}
+
+	return firmwareIn(strings.Split(strings.TrimSpace(string(out)), "\n"))
+}
+
+// firmwareIn takes each file of firmwareFiles from the first of the
+// folders that has it, as QEMU does.
+func firmwareIn(dirs []string) ([]string, error) {
+	files := make([]string, 0, len(firmwareFiles))
+
+	for _, name := range firmwareFiles {
+		index := slices.IndexFunc(dirs, func(dir string) bool {
+			_, err := os.Stat(filepath.Join(dir, name))
+
+			return err == nil
+		})
+		if index < 0 {
+			return nil, fmt.Errorf("find %s in %s", name, strings.Join(dirs, ", "))
+		}
+
+		files = append(files, filepath.Join(dirs[index], name))
+	}
+
+	return files, nil
 }
 
 // libraries are the program's loader and the libraries it loads, as the

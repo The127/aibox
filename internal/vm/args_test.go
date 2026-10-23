@@ -34,7 +34,7 @@ func TestQEMUArgs(t *testing.T) {
 
 	// assert
 	assert.Equal(t, []string{
-		"-machine", "microvm,acpi=off,rtc=on,memory-backend=mem,x-option-roms=off",
+		"-machine", "microvm,rtc=on,memory-backend=mem",
 		"-add-fd", "fd=3,set=1",
 		"-accel", "kvm,device=/dev/fdset/1",
 		"-cpu", "host",

@@ -167,38 +167,28 @@ jobs:
       # the input stays open after exit, so the time comes from the shell in
       # the VM: its clock against the start on the runner, which kvmclock
       # keeps close, and the uptime of its kernel
-      # QEMU finds its firmware next to its own path. From the profile, the
-      # sandbox shows it at the profile path, so the second run puts the
-      # QEMU of the store first on the PATH
-      - name: run the pull request in the sandbox, from the profile and from the store
+      # QEMU in the sandbox exits with 255 and nothing on the terminal. A
+      # bwrap wrapper keeps the arguments and what bwrap and QEMU print
+      - name: show why QEMU exits in the sandbox
         continue-on-error: true
         run: |
-          store="$(dirname "$(readlink -f "$HOME/.nix-profile/bin/qemu-system-x86_64")")"
-          echo "store: $store"
-          for from in profile store; do
-            path="$PATH"
-            [ "$from" = store ] && path="$store:$PATH"
-            echo exit | PATH="$path" "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/sandbox-$from "$RUNNER_TEMP/sandbox-$from.log" || true
-            echo "=== sandbox, QEMU from the $from: shell reached: $(grep -a -c 'bash-.*exit' "$RUNNER_TEMP/sandbox-$from.log")"
-            grep -a -v virtiofsd "$RUNNER_TEMP/sandbox-$from.log" | tail -8
-          done
-      - name: boot the pull request in the sandbox with 18 mounts
-        continue-on-error: true
-        run: |
-          store="$(dirname "$(readlink -f "$HOME/.nix-profile/bin/qemu-system-x86_64")")"
-          { echo 'mounts:'; for i in $(seq 1 18); do echo "  - $RUNNER_TEMP/mounts/m$i:/opt/m$i"; done; } >> ~/.aibox/config.yaml
-          PATH="$store:$PATH" "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/many "$RUNNER_TEMP/many.log" <<'EOF' || true
-          echo MARK-mounts-$(grep -c ' /opt/m[0-9]* virtiofs ' /proc/mounts)
-          echo MARK-content-$(cat /opt/m*/file | wc -l)
-          exit
+          mkdir -p "$RUNNER_TEMP/bwrap-bin"
+          cat > "$RUNNER_TEMP/bwrap-bin/bwrap" <<'EOF'
+          #!/bin/bash
+          printf '%s\n' "$@" > "$BWRAP_ARGS"
+          exec /usr/bin/bwrap "$@" 2> "$BWRAP_ERR"
           EOF
-          grep -a -E 'MARK|^aibox' "$RUNNER_TEMP/many.log"
-      - name: run the pull request with 19 mounts, more than fit
-        continue-on-error: true
-        run: |
-          echo "  - $RUNNER_TEMP/mounts/m19:/opt/m19" >> ~/.aibox/config.yaml
-          echo exit | "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-acpi" "$RUNNER_TEMP/image-acpi" ~/too-many "$RUNNER_TEMP/too-many.log" --no-sandbox || true
-          grep -a -v virtiofsd "$RUNNER_TEMP/too-many.log" | tail -6
+          chmod +x "$RUNNER_TEMP/bwrap-bin/bwrap"
+          for kind in main acpi; do
+            echo exit | BWRAP_ARGS="$RUNNER_TEMP/bwrap-args-$kind" BWRAP_ERR="$RUNNER_TEMP/bwrap-err-$kind" PATH="$RUNNER_TEMP/bwrap-bin:$PATH" \
+              "$RUNNER_TEMP/in-vm" "$RUNNER_TEMP/aibox-$kind" "$RUNNER_TEMP/image-$kind" ~/bwrap-$kind "$RUNNER_TEMP/bwrap-$kind.log" || true
+            echo "=== $kind: shell reached: $(grep -a -c 'bash-.*exit' "$RUNNER_TEMP/bwrap-$kind.log")"
+            echo '--- stderr of bwrap and QEMU'
+            cat "$RUNNER_TEMP/bwrap-err-$kind" || true
+            echo '--- arguments of bwrap up to QEMU'
+            sed '/^--$/q' "$RUNNER_TEMP/bwrap-args-$kind" | tr '\n' ' '
+            echo
+          done
       - name: show the logs
         if: always()
         run: |

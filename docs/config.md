@@ -253,6 +253,10 @@ home folder.
   because the VM's login lives there.
 - The VM caches names and attributes for the whole run. If you change the
   folder on your machine, a running VM may not see it.
+- On Linux the VM has room for 20 shared folders. The project and the home
+  take two, and the skills, agents and commands folders one each if you
+  have them. That leaves 15 to 18 for mounts. With more, aibox stops before
+  the VM starts and says so.
 - On macOS the VM runs arm64 Linux, so Mac programs don't run in it.
 - On Windows the VM runs amd64 Linux, so Windows programs don't run in it,
   and files made on Windows aren't executable there. Mount data, not tools,

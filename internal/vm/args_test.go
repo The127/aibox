@@ -1,6 +1,8 @@
 package vm_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +87,31 @@ func TestQEMUArgsPutThePortOnTheSerialDeviceInsteadOfVsock(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, serialDevices, "the port shares the device of the console")
+}
+
+func TestQEMUArgsFillTheVirtioSlotsWithTheMostShares(t *testing.T) {
+	// arrange
+	m := machine()
+	numbers := files
+
+	for i := len(m.Shares); i < vm.MaxShares; i++ {
+		m.Shares = append(m.Shares, vm.Share{Tag: "mount" + strconv.Itoa(i)})
+		numbers.Shares = append(numbers.Shares, 20+i)
+	}
+
+	// act
+	args := m.QEMUArgs(numbers)
+
+	// assert
+	devices := 0
+
+	for i, arg := range args {
+		if arg == "-device" && strings.HasSuffix(strings.Split(args[i+1], ",")[0], "-device") {
+			devices++
+		}
+	}
+
+	assert.Equal(t, 24, devices)
 }
 
 func TestQEMUArgsWithoutShares(t *testing.T) {

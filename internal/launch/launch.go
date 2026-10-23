@@ -124,6 +124,10 @@ type Options struct {
 // ends first. On return the proxy and the virtiofsd processes are stopped,
 // their sockets are removed and the terminal is as it was.
 func Run(ctx context.Context, machine vm.Machine, options Options) error {
+	if len(machine.Shares) > vm.MaxShares {
+		return fmt.Errorf("the VM has room for %d shared folders, and this run needs %d. Each mount in the config takes one, and so do the skills, agents and commands folders. Remove some mounts from the config", vm.MaxShares, len(machine.Shares))
+	}
+
 	if options.SocketTimeout == 0 {
 		options.SocketTimeout = defaultSocketTimeout
 	}

@@ -149,6 +149,10 @@ const (
 	stateSet  = 3
 )
 
+// MaxShares is how many shares fit into the 24 virtio slots of QEMU's
+// microvm, next to the console, the two disks and vsock.
+const MaxShares = 20
+
 // QEMUArgs returns the arguments for qemu-system-x86_64. QEMU gets every
 // file through the numbers in files, so that it opens no path of the host.
 func (m Machine) QEMUArgs(files Files) []string {

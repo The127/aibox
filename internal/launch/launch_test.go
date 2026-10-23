@@ -280,6 +280,40 @@ func TestRunFailsBeforeQEMUWhenAnotherRunHasTheStateDisk(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
 }
 
+func TestRunFailsBeforeVirtiofsdWithMoreSharesThanTheVMHasRoomFor(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+
+	for i := len(m.Shares); i <= vm.MaxShares; i++ {
+		m.Shares = append(m.Shares, vm.Share{Tag: "mount" + strconv.Itoa(i), Dir: "/opt/" + strconv.Itoa(i), Guest: "/opt/" + strconv.Itoa(i)})
+	}
+
+	// act
+	err := launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorContains(t, err, strconv.Itoa(vm.MaxShares+1))
+	assert.NoFileExists(t, filepath.Join(f.records, "virtiofsd-project.sock"))
+	assert.NoFileExists(t, filepath.Join(f.records, "qemu"))
+}
+
+func TestRunStartsTheMostSharesTheVMHasRoomFor(t *testing.T) {
+	// arrange
+	f := fakes(t)
+	m := machine(t)
+
+	for i := len(m.Shares); i < vm.MaxShares; i++ {
+		m.Shares = append(m.Shares, vm.Share{Tag: "mount" + strconv.Itoa(i), Dir: "/opt/" + strconv.Itoa(i), Guest: "/opt/" + strconv.Itoa(i)})
+	}
+
+	// act
+	err := launch.Run(context.Background(), m, f.options())
+
+	// assert
+	require.ErrorIs(t, err, launch.ErrNoTerminal)
+}
+
 func TestRunBindsTheLibrariesAndFirmwareOfTheOptionsIntoTheSandbox(t *testing.T) {
 	// arrange
 	f := fakes(t)

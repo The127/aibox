@@ -54,6 +54,7 @@ jobs:
       # AppArmor profile of their own, and bubblewrap needs them
       - name: install bubblewrap
         run: |
+          sudo apt-get update
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # the virtiofsd and QEMU of Ubuntu 24.04 are too old for aibox, #161

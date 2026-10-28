@@ -322,6 +322,20 @@ func TestGuestWordsTellTheGuestToRunATask(t *testing.T) {
 	assert.Equal(t, []string{"aibox.task"}, words, "the guest knows where to mount the task share")
 }
 
+func TestGuestWordsTellTheGuestHowASessionOnACloneStarts(t *testing.T) {
+	for _, mode := range []string{vm.CloneNew, vm.CloneKeep} {
+		// arrange
+		m := machine()
+		m.Clone = mode
+
+		// act
+		words := m.GuestWords()
+
+		// assert
+		assert.Equal(t, []string{"aibox.clone=" + mode}, words)
+	}
+}
+
 func TestVirtiofsdArgsServeAReadOnlyShareReadOnly(t *testing.T) {
 	for _, share := range []vm.Share{
 		{Tag: "task", Dir: "/aibox/tasks/1/share", Socket: "/run/task.sock", ReadOnly: true},

@@ -90,6 +90,8 @@ var (
 	// ErrBadLoopback is an aibox.loopback word that is not TCP ports joined
 	// by commas.
 	ErrBadLoopback = errors.New("not TCP ports joined by commas")
+	// ErrBadClone is an aibox.clone word that is neither new nor keep.
+	ErrBadClone = errors.New("neither new nor keep")
 
 	errLongReply = errors.New("the answer is too long")
 )
@@ -106,11 +108,14 @@ const imagePath = "/usr/local/bin:/usr/bin:/bin"
 // the command starts. HyperV says the VM runs on Hyper-V, which shares the
 // folders of the host over Plan 9 instead of virtio-fs.
 type Options struct {
-	Console      string
-	Shell        bool
-	Resume       string
-	Port         bool
-	Task         bool
+	Console string
+	Shell   bool
+	Resume  string
+	Port    bool
+	Task    bool
+	// Clone is vm.CloneNew or vm.CloneKeep for a session on a clone, or
+	// empty
+	Clone        string
 	Mise         bool
 	HyperV       bool
 	ProxyPort    uint32
@@ -175,6 +180,9 @@ type System interface {
 	Format(device string) error
 	// Own makes the folder, if missing, and gives it to the user.
 	Own(path string) error
+	// RemoveAll removes the folder and everything in it, following no
+	// links, and is no error for a folder that is missing.
+	RemoveAll(path string) error
 	Symlink(target, path string) error
 	// Join writes the files one after another to path, apart by an empty
 	// line, as a file everyone may read.
@@ -300,6 +308,12 @@ var (
 		{"project", project},
 	}
 
+	// a session on a clone has the home from the host and the clone on the
+	// state disk
+	cloneDirs = []stateDir{
+		{"clone", project},
+	}
+
 	// devtmpfs does not create these
 	links = []link{
 		{target: "/proc/self/fd", path: "/dev/fd"},
@@ -355,6 +369,12 @@ func ParseCmdline(cmdline string) (Options, error) {
 			}
 		case "aibox.task":
 			options.Task = true
+		case "aibox.clone":
+			if value != vm.CloneNew && value != vm.CloneKeep {
+				errs = append(errs, fmt.Errorf("aibox.clone=%s: %w", value, ErrBadClone))
+			} else {
+				options.Clone = value
+			}
 		case "aibox.mise":
 			options.Mise = true
 		case "aibox.port":
@@ -683,6 +703,10 @@ func setup(sys System) (*os.File, Options, error) {
 
 	if !options.Task {
 		for _, m := range shares {
+			if options.Clone != "" && m.Tag == projectShare {
+				continue
+			}
+
 			if err := mountShare(m.Tag, m.Path, 0); err != nil {
 				return console, options, err
 			}
@@ -693,7 +717,7 @@ func setup(sys System) (*os.File, Options, error) {
 		return console, options, err
 	}
 
-	if options.Task {
+	if options.Task || options.Clone != "" {
 		if err := sys.Mkdir(stepCgroup); err != nil {
 			return console, options, fmt.Errorf("make the cgroup %s: %w", stepCgroup, err)
 		}
@@ -712,7 +736,7 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
-	if err := mountState(sys, device, options.Task); err != nil {
+	if err := mountState(sys, device, options); err != nil {
 		return console, options, err
 	}
 
@@ -734,6 +758,12 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
+	if options.Clone != "" {
+		if err := mountShare(cloneShare, cloneDir, taskFlags); err != nil {
+			return console, options, err
+		}
+	}
+
 	if err := shareMounts(sys); err != nil {
 		return console, options, err
 	}
@@ -748,7 +778,7 @@ func setup(sys System) (*os.File, Options, error) {
 		}
 	}
 
-	if err := writePrompts(sys, options.HyperV); err != nil {
+	if err := writePrompts(sys, options); err != nil {
 		return console, options, err
 	}
 
@@ -861,8 +891,11 @@ func lockRoot(sys System) error {
 
 // mountState mounts the state disk of the project, the device, formatting
 // it on the first boot, and binds its folders where tools and caches land.
-// For a task the home and the project are on it too.
-func mountState(sys System, device string, task bool) error {
+// For a task the home and the project are on it too, for a session on a
+// clone the project. A new clone starts from an empty folder.
+func mountState(sys System, device string, options Options) error {
+	task := options.Task
+
 	blank, err := sys.Blank(device)
 	if err != nil {
 		return fmt.Errorf("look at the state disk, state.ext4 of the project on the host: %w", err)
@@ -883,8 +916,19 @@ func mountState(sys System, device string, task bool) error {
 	}
 
 	dirs := stateDirs
-	if task {
+
+	switch {
+	case task:
 		dirs = slices.Concat(taskDirs, stateDirs)
+	case options.Clone != "":
+		dirs = slices.Concat(cloneDirs, stateDirs)
+	}
+
+	if options.Clone == vm.CloneNew {
+		clone := stateMount + "/" + cloneDirs[0].dir
+		if err := sys.RemoveAll(clone); err != nil {
+			return fmt.Errorf("remove the clone of the last session: %w", err)
+		}
 	}
 
 	for _, d := range dirs {
@@ -1081,9 +1125,19 @@ func serve(sys System, options Options, console io.Writer) error {
 
 	defer func() { _ = conn.Close() }()
 
-	return session.Serve(conn, func(request session.Request) (session.Process, error) {
+	starts := []session.Starter{func(request session.Request) (session.Process, error) {
 		return start(sys, options, request, console)
-	})
+	}}
+
+	if options.Clone != "" {
+		starts = append(starts, func(request session.Request) (session.Process, error) {
+			t := newCloneRun(sys, options, request, "collect")
+
+			return startTask(t, t.collect), nil
+		})
+	}
+
+	return session.Serve(conn, starts...)
 }
 
 // start runs the command on a new terminal of the size the host asked for,
@@ -1095,7 +1149,17 @@ func start(sys System, options Options, request session.Request, console io.Writ
 	}
 
 	if options.Task {
-		return startTask(newTask(sys, options, request)), nil
+		t := newTask(sys, options, request)
+
+		return startTask(t, t.steps), nil
+	}
+
+	if options.Clone != "" {
+		if err := newCloneRun(sys, options, request, "clone").prepareClone(options.Clone); err != nil {
+			say(console, "aibox: %v\n", err)
+
+			return nil, err
+		}
 	}
 
 	if !request.Terminal {
@@ -1245,21 +1309,33 @@ func say(console io.Writer, format string, args ...any) {
 const (
 	imagePrompt          = "/etc/aibox/prompt.md"
 	imageTaskPrompt      = "/etc/aibox/task.md"
+	projectPrompt        = "/etc/aibox/project.md"
+	clonePrompt          = "/etc/aibox/clone.md"
 	hostPrompt           = "/etc/aibox/host.md"
 	hyperVHostPrompt     = "/etc/aibox/hyperv/host.md"
 	hyperVTaskHostPrompt = "/etc/aibox/hyperv/task-host.md"
 )
 
-// writePrompts joins the system prompts of the image with the part of the
-// host the VM runs on.
-func writePrompts(sys System, hyperV bool) error {
+// writePrompts joins the system prompts of the image with the part about
+// the project and the part of the host the VM runs on. A session on a
+// clone has the part of the host that a task has, since its clone is on
+// the disk of the VM too.
+func writePrompts(sys System, options Options) error {
 	host, taskHost := hostPrompt, hostPrompt
-	if hyperV {
+	if options.HyperV {
 		host, taskHost = hyperVHostPrompt, hyperVTaskHostPrompt
 	}
 
-	for _, p := range []struct{ path, image, host string }{{prompt, imagePrompt, host}, {taskPrompt, imageTaskPrompt, taskHost}} {
-		if err := sys.Join(p.path, p.image, p.host); err != nil {
+	project := projectPrompt
+	if options.Clone != "" {
+		project, host = clonePrompt, taskHost
+	}
+
+	for _, p := range []struct {
+		path  string
+		parts []string
+	}{{prompt, []string{imagePrompt, project, host}}, {taskPrompt, []string{imageTaskPrompt, taskHost}}} {
+		if err := sys.Join(p.path, p.parts...); err != nil {
 			return fmt.Errorf("write the system prompt %s: %w", p.path, err)
 		}
 	}

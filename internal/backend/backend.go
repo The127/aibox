@@ -59,6 +59,12 @@ type Spec struct {
 	// the Mounts, which are read-only too.
 	Task     string
 	Progress io.Writer
+	// Clone is the host folder of a session on a clone, shared read-only.
+	// The VM then has no Project: the project is a clone on the state
+	// disk, new from the clone share, or the one an earlier session left
+	// with KeepClone.
+	Clone     string
+	KeepClone bool
 	// RemoveState removes the state disk as soon as the VM has it open, so
 	// that it is gone with the VM. aibox can remove no file once the VM
 	// runs.

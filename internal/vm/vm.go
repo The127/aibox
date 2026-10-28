@@ -61,7 +61,8 @@ const baseCmdline = RootCmdline + " panic=-1 reboot=t"
 // on a second disk. Shell boots it into a shell instead of Claude Code,
 // Resume is the ID of the session Claude Code goes on with, or empty, Port
 // tells the guest it reaches the host over the virtio port, not vsock, Task
-// runs the task of the task share unattended, Mise installs the tools of
+// runs the task of the task share unattended, Clone is the session on a
+// clone, CloneNew or CloneKeep, or empty, Mise installs the tools of
 // the project with mise before the command starts. HyperV tells the guest it
 // runs on Hyper-V, which shares the folders of the host over Plan 9 and has
 // SCSI disks, instead of virtio-fs and virtio disks.
@@ -83,6 +84,7 @@ type Machine struct {
 	Resume       string
 	Port         bool
 	Task         bool
+	Clone        string
 	Mise         bool
 	HyperV       bool
 	ProxyPort    uint32
@@ -147,6 +149,13 @@ const (
 	kvmSet    = 1
 	rootfsSet = 2
 	stateSet  = 3
+)
+
+// The ways a session on a clone starts: on a new clone of the clone share,
+// or on the clone an earlier session left.
+const (
+	CloneNew  = "new"
+	CloneKeep = "keep"
 )
 
 // MaxShares is how many shares fit into the 24 virtio slots of QEMU's
@@ -244,6 +253,10 @@ func (m Machine) GuestWords() []string {
 
 	if m.Task {
 		words = append(words, "aibox.task")
+	}
+
+	if m.Clone != "" {
+		words = append(words, "aibox.clone="+m.Clone)
 	}
 
 	if m.Mise {

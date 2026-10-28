@@ -62,6 +62,18 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		shares = []vm.Share{{Tag: "task", Dir: spec.Task, ReadOnly: true}}
 	}
 
+	// a session on a clone has the clone on the state disk in place of the
+	// project
+	cloneMode := ""
+	if spec.Clone != "" {
+		shares = []vm.Share{{Tag: "clone", Dir: spec.Clone, ReadOnly: true}, {Tag: "home", Dir: spec.Home}}
+		cloneMode = vm.CloneNew
+
+		if spec.KeepClone {
+			cloneMode = vm.CloneKeep
+		}
+	}
+
 	// the guest learns the path of a mount from the kernel command line, so
 	// the tag only has to be unique
 	for i, mount := range spec.Mounts {
@@ -79,6 +91,7 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		Shell:        spec.Shell,
 		Resume:       spec.Resume,
 		Task:         spec.Task != "",
+		Clone:        cloneMode,
 		Mise:         spec.Mise,
 		Loopback:     spec.Loopback,
 	}, nil

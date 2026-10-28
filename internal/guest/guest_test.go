@@ -41,6 +41,8 @@ func TestParseCmdline(t *testing.T) {
 		"root=/dev/vda rw console=ttyS0 quiet": {Console: "/dev/ttyS0"},
 		"console=hvc0 aibox.shell":             {Console: "/dev/hvc0", Shell: true},
 		"console=hvc0 aibox.task":              {Console: "/dev/hvc0", Task: true},
+		"console=hvc0 aibox.clone=new":         {Console: "/dev/hvc0", Clone: "new"},
+		"console=hvc0 aibox.clone=keep":        {Console: "/dev/hvc0", Clone: "keep"},
 		"console=hvc0 aibox.mise":              {Console: "/dev/hvc0", Mise: true},
 		"console=hvc0 aibox.port":              {Console: "/dev/hvc0", Port: true},
 		"console=hvc0 aibox.resume=0b9d3c4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e": {
@@ -95,6 +97,19 @@ func TestParseCmdlineRejectsAResumeThatIsNoSessionID(t *testing.T) {
 	assert.ErrorIs(t, err, vm.ErrBadSessionID)
 	assert.ErrorContains(t, err, "aibox.resume")
 	assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
+}
+
+func TestParseCmdlineRejectsAnUnknownClone(t *testing.T) {
+	for _, word := range []string{"aibox.clone", "aibox.clone=", "aibox.clone=old"} {
+		t.Run(word, func(t *testing.T) {
+			// act
+			options, err := guest.ParseCmdline("console=hvc0 " + word)
+
+			// assert
+			assert.ErrorIs(t, err, guest.ErrBadClone)
+			assert.Equal(t, guest.Options{Console: "/dev/hvc0"}, options)
+		})
+	}
 }
 
 func TestParseCmdlineRejectsABadPort(t *testing.T) {
@@ -765,7 +780,7 @@ func TestRunSetsUpTheVMThenRunsClaudeCodeAndPowersOff(t *testing.T) {
 		"link /dev/stdin -> /proc/self/fd/0",
 		"link /dev/stdout -> /proc/self/fd/1",
 		"link /dev/stderr -> /proc/self/fd/2",
-		"join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/host.md",
+		"join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/project.md /etc/aibox/host.md",
 		"join /run/aibox/task.md <- /etc/aibox/task.md /etc/aibox/host.md",
 		"hostname aibox",
 		"dial host 5432",
@@ -845,6 +860,54 @@ func TestRunPutsTheHomeAndTheProjectOfATaskOnTheStateDisk(t *testing.T) {
 	}, "\n"))
 	assert.Contains(t, sys.calls, "mkdir /sys/fs/cgroup/aibox")
 	assert.Equal(t, mounted{"task", "/var/lib/aibox/task", "virtiofs", syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/task"])
+}
+
+func TestRunPutsANewCloneOnTheStateDiskInPlaceOfTheProjectShare(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.clone=new"}
+
+	// act
+	err := guest.Run(sys)
+
+	// assert
+	require.ErrorContains(t, err, "start the command", "the clone has no git in the test")
+
+	calls := strings.Join(sys.calls, "\n")
+	assert.NotContains(t, calls, "mount project /project")
+	assert.Contains(t, calls, "mount home /home/user")
+	assert.Contains(t, calls, strings.Join([]string{
+		"mount /dev/vdb /var/lib/aibox/state",
+		"remove /var/lib/aibox/state/clone",
+		"own /var/lib/aibox/state/clone",
+		"mount /var/lib/aibox/state/clone /project",
+		"own /var/lib/aibox/state/local",
+	}, "\n"))
+	assert.Contains(t, sys.calls, "mkdir /sys/fs/cgroup/aibox")
+	assert.Contains(t, sys.calls, "join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/clone.md /etc/aibox/host.md")
+	assert.Equal(t, mounted{"clone", "/var/lib/aibox/clone", "virtiofs", syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NOEXEC | syscall.MS_NODEV, ""}, sys.mounts["/var/lib/aibox/clone"])
+}
+
+func TestRunKeepsTheCloneOfTheLastSession(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.clone=keep"}
+
+	// act
+	_ = guest.Run(sys)
+
+	// assert
+	assert.Contains(t, sys.calls, "mount /var/lib/aibox/state/clone /project")
+	assert.NotContains(t, sys.calls, "remove /var/lib/aibox/state/clone")
+}
+
+func TestRunGivesACloneOnHyperVThePartOfTheHostThatATaskHas(t *testing.T) {
+	// arrange
+	sys := &fakeSystem{t: t, cmdline: withTerminal + " aibox.clone=new aibox.hyperv"}
+
+	// act
+	_ = guest.Run(sys)
+
+	// assert
+	assert.Contains(t, sys.calls, "join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/clone.md /etc/aibox/hyperv/task-host.md")
 }
 
 func TestRunPowersOffWhenATaskHasAStateDiskThatIsNotBlank(t *testing.T) {
@@ -1065,7 +1128,7 @@ func TestRunGivesClaudeCodeThePromptOfWindowsOnHyperV(t *testing.T) {
 
 	// assert
 	require.NoError(t, err)
-	assert.Contains(t, sys.calls, "join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/hyperv/host.md")
+	assert.Contains(t, sys.calls, "join /run/aibox/prompt.md <- /etc/aibox/prompt.md /etc/aibox/project.md /etc/aibox/hyperv/host.md")
 	assert.Contains(t, sys.calls, "join /run/aibox/task.md <- /etc/aibox/task.md /etc/aibox/hyperv/task-host.md")
 }
 
@@ -1516,6 +1579,12 @@ func (s *fakeSystem) Format(device string) error {
 
 func (s *fakeSystem) Own(path string) error {
 	s.record("own " + path)
+
+	return nil
+}
+
+func (s *fakeSystem) RemoveAll(path string) error {
+	s.record("remove " + path)
 
 	return nil
 }

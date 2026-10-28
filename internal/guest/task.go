@@ -55,9 +55,8 @@ const (
 
 	// aibox commits what the task left uncommitted under its own name, and
 	// the commits of the task too when the host gave no identity
-	aiboxName        = "aibox"
-	aiboxEmail       = "aibox@localhost"
-	leftoversMessage = "aibox: what the task left uncommitted"
+	aiboxName  = "aibox"
+	aiboxEmail = "aibox@localhost"
 )
 
 var (
@@ -87,6 +86,14 @@ type taskRun struct {
 	result  task.Result
 	// mise says whether the tools of the project come in before Claude Code
 	mise bool
+	// branch is the branch the bundle carries, actor who worked on it, in
+	// the words aibox uses for it
+	branch string
+	actor  string
+	// stepName is what the cgroups of the steps are called, with their
+	// number, and ends the cgroups endAll kills
+	stepName string
+	ends     []string
 }
 
 func newTask(sys Processes, options Options, request session.Request) *taskRun {
@@ -100,17 +107,21 @@ func newTask(sys Processes, options Options, request session.Request) *taskRun {
 		progress:   io.Discard,
 		gitTimeout: gitTimeout,
 		mise:       options.Mise,
+		branch:     task.Branch,
+		actor:      "the task",
+		stepName:   "step",
+		ends:       []string{userCgroup, stepCgroup},
 	}
 }
 
-// run runs the task and writes the results to w as a tar archive, each
+// run runs the steps and writes the results to w as a tar archive, each
 // file as soon as it is complete, so that what the task did is out before
-// the steps that come after it. It returns 0 when the task went through to
-// its end, and 1 when a step failed, which result.json says.
-func (t *taskRun) run(w io.Writer) int {
+// the steps that come after it. It returns 0 when the steps went through to
+// their end, and 1 when a step failed, which result.json says.
+func (t *taskRun) run(w io.Writer, steps func() error) int {
 	t.archive = tar.NewWriter(w)
 
-	if err := t.steps(); err != nil {
+	if err := steps(); err != nil {
 		t.result.Error = err.Error()
 		t.say("%v\n", err)
 	}
@@ -156,7 +167,7 @@ func (t *taskRun) steps() error {
 		return fmt.Errorf("remove the remote of the input: %w", err)
 	}
 
-	branch := strings.TrimPrefix(task.Branch, "refs/heads/")
+	branch := strings.TrimPrefix(t.branch, "refs/heads/")
 	if err := t.git(nil, "switch", "--quiet", "--create", branch); err != nil {
 		return fmt.Errorf("make the branch %s: %w", branch, err)
 	}
@@ -187,19 +198,25 @@ func (t *taskRun) steps() error {
 
 	t.gitDeadline = time.Now().Add(t.gitTimeout)
 
+	return t.sendChanges(base)
+}
+
+// sendChanges commits what was left uncommitted and keeps a bundle of the
+// branch from the base on, unless nothing changed.
+func (t *taskRun) sendChanges(base string) error {
 	if err := t.commitLeftovers(); err != nil {
-		warning := fmt.Sprintf("commit what the task left uncommitted: %v", err)
+		warning := fmt.Sprintf("commit what %s left uncommitted: %v", t.actor, err)
 		t.result.Warnings = append(t.result.Warnings, warning)
 		t.say("%s\n", warning)
 	}
 
-	// the task may have moved to another branch, and its last commit is
-	// what it did
-	if err := t.git(nil, "update-ref", task.Branch, "HEAD"); err != nil {
-		return fmt.Errorf("point %s at the last commit: %w", task.Branch, err)
+	// work may have moved to another branch, and its last commit is what
+	// was done
+	if err := t.git(nil, "update-ref", t.branch, "HEAD"); err != nil {
+		return fmt.Errorf("point %s at the last commit: %w", t.branch, err)
 	}
 
-	head, err := t.commit(task.Branch)
+	head, err := t.commit(t.branch)
 	if err != nil {
 		return err
 	}
@@ -207,7 +224,7 @@ func (t *taskRun) steps() error {
 	t.result.Head = head
 
 	if head == base {
-		t.say("the task made no changes\n")
+		t.say("%s made no changes\n", t.actor)
 
 		return nil
 	}
@@ -236,28 +253,37 @@ func (t *taskRun) setIdentity(settings task.Settings) error {
 	return t.git(nil, "config", "--global", "user.email", email)
 }
 
-// readSettings reads task.json. A field the VM does not know is an error,
-// since the host would expect it to count.
+// readSettings reads task.json.
 func readSettings(path string) (task.Settings, error) {
-	content, err := os.ReadFile(path) //nolint:gosec // the path is aibox's own
-	if err != nil {
+	var settings task.Settings
+
+	if err := readStrict(path, &settings); err != nil {
 		return task.Settings{}, fmt.Errorf("read the settings of the task: %w", err)
 	}
 
-	var settings task.Settings
+	return settings, settings.Check()
+}
+
+// readStrict reads the JSON file into v. A field the VM does not know is an
+// error, since the host would expect it to count.
+func readStrict(path string, v any) error {
+	content, err := os.ReadFile(path) //nolint:gosec // the path is aibox's own
+	if err != nil {
+		return err
+	}
 
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 
-	if err := decoder.Decode(&settings); err != nil {
-		return task.Settings{}, fmt.Errorf("read %s: %w: %w", task.SettingsFile, task.ErrBadSettings, err)
+	if err := decoder.Decode(v); err != nil {
+		return fmt.Errorf("%w: %w", task.ErrBadSettings, err)
 	}
 
 	if decoder.More() {
-		return task.Settings{}, fmt.Errorf("read %s: %w: %w", task.SettingsFile, task.ErrBadSettings, errTrailing)
+		return fmt.Errorf("%w: %w", task.ErrBadSettings, errTrailing)
 	}
 
-	return settings, settings.Check()
+	return nil
 }
 
 // claude runs Claude Code on the prompt and keeps what it prints, up to
@@ -374,8 +400,8 @@ func (t *taskRun) installTools(settings task.Settings) error {
 	return nil
 }
 
-// commitLeftovers commits what the task left in the working tree, so that
-// the bundle carries it.
+// commitLeftovers commits what was left in the working tree, so that the
+// bundle carries it.
 func (t *taskRun) commitLeftovers() error {
 	var status bytes.Buffer
 
@@ -387,14 +413,15 @@ func (t *taskRun) commitLeftovers() error {
 		return nil
 	}
 
-	t.say("committing what the task left uncommitted\n")
+	t.say("committing what %s left uncommitted\n", t.actor)
 
 	if err := t.git(nil, "add", "--all"); err != nil {
 		return err
 	}
 
 	// the variables win over any identity the task set up
-	commit := t.command(gitPath, gitArgs("-c", "commit.gpgSign=false", "commit", "--quiet", "--no-verify", "--message", leftoversMessage)...)
+	message := "aibox: what " + t.actor + " left uncommitted"
+	commit := t.command(gitPath, gitArgs("-c", "commit.gpgSign=false", "commit", "--quiet", "--no-verify", "--message", message)...)
 	commit.Env = append(commit.Env,
 		"GIT_AUTHOR_NAME="+aiboxName,
 		"GIT_AUTHOR_EMAIL="+aiboxEmail,
@@ -420,7 +447,7 @@ func (t *taskRun) bundle(base string) error {
 
 	defer changes.close()
 
-	if err := t.git(changes, "bundle", "create", "--quiet", "-", base+".."+task.Branch); err != nil {
+	if err := t.git(changes, "bundle", "create", "--quiet", "-", base+".."+t.branch); err != nil {
 		return fmt.Errorf("bundle the changes: %w", err)
 	}
 
@@ -670,7 +697,7 @@ func (t *taskRun) execute(s *step) (int, error) {
 // at least on Linux 6.18 and 7.2, so no step reuses one.
 func (t *taskRun) newCgroup(user bool) (string, error) {
 	t.cgroups++
-	name := "step" + strconv.Itoa(t.cgroups)
+	name := t.stepName + strconv.Itoa(t.cgroups)
 
 	create, cgroup := t.sys.Mkdir, stepCgroup+"/"+name
 	if user {
@@ -684,9 +711,15 @@ func (t *taskRun) newCgroup(user bool) (string, error) {
 	return cgroup, nil
 }
 
-// endAll kills every process of the user and of the steps of aibox.
+// endAll kills every process in the cgroups of ends: those of the user and
+// of the steps of aibox for a task.
 func (t *taskRun) endAll() error {
-	return errors.Join(t.sys.Kill(userCgroup), t.sys.Kill(stepCgroup))
+	var errs []error
+	for _, cgroup := range t.ends {
+		errs = append(errs, t.sys.Kill(cgroup))
+	}
+
+	return errors.Join(errs...)
 }
 
 // output is a result on its way into out.
@@ -873,7 +906,7 @@ type taskProcess struct {
 	code              int
 }
 
-func startTask(t *taskRun) *taskProcess {
+func startTask(t *taskRun, steps func() error) *taskProcess {
 	results, resultsWriter := io.Pipe()
 	progress, progressWriter := io.Pipe()
 
@@ -883,7 +916,7 @@ func startTask(t *taskRun) *taskProcess {
 	go func() {
 		defer close(p.done)
 
-		p.code = t.run(resultsWriter)
+		p.code = t.run(resultsWriter, steps)
 
 		_ = resultsWriter.Close()
 		_ = progressWriter.Close()

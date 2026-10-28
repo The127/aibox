@@ -194,6 +194,12 @@ func (Linux) Own(path string) error {
 	return os.Chown(path, int(vm.GuestUID), int(vm.GuestGID))
 }
 
+// RemoveAll removes the folder and everything in it. os.RemoveAll follows
+// no links.
+func (Linux) RemoveAll(path string) error {
+	return os.RemoveAll(path)
+}
+
 // Symlink creates a symbolic link.
 func (Linux) Symlink(target, path string) error {
 	return os.Symlink(target, path)

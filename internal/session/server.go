@@ -147,8 +147,7 @@ type directTCPIP struct {
 }
 
 // openOther serves a channel besides the session: a connection to a port
-// on the loopback of the VM. It turns away a second session and any other
-// channel.
+// on the loopback of the VM. It turns away any other channel.
 func openOther(newChannel ssh.NewChannel) {
 	if newChannel.ChannelType() != "direct-tcpip" {
 		_ = newChannel.Reject(ssh.UnknownChannelType, "only a session and connections to the loopback are served")

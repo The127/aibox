@@ -129,14 +129,9 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	var forwardAll func(ctx context.Context, dial session.Dial)
-	if len(s.Forwards) > 0 {
-		forwardAll = func(ctx context.Context, dial session.Dial) {
-			forward(ctx, s.Forwards, dial)
-		}
-	}
-
-	c, err := session.Connect(conn, forwardAll)
+	c, err := session.Connect(conn, func(ctx context.Context, dial session.Dial) {
+		forward(ctx, s.Forwards, dial)
+	})
 	if err != nil {
 		return Outcome{attached: true, err: err}
 	}

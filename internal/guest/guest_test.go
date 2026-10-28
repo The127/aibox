@@ -1665,16 +1665,25 @@ func (s *fakeSystem) DialHost(port uint32) (net.Conn, error) {
 	go func() {
 		defer func() { _ = hostSide.Close() }()
 
+		conn, err := session.Connect(hostSide, nil)
+		if err != nil {
+			s.attached <- attachResult{err: err}
+
+			return
+		}
+
+		defer func() { _ = conn.Close() }()
+
 		if s.noTerminal {
 			client := session.Exec{In: strings.NewReader(s.input), Out: &s.screen, Errors: &s.errScreen, Env: s.clientEnv}
-			code, err := client.Run(hostSide)
+			code, err := client.Run(conn)
 			s.attached <- attachResult{code: code, err: err}
 
 			return
 		}
 
 		client := session.Client{In: strings.NewReader(""), Out: &s.screen, Term: "xterm-kitty", Size: session.Size{Rows: 50, Cols: 160}, Env: s.clientEnv}
-		code, err := client.Attach(hostSide)
+		code, err := client.Attach(conn)
 		s.attached <- attachResult{code: code, err: err}
 	}()
 

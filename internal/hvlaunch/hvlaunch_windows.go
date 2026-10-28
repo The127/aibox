@@ -319,6 +319,7 @@ func (b Backend) Run(ctx context.Context, spec backend.Spec) error {
 		OnPaste:   spec.OnPaste,
 		PasteAltV: spec.PasteAltV,
 		Forwards:  spec.Forwards,
+		Then:      spec.Then,
 	})
 
 	// the service ends a VM that did not start, so there is none to stop

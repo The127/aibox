@@ -35,9 +35,6 @@ type Client struct {
 	// on. PasteAltV makes Alt+V a paste key too, which goes on as Ctrl+V.
 	OnPaste   func() []byte
 	PasteAltV bool
-	// Forward runs while the session does, or is nil. Its dial connects to
-	// a port on the loopback of the VM. It must return once ctx ends.
-	Forward func(ctx context.Context, dial Dial)
 }
 
 // Dial connects to a port on the loopback of the VM.
@@ -172,13 +169,12 @@ func sizeOfTerminal(fd int) (Size, error) {
 
 // Attach opens a session on the connection, runs it on the client's
 // terminal and returns the exit code of the command.
-func (c Client) Attach(conn net.Conn) (int, error) {
-	client, s, err := open(conn)
+func (c Client) Attach(conn *Conn) (int, error) {
+	s, err := conn.newSession()
 	if err != nil {
 		return 0, err
 	}
 
-	defer func() { _ = client.Close() }()
 	defer func() { _ = s.Close() }()
 
 	s.Stdin = c.In
@@ -206,10 +202,6 @@ func (c Client) Attach(conn net.Conn) (int, error) {
 		return 0, err
 	}
 
-	if c.Forward != nil {
-		defer runForward(client, c.Forward)()
-	}
-
 	stop := make(chan struct{})
 	defer close(stop)
 
@@ -233,13 +225,12 @@ type Exec struct {
 // Run opens a session on the connection, runs the command on pipes and
 // returns its exit code once its output has arrived. A command may end
 // without reading all of In, which is no error.
-func (e Exec) Run(conn net.Conn) (int, error) {
-	client, s, err := open(conn)
+func (e Exec) Run(conn *Conn) (int, error) {
+	s, err := conn.newSession()
 	if err != nil {
 		return 0, err
 	}
 
-	defer func() { _ = client.Close() }()
 	defer func() { _ = s.Close() }()
 
 	s.Stdout = e.Out
@@ -266,31 +257,19 @@ func (e Exec) Run(conn net.Conn) (int, error) {
 	return exitCode(s.Wait())
 }
 
-// runForward starts forward on the connection to the VM. The returned
-// function ends it, closes the connection and waits for forward to return.
-// A dial waits for the VM to answer, which only closing the connection
-// ends, so the connection goes before the wait.
-func runForward(client *ssh.Client, forward func(ctx context.Context, dial Dial)) func() {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-
-		forward(ctx, func(port uint16) (net.Conn, error) {
-			return client.Dial("tcp", net.JoinHostPort(vmLoopback, strconv.Itoa(int(port))))
-		})
-	}()
-
-	return func() {
-		cancel()
-		_ = client.Close()
-		<-done
-	}
+// Conn is the SSH connection to the VM. It carries the sessions one after
+// another, and the connections of its forward while it is open.
+type Conn struct {
+	client    *ssh.Client
+	cancel    context.CancelFunc
+	forwarded chan struct{}
 }
 
-// open does the SSH handshake on the connection and opens a session.
-func open(conn net.Conn) (*ssh.Client, *ssh.Session, error) {
+// Connect does the SSH handshake on the connection and starts forward on
+// it, unless forward is nil. The dial of forward connects to a port on the
+// loopback of the VM. Forward must return once its ctx ends, which Close
+// does.
+func Connect(conn net.Conn, forward func(ctx context.Context, dial Dial)) (*Conn, error) {
 	config := &ssh.ClientConfig{
 		User: "user",
 		// the connection is a vsock to the VM aibox started, which no other
@@ -300,19 +279,45 @@ func open(conn net.Conn) (*ssh.Client, *ssh.Session, error) {
 
 	clientConn, channels, requests, err := ssh.NewClientConn(conn, "aibox", config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ssh handshake: %w", err)
+		return nil, fmt.Errorf("ssh handshake: %w", err)
 	}
 
-	client := ssh.NewClient(clientConn, channels, requests)
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &Conn{client: ssh.NewClient(clientConn, channels, requests), cancel: cancel, forwarded: make(chan struct{})}
 
-	s, err := client.NewSession()
+	go func() {
+		defer close(c.forwarded)
+
+		if forward == nil {
+			return
+		}
+
+		forward(ctx, func(port uint16) (net.Conn, error) {
+			return c.client.Dial("tcp", net.JoinHostPort(vmLoopback, strconv.Itoa(int(port))))
+		})
+	}()
+
+	return c, nil
+}
+
+// Close ends the connection and waits for forward to return. A dial waits
+// for the VM to answer, which only closing the connection ends, so the
+// connection goes before the wait.
+func (c *Conn) Close() error {
+	c.cancel()
+	err := c.client.Close()
+	<-c.forwarded
+
+	return err
+}
+
+func (c *Conn) newSession() (*ssh.Session, error) {
+	s, err := c.client.NewSession()
 	if err != nil {
-		_ = client.Close()
-
-		return nil, nil, fmt.Errorf("open the session: %w", err)
+		return nil, fmt.Errorf("open the session: %w", err)
 	}
 
-	return client, s, nil
+	return s, nil
 }
 
 // start sends the variables and starts the command of the session.

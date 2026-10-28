@@ -68,6 +68,7 @@ func (b Backend) prepare(spec backend.Spec) (vm.Machine, Options, error) {
 		OnPaste:     spec.OnPaste,
 		PasteAltV:   spec.PasteAltV,
 		Forwards:    spec.Forwards,
+		Then:        spec.Then,
 		NoSandbox:   spec.Unsandboxed,
 	}
 

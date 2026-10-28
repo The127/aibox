@@ -738,8 +738,13 @@ func TestTaskSendsItsResultsAndWhatItDoesOverASession(t *testing.T) {
 
 	client := session.Exec{In: strings.NewReader(""), Out: &out, Errors: &progress}
 
+	conn, err := session.Connect(hostSide, nil)
+	require.NoError(t, err)
+
+	defer func() { _ = conn.Close() }()
+
 	// act
-	code, err := client.Run(hostSide)
+	code, err := client.Run(conn)
 
 	// assert
 	require.NoError(t, err)

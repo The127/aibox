@@ -66,9 +66,12 @@ type Piped interface {
 // Starter runs the command of a session as the client asked for it.
 type Starter func(request Request) (Process, error)
 
-// Serve runs an SSH server on the connection, serves the first session with
-// a command from start and returns when that session is over.
-func Serve(conn net.Conn, start Starter) error {
+// Serve runs an SSH server on the connection and serves one session for
+// each starter, one after another, with a command from that starter. It
+// returns when the last session is over. The client may open each session
+// once the one before it ended. A session beyond the last starter is
+// refused.
+func Serve(conn net.Conn, starts ...Starter) error {
 	key, err := hostKey()
 	if err != nil {
 		return err
@@ -86,11 +89,13 @@ func Serve(conn net.Conn, start Starter) error {
 
 	go ssh.DiscardRequests(requests)
 
-	for newChannel := range channels {
-		if newChannel.ChannelType() != "session" {
-			go openOther(newChannel)
+	sessions := make(chan ssh.NewChannel, len(starts))
+	go dispatch(channels, sessions)
 
-			continue
+	for _, start := range starts {
+		newChannel, ok := <-sessions
+		if !ok {
+			return errNoSession
 		}
 
 		channel, channelRequests, err := newChannel.Accept()
@@ -98,18 +103,34 @@ func Serve(conn net.Conn, start Starter) error {
 			return fmt.Errorf("accept the session: %w", err)
 		}
 
-		go func() {
-			for newChannel := range channels {
-				go openOther(newChannel)
-			}
-		}()
-
 		s := &served{channel: channel, start: start, exited: make(chan result, 1)}
 
-		return s.serve(channelRequests)
+		if err := s.serve(channelRequests); err != nil {
+			return err
+		}
 	}
 
-	return errNoSession
+	return nil
+}
+
+// dispatch passes as many sessions to sessions as it has room for, refuses
+// the sessions after them and serves the other channels on their own.
+func dispatch(channels <-chan ssh.NewChannel, sessions chan<- ssh.NewChannel) {
+	defer close(sessions)
+
+	left := cap(sessions)
+
+	for newChannel := range channels {
+		switch {
+		case newChannel.ChannelType() != "session":
+			go openOther(newChannel)
+		case left > 0:
+			left--
+			sessions <- newChannel
+		default:
+			_ = newChannel.Reject(ssh.Prohibited, "no more sessions are served")
+		}
+	}
 }
 
 // vmLoopback is the address a client may connect to through the session:

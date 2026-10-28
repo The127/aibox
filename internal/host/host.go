@@ -57,8 +57,11 @@ type Session struct {
 	OnPaste   func() []byte
 	PasteAltV bool
 	// Forwards are listeners whose connections go into the VM while the
-	// session on the terminal runs. They are closed when it ends.
+	// sessions run. They are closed when the sessions are over.
 	Forwards []backend.Forward
+	// Then is a session without a terminal that runs once the first
+	// session ended, or nil.
+	Then *backend.Then
 }
 
 // Outcome is how the terminal session went: whether the VM connected, the
@@ -112,8 +115,9 @@ func ServeTerminal(ctx context.Context, listener net.Listener, s Session) func()
 }
 
 // attach waits for the VM to connect and runs the session on the terminal
-// of the person. It reports whether the VM connected and the exit code of
-// the command. The connection is closed when the context ends.
+// of the person, then the session of Then. It reports whether the VM
+// connected and the exit code of the command of the first session. The
+// connection is closed when the context ends.
 func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	conn, err := listener.Accept()
 	if err != nil {
@@ -125,10 +129,41 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
+	var forwardAll func(ctx context.Context, dial session.Dial)
+	if len(s.Forwards) > 0 {
+		forwardAll = func(ctx context.Context, dial session.Dial) {
+			forward(ctx, s.Forwards, dial)
+		}
+	}
+
+	c, err := session.Connect(conn, forwardAll)
+	if err != nil {
+		return Outcome{attached: true, err: err}
+	}
+
+	defer func() { _ = c.Close() }()
+
+	ended := runFirst(ctx, c, s)
+	if ended.err != nil || s.Then == nil || ctx.Err() != nil {
+		return ended
+	}
+
+	// the command of Then says how it went in what it prints
+	then := session.Exec{Out: s.Then.Stdout, Errors: s.Then.Stderr}
+	if _, err := then.Run(c); err != nil && ctx.Err() == nil {
+		ended.err = err
+	}
+
+	return ended
+}
+
+// runFirst runs the first session, on the terminal of the person or, with
+// Errors, without one.
+func runFirst(ctx context.Context, c *session.Conn, s Session) Outcome {
 	if s.Errors != nil {
 		client := session.Exec{In: strings.NewReader(""), Out: s.Stdout, Errors: s.Errors, Env: s.Env}
 
-		code, err := client.Run(conn)
+		code, err := client.Run(c)
 		if err != nil && ctx.Err() == nil {
 			return Outcome{attached: true, err: err}
 		}
@@ -145,13 +180,7 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	client.OnPaste = s.OnPaste
 	client.PasteAltV = s.PasteAltV
 
-	if len(s.Forwards) > 0 {
-		client.Forward = func(ctx context.Context, dial session.Dial) {
-			forward(ctx, s.Forwards, dial)
-		}
-	}
-
-	code, err := client.Attach(conn)
+	code, err := client.Attach(c)
 
 	restore()
 

@@ -96,8 +96,18 @@ type Spec struct {
 	OnPaste   func() []byte
 	PasteAltV bool
 	// Forwards are listeners on the host whose connections go into the VM
-	// while its session runs.
+	// while its sessions run.
 	Forwards []Forward
+	// Then is a session without a terminal that runs once the session on
+	// the terminal ended, or nil.
+	Then *Then
+}
+
+// Then is a session without a terminal that runs once the session before
+// it ended. Stdout gets what its command prints, Stderr its standard error.
+type Then struct {
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // Forward is a listener on the host whose connections go to Port on the

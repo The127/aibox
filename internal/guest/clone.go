@@ -46,28 +46,37 @@ func readClone(path string) (task.Clone, error) {
 	var clone task.Clone
 
 	if err := readStrict(path, &clone); err != nil {
-		return task.Clone{}, fmt.Errorf("read the settings of the clone: %w", err)
+		return task.Clone{}, fmt.Errorf("read %s: %w", task.CloneFile, err)
 	}
 
-	return clone, clone.Check()
+	if err := clone.Check(); err != nil {
+		return task.Clone{}, fmt.Errorf("read %s: %w", task.CloneFile, err)
+	}
+
+	return clone, nil
 }
 
 // prepareClone makes a new clone in the project, or checks that the one an
-// earlier session left is there.
+// earlier session left is there and started from the base, which the
+// bundle at the end starts from.
 func (t *taskRun) prepareClone(mode string) error {
 	t.gitDeadline = time.Now().Add(t.gitTimeout)
+
+	clone, err := readClone(filepath.Join(t.input, task.CloneFile))
+	if err != nil {
+		return err
+	}
 
 	if mode == vm.CloneKeep {
 		if _, err := t.commit("HEAD"); err != nil {
 			return fmt.Errorf("there is no clone to go on with: %w", err)
 		}
 
-		return nil
-	}
+		if err := t.git(nil, "merge-base", "--is-ancestor", clone.Base, "HEAD"); err != nil {
+			return fmt.Errorf("the clone did not start from %s: %w", clone.Base, err)
+		}
 
-	clone, err := readClone(filepath.Join(t.input, task.CloneFile))
-	if err != nil {
-		return err
+		return nil
 	}
 
 	bundle := filepath.Join(t.input, task.InputBundle)
@@ -117,8 +126,11 @@ func (t *taskRun) collect() error {
 		return fmt.Errorf("make %s: %w", t.out, err)
 	}
 
+	// the commits are worth sending even when something still runs
 	if err := t.sys.Kill(userCgroup); err != nil {
-		return fmt.Errorf("end what the session left running: %w", err)
+		warning := fmt.Sprintf("end what the session left running: %v", err)
+		t.result.Warnings = append(t.result.Warnings, warning)
+		t.say("%s\n", warning)
 	}
 
 	t.gitDeadline = time.Now().Add(t.gitTimeout)

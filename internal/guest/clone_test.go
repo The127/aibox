@@ -106,6 +106,34 @@ func TestAKeptCloneNeedsAClone(t *testing.T) {
 	assert.ErrorContains(t, err, "no clone to go on with")
 }
 
+func TestAKeptCloneMustHaveStartedFromTheBase(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+	require.NoError(t, f.prepare(vm.CloneNew))
+	f.writeClone(task.Clone{Base: strings.Repeat("a", 40)})
+
+	// act
+	err := f.prepare(vm.CloneKeep)
+
+	// assert
+	assert.ErrorContains(t, err, "did not start from")
+}
+
+func TestANewCloneEndsOnlyTheCgroupsOfItsSteps(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+
+	// act
+	err := f.prepare(vm.CloneNew)
+
+	// assert
+	require.NoError(t, err)
+	assert.NotEmpty(t, f.processes.kills)
+	assert.NotContains(t, f.processes.kills, "/sys/fs/cgroup/user", "the session starts in a cgroup of the user afterwards")
+	assert.Contains(t, f.processes.made, "/sys/fs/cgroup/aibox/clone1")
+	assert.Empty(t, f.processes.delegated)
+}
+
 func TestAKeptCloneLeavesTheCloneAsItIs(t *testing.T) {
 	// arrange
 	f := newCloneFixture(t)
@@ -143,6 +171,22 @@ func TestCollectSendsTheCommitsAndWhatWasLeftUncommitted(t *testing.T) {
 	assert.Equal(t, "aibox: what the session left uncommitted by aibox\nfix the README by Someone\n", f.fetchClone(r))
 	assert.Equal(t, "/sys/fs/cgroup/user", f.processes.kills[0], "what the session left running is ended first")
 	assert.NotContains(t, f.processes.kills[1:], "/sys/fs/cgroup/user", "the steps end only their own cgroups")
+}
+
+func TestCollectStillSendsTheCommitsWhenWhatRunsCannotBeEnded(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+	require.NoError(t, f.prepare(vm.CloneNew))
+	f.gitIn(f.project, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "work")
+	f.processes.failKillOf = "/sys/fs/cgroup/user"
+
+	// act
+	code, r := f.collect()
+
+	// assert
+	assert.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, []string{"end what the session left running: still populated"}, r.result.Warnings)
+	assert.Equal(t, "work by Someone\n", f.fetchClone(r))
 }
 
 func TestCollectSendsTheLastCommitOfAnotherBranch(t *testing.T) {

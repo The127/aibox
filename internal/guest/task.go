@@ -90,10 +90,10 @@ type taskRun struct {
 	// the words aibox uses for it
 	branch string
 	actor  string
-	// stepName is what the cgroups of the steps are called, with their
-	// number, and ends the cgroups endAll kills
+	// stepName names the cgroups of the steps, followed by their number
 	stepName string
-	ends     []string
+	// ends are the cgroups endAll kills
+	ends []string
 }
 
 func newTask(sys Processes, options Options, request session.Request) *taskRun {

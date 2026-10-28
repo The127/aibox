@@ -76,6 +76,8 @@ type taskProcesses struct {
 	// of that path
 	failKill      error
 	failKillAfter string
+	// failKillOf fails the kills of that cgroup
+	failKillOf string
 }
 
 type startedIn struct {
@@ -126,6 +128,10 @@ func (p *taskProcesses) Kill(cgroup string) error {
 
 	if p.failKill != nil {
 		return p.failKill
+	}
+
+	if cgroup == p.failKillOf {
+		return errors.New("still populated")
 	}
 
 	if p.failKillAfter != "" && p.running.Path == p.failKillAfter {

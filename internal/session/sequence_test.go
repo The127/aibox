@@ -117,8 +117,15 @@ func TestAForwardKeepsWorkingInTheSecondSession(t *testing.T) {
 	// arrange
 	port := echoServer(t)
 	guestSide, hostSide := connPair(t)
+	exit, started := make(chan struct{}), make(chan struct{})
 
-	go func() { _ = session.Serve(guestSide, prints("on the terminal", 0), prints("results", 0)) }()
+	var secondStart session.Starter = func(session.Request) (session.Process, error) {
+		close(started)
+
+		return &waiting{exit: exit}, nil
+	}
+
+	go func() { _ = session.Serve(guestSide, prints("on the terminal", 0), secondStart) }()
 
 	dials := make(chan session.Dial, 1)
 
@@ -133,9 +140,20 @@ func TestAForwardKeepsWorkingInTheSecondSession(t *testing.T) {
 	_, err = session.Client{In: strings.NewReader(""), Out: io.Discard}.Attach(conn)
 	require.NoError(t, err)
 
+	ran := make(chan error, 1)
+
+	go func() {
+		_, err := session.Exec{Out: io.Discard, Errors: io.Discard}.Run(conn)
+		ran <- err
+	}()
+
+	<-started
+
 	// act
 	echo, err := (<-dials)(port)
 	require.NoError(t, err)
+
+	defer func() { _ = echo.Close() }()
 
 	_, err = io.WriteString(echo, "ping")
 	require.NoError(t, err)
@@ -147,8 +165,8 @@ func TestAForwardKeepsWorkingInTheSecondSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ping", string(answer))
 
-	_, err = session.Exec{Out: io.Discard, Errors: io.Discard}.Run(conn)
-	require.NoError(t, err)
+	close(exit)
+	require.NoError(t, <-ran)
 }
 
 func TestASecondSessionOpenedEarlyWaitsForTheFirst(t *testing.T) {
@@ -189,7 +207,12 @@ func TestASecondSessionOpenedEarlyWaitsForTheFirst(t *testing.T) {
 	}()
 
 	// act
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("the second session ran while the first one did")
+	case <-time.After(100 * time.Millisecond):
+	}
+
 	close(exit)
 
 	// assert

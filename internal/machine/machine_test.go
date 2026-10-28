@@ -151,6 +151,14 @@ func TestPrepareSharesACloneReadOnlyInsteadOfTheProject(t *testing.T) {
 	}
 }
 
+func TestPrepareRefusesATaskOnAClone(t *testing.T) {
+	// act
+	_, err := machine.Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: statePath(t), Task: "/t", Clone: "/c"})
+
+	// assert
+	assert.ErrorIs(t, err, machine.ErrTaskAndClone)
+}
+
 func TestPrepareWithoutMountsSharesOnlyTheProjectAndHome(t *testing.T) {
 	// act
 	m, err := machine.Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: statePath(t), Project: "/p", Home: "/h"})

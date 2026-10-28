@@ -22,6 +22,8 @@ var (
 	// ErrKernel is a kernel that is not the one this aibox was released
 	// with.
 	ErrKernel = errors.New("the kernel is not the one of this release")
+	// ErrTaskAndClone is a spec of a task that is a session on a clone too.
+	ErrTaskAndClone = errors.New("a run is a task or a session on a clone, not both")
 )
 
 // Image returns the kernel and the root disk in the folder.
@@ -42,6 +44,10 @@ func Image(dir string) (kernel, rootfs string, err error) {
 // and turns the spec into the machine to boot. Owner and the ports are left
 // to the backend.
 func Prepare(spec backend.Spec) (vm.Machine, error) {
+	if spec.Task != "" && spec.Clone != "" {
+		return vm.Machine{}, ErrTaskAndClone
+	}
+
 	kernel, rootfs, err := Image(spec.Image)
 	if err != nil {
 		return vm.Machine{}, err

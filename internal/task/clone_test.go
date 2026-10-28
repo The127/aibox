@@ -16,6 +16,8 @@ func TestACloneWithACommitAndRemotesPassesTheCheck(t *testing.T) {
 	clone := task.Clone{Base: cloneBase, Remotes: []task.Remote{
 		{Name: "origin", URL: "https://github.com/owner/repo.git"},
 		{Name: "up_stream-2", URL: "git@github.com:owner/repo.git"},
+		{Name: "ssh", URL: "ssh://git@github.com/owner/repo.git"},
+		{Name: "plain", URL: "http://gitea.local:3000/owner/repo"},
 	}}
 
 	// act
@@ -47,6 +49,14 @@ func TestACloneRefusesRemotesGitCouldMisread(t *testing.T) {
 		{Name: "origin", URL: "--upload-pack=touch /tmp/x"},
 		{Name: "origin", URL: "https://example.com/r\nx"},
 		{Name: "origin", URL: "https://example.com/a b"},
+		{Name: "origin", URL: "https://x-access-token:ghp_secret@github.com/o/r"}, //nolint:gosec // a made-up token the check must refuse
+		{Name: "origin", URL: "https://user@github.com/o/r"},
+		{Name: "origin", URL: "file:///home/me/repo"},
+		{Name: "origin", URL: "/home/me/repo"},
+		{Name: "origin", URL: "../repo"},
+		{Name: "origin", URL: "ext::sh -c touch% /tmp/x"},
+		{Name: "origin", URL: "https://github.com"},
+		{Name: "origin", URL: "ssh://git:password@github.com/o/r"}, //nolint:gosec // a made-up password the check must refuse
 	} {
 		// act
 		err := task.Clone{Base: cloneBase, Remotes: []task.Remote{remote}}.Check()

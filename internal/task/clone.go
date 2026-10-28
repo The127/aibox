@@ -38,6 +38,10 @@ type Remote struct {
 var (
 	commitPattern     = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 	remoteNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+	// the addresses the git broker serves, with no login in an address of
+	// HTTPS, which would put it into the VM, and no local path, which is
+	// of no use there
+	remoteURLPattern = regexp.MustCompile(`^(https?://[^/@]+/|ssh://([A-Za-z0-9._-]+@)?[^/@:]+(:[0-9]+)?/|[A-Za-z0-9._-]+@[^/@:]+:)[^-]`)
 )
 
 // Check returns ErrBadSettings for a base that is no full commit ID, and
@@ -57,8 +61,9 @@ func (c Clone) Check() error {
 	return nil
 }
 
-// CheckRemote says whether the remote can go into the clone as it is.
+// CheckRemote says whether the remote can go into the clone as it is: an
+// address of HTTPS without a login, or of SSH.
 func CheckRemote(remote Remote) bool {
 	return remoteNamePattern.MatchString(remote.Name) && !strings.HasSuffix(remote.Name, ".lock") && !strings.Contains(remote.Name, "..") &&
-		remote.URL != "" && !strings.HasPrefix(remote.URL, "-") && !strings.ContainsFunc(remote.URL, isSpaceOrControl)
+		remoteURLPattern.MatchString(remote.URL) && !strings.ContainsFunc(remote.URL, isSpaceOrControl)
 }

@@ -1109,12 +1109,13 @@ func TestServeClosesRefusedConnectionsBeyondTheLimitRightAway(t *testing.T) {
 	waiting, _ := connect(t, address, "localhost:3129")
 	require.Equal(t, "HTTP/1.1 503 Service Unavailable", waiting)
 
-	// act
-	closed, _ := connect(t, address, "localhost:3129")
+	// act: a connection closed right away may lose its 503, as a reset
+	// does on Windows, so only the close counts here
+	closed := dial(t, address)
+	_, err := io.WriteString(closed, "CONNECT localhost:3129 HTTP/1.1\r\nHost: localhost:3129\r\n\r\n")
+	require.NoError(t, err)
 
 	// assert
-	assert.Equal(t, "HTTP/1.1 503 Service Unavailable", closed)
-
 	select {
 	case <-refused:
 	case <-time.After(500 * time.Millisecond):

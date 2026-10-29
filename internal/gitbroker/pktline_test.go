@@ -143,6 +143,7 @@ func TestAllowedUpdateChecksTheBranch(t *testing.T) {
 		"a tag character":      {command{oldID, newID, "refs/heads/aibox/a\U000e0061b"}, false},
 		"a Hangul filler":      {command{oldID, newID, "refs/heads/aibox/a\u3164"}, false},
 		"a Hebrew mark":        {command{oldID, newID, "refs/heads/aibox/\u05e2\u200f1"}, true},
+		"an Arabic mark":       {command{oldID, newID, "refs/heads/aibox/\u0639\u061c1"}, true},
 		"a Persian joiner":     {command{oldID, newID, "refs/heads/aibox/\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"}, true},
 		"an emoji with joiner": {command{oldID, newID, "refs/heads/aibox/\U0001f469\u200d\U0001f4bb"}, true},
 		"a line separator":     {command{oldID, newID, "refs/heads/aibox/a\u2028b"}, false},

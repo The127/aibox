@@ -379,7 +379,7 @@ func validBranch(name string) bool {
 // stay, since Persian words, Hebrew and Arabic text and emoji need them.
 func deceptive(r rune) bool {
 	switch r {
-	case '\u200c', '\u200d', '\u200e', '\u200f':
+	case '\u200c', '\u200d', '\u200e', '\u200f', '\u061c':
 		return false
 	case '\u115f', '\u1160', '\u3164', '\uffa0', '\u2800':
 		return true

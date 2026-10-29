@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -360,4 +361,43 @@ func jsonString(text string) string {
 	data, _ := json.Marshal(text)
 
 	return string(data)
+}
+
+func TestFilterForgetsTheOldestRequestTheIDENeverAnswered(t *testing.T) {
+	// arrange: the IDE never answers a notification that carries an ID, so
+	// a VM could make the filter keep request after request
+	_, f := project(t)
+
+	for range maxKept + 1 {
+		_, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":7,"method":"notifications/initialized"}`))
+		require.NoError(t, err)
+	}
+
+	// act
+	oldest, _ := f.toVM([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	newest, _ := f.toVM([]byte(`{"jsonrpc":"2.0","id":` + strconv.Itoa(maxKept+1) + `,"result":{}}`))
+
+	// assert
+	assert.Nil(t, oldest, "the oldest request is forgotten")
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":7,"result":{}}`, string(newest))
+}
+
+func TestFilterForgetsTheOldestTabOfTheVM(t *testing.T) {
+	// arrange
+	_, f := project(t)
+
+	for i := range maxKept + 1 {
+		_, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"openDiff","arguments":{"old_file_path":"/project/main.go","new_file_path":"/project/main.go","new_file_contents":"","tab_name":"tab ` + strconv.Itoa(i) + `"}}}`))
+		require.NoError(t, err)
+	}
+
+	// act
+	oldest, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"close_tab","arguments":{"tab_name":"tab 0"}}}`))
+	require.NoError(t, err)
+	newest, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"close_tab","arguments":{"tab_name":"tab ` + strconv.Itoa(maxKept) + `"}}}`))
+	require.NoError(t, err)
+
+	// assert
+	assert.Nil(t, oldest, "the oldest tab is forgotten")
+	assert.NotNil(t, newest)
 }

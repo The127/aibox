@@ -374,18 +374,18 @@ func validBranch(name string) bool {
 // deceptive says whether git would take the character in a branch name,
 // though it could make a branch from the VM look like another one in a
 // terminal or on GitHub: a control character, a space or separator, a
-// character that reverses or isolates the direction of text, or an
-// invisible one. Joiners and the marks of direction stay, since Persian
-// words, Hebrew and Arabic text and emoji need them.
+// format character, such as one that reverses the direction of text, or
+// a filler that prints as nothing. The joiners and the marks of direction
+// stay, since Persian words, Hebrew and Arabic text and emoji need them.
 func deceptive(r rune) bool {
-	switch {
-	case unicode.IsControl(r), unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp):
-		return true
-	case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+	switch r {
+	case '\u200c', '\u200d', '\u200e', '\u200f':
+		return false
+	case '\u115f', '\u1160', '\u3164', '\uffa0', '\u2800':
 		return true
 	}
 
-	return r == '\u200b' || r == '\u2060' || r == '\ufeff'
+	return unicode.IsControl(r) || unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp, unicode.Cf)
 }
 
 func zeroID(n int) string {

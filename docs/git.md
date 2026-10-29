@@ -27,9 +27,12 @@ git:
   `aibox/a/b`, and `*` on its own allows `main` too.
 
 aibox refuses pushes to other branches, deletes, tags, and pushes from a
-shallow clone. If one branch of a push is refused, the whole push is. aibox
-also refuses repositories the list doesn't name, and a push that updates
-more than a few thousand refs at once.
+shallow clone. It also refuses branch names with characters that could make
+them look like another branch: control characters, spaces, invisible
+characters and the ones that reverse the direction of text. If one branch
+of a push is refused, the whole push is. aibox also refuses repositories
+the list doesn't name, and a push that updates more than a few thousand
+refs at once.
 
 ## Using it
 

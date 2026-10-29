@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Remote is a repository the VM may use, named as host/path without a
@@ -169,7 +170,8 @@ func parse(r *http.Request) (request, bool) {
 
 	req.remote = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(p, req.suffix), "/"), ".git")
 
-	return req, req.remote != ""
+	// .git after a slash or a dot leaves a path that is no longer clean
+	return req, req.remote != "" && path.Clean("/"+req.remote) == "/"+req.remote
 }
 
 func (b *broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -364,9 +366,26 @@ func validBranch(name string) bool {
 		}
 	}
 
-	return !strings.ContainsFunc(name, func(r rune) bool {
-		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r)
+	return utf8.ValidString(name) && !strings.ContainsFunc(name, func(r rune) bool {
+		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) || deceptive(r)
 	})
+}
+
+// deceptive says whether git would take the character in a branch name,
+// though it could make a branch from the VM look like another one in a
+// terminal or on GitHub: a control character, a space or separator, a
+// format character, such as one that reverses the direction of text, or
+// a filler that prints as nothing. The joiners and the marks of direction
+// stay, since Persian words, Hebrew and Arabic text and emoji need them.
+func deceptive(r rune) bool {
+	switch r {
+	case '\u200c', '\u200d', '\u200e', '\u200f', '\u061c':
+		return false
+	case '\u115f', '\u1160', '\u3164', '\uffa0', '\u2800':
+		return true
+	}
+
+	return unicode.IsControl(r) || unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp, unicode.Cf)
 }
 
 func zeroID(n int) string {

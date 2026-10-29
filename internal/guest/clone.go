@@ -104,7 +104,7 @@ func (t *taskRun) prepareClone(mode string) error {
 	// a VM ends without flushing its disk when aibox is killed, which
 	// would leave empty objects behind and a clone whose commits can't
 	// come back
-	if err := t.git(nil, "config", "core.fsync", "committed"); err != nil {
+	if err := t.git(nil, "config", "core.fsync", "committed,index"); err != nil {
 		return fmt.Errorf("make git flush its commits: %w", err)
 	}
 

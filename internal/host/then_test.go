@@ -233,17 +233,21 @@ func TestThenWithoutATimeoutRunsToItsEnd(t *testing.T) {
 func TestOnAttachIsCalledForAVMThatConnectsWithoutASession(t *testing.T) {
 	// arrange
 	listener := listen(t)
-	attached := false
-	end := host.ServeTerminal(context.Background(), listener, host.Session{Stdout: &syncBuffer{}, EndDelay: 5 * time.Second, OnAttach: func() { attached = true }})
+	attached := make(chan struct{})
+	end := host.ServeTerminal(context.Background(), listener, host.Session{Stdout: &syncBuffer{}, EndDelay: 5 * time.Second, OnAttach: func() { close(attached) }})
 
 	conn, err := net.Dial("tcp", listener.Addr().String())
 	require.NoError(t, err)
 
 	// act
 	_ = conn.Close()
-	ended := end()
 
 	// assert
-	assert.True(t, attached, "the VM connects once it has set up its disks")
-	assert.ErrorContains(t, host.Result(nil, ended, ""), "ssh handshake")
+	select {
+	case <-attached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnAttach was not called, though the VM connected once it had set up its disks")
+	}
+
+	assert.ErrorContains(t, host.Result(nil, end(), ""), "ssh handshake")
 }

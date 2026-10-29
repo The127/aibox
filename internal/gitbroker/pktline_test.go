@@ -65,6 +65,48 @@ func TestReadPushRefusesWhatItCannotCheck(t *testing.T) {
 	}
 }
 
+// pushOfLength is the commands of a push, flush included, of exactly n
+// bytes.
+func pushOfLength(t *testing.T, n int) string {
+	t.Helper()
+
+	command := func(refBytes int) string {
+		return pktLine(oldID + " " + newID + " refs/heads/aibox/" + strings.Repeat("a", refBytes) + "\n")
+	}
+
+	full := command(900)
+	count := (n - len(flush)) / len(full)
+	last := n - len(flush) - count*len(full)
+	body := strings.Repeat(full, count) + command(last-len(command(0))) + flush
+	require.Len(t, body, n)
+
+	return body
+}
+
+func TestReadPushReadsCommandsUpToTheLimit(t *testing.T) {
+	// arrange
+	body := pushOfLength(t, maxPushCommandBytes)
+
+	// act
+	p, err := readPush(bufio.NewReader(strings.NewReader(body)))
+
+	// assert
+	require.NoError(t, err)
+	assert.Len(t, p.raw, maxPushCommandBytes)
+}
+
+func TestReadPushRefusesCommandsBeyondTheLimit(t *testing.T) {
+	// arrange: the broker keeps the commands to check them all, so a push
+	// with more and more of them would fill the memory of aibox
+	body := pushOfLength(t, maxPushCommandBytes+1)
+
+	// act
+	_, err := readPush(bufio.NewReader(strings.NewReader(body)))
+
+	// assert
+	assert.ErrorIs(t, err, errLongPush)
+}
+
 func TestAllowedUpdateChecksTheBranch(t *testing.T) {
 	zero := zeroID(40)
 	cases := map[string]struct {

@@ -2,6 +2,7 @@ package ide
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -286,6 +287,25 @@ func TestFilterTakesThePathOfTheHostOutOfAnError(t *testing.T) {
 
 	// act
 	forward, _ := f.toVM(answer)
+
+	// assert
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"error":{"code":-1,"message":"cannot read /project/main.go"}}`, string(forward))
+}
+
+func TestFilterTakesThePathOfTheHostOutOfAnErrorWithEscapes(t *testing.T) {
+	// arrange: some encoders escape every letter past ASCII, which a user
+	// name may have, and JSON may escape any character
+	host, f := project(t)
+	_, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"getDiagnostics","arguments":{}}}`))
+	require.NoError(t, err)
+
+	var escaped strings.Builder
+	for _, r := range host + "/main.go" {
+		fmt.Fprintf(&escaped, `\u%04x`, r)
+	}
+
+	// act
+	forward, _ := f.toVM([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"cannot read ` + escaped.String() + `"}}`))
 
 	// assert
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"error":{"code":-1,"message":"cannot read /project/main.go"}}`, string(forward))

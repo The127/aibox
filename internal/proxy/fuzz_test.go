@@ -61,8 +61,8 @@ func afterHeaders(data []byte) []byte {
 
 // FuzzSplitTarget splits targets the VM asks for. splitTarget accepts only
 // a port from 1 to 65535 written without zeros in front, and a host that
-// is an address or a name of letters, digits, hyphens and underscores. So
-// no target can carry a user, a path or a second host.
+// is an address or a name of letters, digits, hyphens and underscores. No
+// target can carry a user, a path or a second host.
 func FuzzSplitTarget(f *testing.F) {
 	f.Add("example.com:443")
 	f.Add("[::1]:3000")
@@ -137,7 +137,7 @@ func FuzzIsPublic(f *testing.F) {
 }
 
 // FuzzConnectZone asks the proxy to reach hosts the VM names. connect
-// refuses an address with a zone before it looks anything up, since the
+// refuses an address with a zone before it looks anything up. The
 // resolver would hand back the address in it unchecked.
 func FuzzConnectZone(f *testing.F) {
 	f.Add("fe80::1%eth0")

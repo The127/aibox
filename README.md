@@ -1,6 +1,7 @@
 # aibox
 
 [![ci](https://github.com/The127/aibox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/The127/aibox/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/The127/aibox/badge)](https://scorecard.dev/viewer/?uri=github.com/The127/aibox)
 
 Let [Claude Code](https://code.claude.com) work on your project without
 giving it your whole computer.

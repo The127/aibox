@@ -1,0 +1,51 @@
+name: scorecard
+
+on:
+  push:
+    branches: [main]
+  # the Maintained check needs a run even in weeks without a push
+  schedule:
+    - cron: "15 14 * * 0"
+  # the Branch-Protection check reads the rules of the default branch
+  branch_protection_rule:
+
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
+# the API at api.scorecard.dev refuses results of a workflow with write
+# permissions or env outside the job, and of a job with steps other than
+# the actions it approves
+permissions: {}
+
+# nothing here needs a cache, and none can be poisoned for the job then
+cache-mode: none
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    # Scorecard only scores the default branch
+    if: github.event.repository.default_branch == github.ref_name
+    permissions:
+      security-events: write
+      # signs the results the action publishes for the badge
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scorecard
+          path: results.sarif
+          retention-days: 5
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: results.sarif

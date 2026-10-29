@@ -366,13 +366,26 @@ func validBranch(name string) bool {
 		}
 	}
 
-	// git takes control and format characters past ASCII too, but they
-	// could make a branch from the VM look like another one, in a terminal
-	// or on the server's pages
 	return utf8.ValidString(name) && !strings.ContainsFunc(name, func(r rune) bool {
-		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) ||
-			unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) || deceptive(r)
 	})
+}
+
+// deceptive says whether git would take the character in a branch name,
+// though it could make a branch from the VM look like another one in a
+// terminal or on GitHub: a control character, a space or separator, a
+// character that reverses or isolates the direction of text, or an
+// invisible one. Joiners and the marks of direction stay, since Persian
+// words, Hebrew and Arabic text and emoji need them.
+func deceptive(r rune) bool {
+	switch {
+	case unicode.IsControl(r), unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp):
+		return true
+	case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+		return true
+	}
+
+	return r == '\u200b' || r == '\u2060' || r == '\ufeff'
 }
 
 func zeroID(n int) string {

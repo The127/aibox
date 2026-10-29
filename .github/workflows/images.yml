@@ -42,7 +42,7 @@ jobs:
   amd64:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: find the kernel source of Debian sid
         id: source
         run: |
@@ -51,7 +51,7 @@ jobs:
           # sid can hold two versions for a while, and keys sorts them as text
           version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[]' | sort -V | tail -n1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: kernel
         with:
           path: |
@@ -60,13 +60,13 @@ jobs:
           key: kernel-amd64-${{ hashFiles('image/kernel.Imagefile', 'image/check-kernel-config', 'image/microvm.config', 'image/kernel.config', 'image/kernel-hyperv.config') }}-${{ steps.source.outputs.version }}
       # the rest only for a kernel to build or an image
       - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       # miso builds the image in a VM of its own
       - name: open KVM to the runner user
         if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
@@ -95,7 +95,7 @@ jobs:
         id: built
         run: echo "version=$(hack/kernel-source-version.sh out/vmlinuz out/vmlinuz-hyperv)" >> "$GITHUB_OUTPUT"
       - if: steps.kernel.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             out/vmlinuz
@@ -106,7 +106,7 @@ jobs:
       - if: inputs.image
         run: just image-archive amd64
       - if: inputs.image
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aibox-image_amd64
           path: out/aibox-image_amd64.tar.gz
@@ -117,7 +117,7 @@ jobs:
   arm64:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: find the kernel source of Debian sid
         id: source
         run: |
@@ -126,25 +126,25 @@ jobs:
           # sid can hold two versions for a while, and keys sorts them as text
           version=$(curl -fsSL "https://api.ftp-master.debian.org/madison?package=$package&s=sid&f=json" | jq -er --arg p "$package" '.[0][$p].unstable | keys[]' | sort -V | tail -n1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: kernel
         with:
           path: out/vmlinuz
           key: kernel-arm64-${{ hashFiles('image/kernel.Containerfile', 'image/check-kernel-config', 'image/vz-arm64.config', 'image/kernel-arm64.config') }}-${{ steps.source.outputs.version }}
       # the rest only for a kernel to build or an image
       - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - if: steps.kernel.outputs.cache-hit != 'true' || inputs.image
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - if: steps.kernel.outputs.cache-hit != 'true'
         run: just image-docker-arm64-kernel
       - if: steps.kernel.outputs.cache-hit != 'true'
         id: built
         run: echo "version=$(hack/kernel-source-version.sh out/vmlinuz)" >> "$GITHUB_OUTPUT"
       - if: steps.kernel.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: out/vmlinuz
           key: kernel-arm64-${{ hashFiles('image/kernel.Containerfile', 'image/check-kernel-config', 'image/vz-arm64.config', 'image/kernel-arm64.config') }}-${{ steps.built.outputs.version }}
@@ -153,7 +153,7 @@ jobs:
       - if: inputs.image
         run: just image-archive arm64
       - if: inputs.image
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aibox-image_arm64
           path: out/aibox-image_arm64.tar.gz

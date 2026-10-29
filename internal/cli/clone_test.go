@@ -487,3 +487,41 @@ func TestRunOnACloneNamesTheNewSessionBeforeTheVMRuns(t *testing.T) {
 	assert.NotEqual(t, first, named)
 	assert.Contains(t, []string{filepath.Base(dirs[0]), filepath.Base(dirs[1])}, named)
 }
+
+func TestRunOnACloneWhoseFirstVMNeverConnectedLeavesNoLastClone(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.launch.err = errors.New("the image is broken")
+	require.Error(t, f.clone())
+
+	f.launch.err = nil
+	f.cloneSucceeds(f.base)
+
+	// act
+	err := f.clone()
+
+	// assert
+	require.NoError(t, err)
+}
+
+func TestRunOnACloneKeepsNamingADiscardedSessionWhoseVMNeverConnected(t *testing.T) {
+	// arrange: the VM may have replaced the discarded clone before it
+	// failed, so the old session is not named again
+	f := newTaskFixture(t)
+	f.cloneSendsNothing()
+	require.Error(t, f.clone())
+
+	first := filepath.Base(f.cloneDirs(t)[0])
+
+	f.launch.vm = nil
+	f.launch.err = errors.New("the VM broke")
+	require.Error(t, f.clone("--clone-discard"))
+
+	// act
+	content, err := os.ReadFile(filepath.Join(f.project(t).Dir, lastCloneFile))
+
+	// assert
+	require.NoError(t, err)
+	assert.NotEqual(t, first, strings.TrimSpace(string(content)))
+	assert.Len(t, content, lastCloneBytes)
+}

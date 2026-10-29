@@ -22,6 +22,10 @@ const (
 	cloneDir   = "/var/lib/aibox/clone"
 )
 
+// fsyncWhat is what git in a clone flushes to the disk at once: the
+// objects and refs of its commits and the index.
+const fsyncWhat = "committed,index"
+
 // newCloneRun is the steps of a session on a clone, which run like those
 // of a task, as the user. Only the cgroups of the steps are ended between
 // them, since the session on the terminal runs in a cgroup of the user
@@ -93,7 +97,7 @@ func (t *taskRun) prepareClone(mode string) error {
 	}
 
 	bundle := filepath.Join(t.input, task.InputBundle)
-	if err := t.git(nil, "-c", "advice.detachedHead=false", "clone", "--quiet", "--", bundle, "."); err != nil {
+	if err := t.git(nil, "-c", "advice.detachedHead=false", "-c", "core.fsync="+fsyncWhat, "clone", "--quiet", "--", bundle, "."); err != nil {
 		return fmt.Errorf("clone the input: %w", err)
 	}
 
@@ -105,7 +109,7 @@ func (t *taskRun) prepareClone(mode string) error {
 	// a VM ends without flushing its disk when aibox is killed, which
 	// would leave empty objects behind and a clone whose commits can't
 	// come back
-	if err := t.git(nil, "config", "core.fsync", "committed,index"); err != nil {
+	if err := t.git(nil, "config", "core.fsync", fsyncWhat); err != nil {
 		return fmt.Errorf("make git flush its commits: %w", err)
 	}
 

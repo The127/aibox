@@ -128,6 +128,11 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 
 	defer func() { _ = conn.Close() }()
 
+	// the VM connects once it has set up its disks
+	if s.OnAttach != nil {
+		s.OnAttach()
+	}
+
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
@@ -139,10 +144,6 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	}
 
 	defer func() { _ = c.Close() }()
-
-	if s.OnAttach != nil {
-		s.OnAttach()
-	}
 
 	ended := runFirst(ctx, c, s)
 

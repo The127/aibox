@@ -152,7 +152,7 @@ func runClone(ctx context.Context, deps dependencies, r projectRun, spec backend
 
 	reportErr := c.report(host, vm)
 	if receiveErr != nil {
-		reportErr = fmt.Errorf("the commits of the clone did not come back, aibox run --mode clone --clone-keep goes on with it and gets them: %w", receiveErr)
+		reportErr = fmt.Errorf("the commits of the clone did not come back, aibox run --mode clone --clone-keep goes on with it and gets them, --clone-discard throws it away: %w", receiveErr)
 	}
 
 	if reportErr != nil {
@@ -170,6 +170,9 @@ type clonePlan struct {
 	base    string
 	keep    bool
 	remotes []task.Remote
+	// lastCameBack says that the session before has no commits to lose,
+	// since they came back or there was none
+	lastCameBack bool
 }
 
 // planClone decides how the session on a clone starts. A new clone would
@@ -192,6 +195,8 @@ func planClone(cmd *cli.Command, cwd, projectDir string, stderr io.Writer) (clon
 		return clonePlan{}, cloneLeftError{dir: last.dir}
 	}
 
+	lastCameBack := last == nil || last.done
+
 	from := cmd.String("from")
 
 	base, err := gitOutput(cwd, "", "rev-parse", "--verify", "--end-of-options", from+"^{commit}")
@@ -204,7 +209,7 @@ func planClone(cmd *cli.Command, cwd, projectDir string, stderr io.Writer) (clon
 		return clonePlan{}, errShallow
 	}
 
-	return clonePlan{base: base, remotes: hostRemotes(cwd, stderr)}, nil
+	return clonePlan{base: base, remotes: hostRemotes(cwd, stderr), lastCameBack: lastCameBack}, nil
 }
 
 // earlierClone is a session on a clone that ran before: its folder, the
@@ -221,8 +226,8 @@ type earlierClone struct {
 // writes the folder of the project, never the VM.
 func lastClone(projectDir string) (*earlierClone, error) {
 	content, err := os.ReadFile(filepath.Join(projectDir, lastCloneFile)) //nolint:gosec // aibox's own folder
-	if errors.Is(err, fs.ErrNotExist) || err == nil && len(content) == 0 {
-		return nil, nil //nolint:nilnil // no session on a clone connected yet
+	if errors.Is(err, fs.ErrNotExist) || err == nil && strings.TrimSpace(string(content)) == "" {
+		return nil, nil //nolint:nilnil // the VM has no clone yet
 	}
 
 	if err != nil {
@@ -459,24 +464,43 @@ func (c *cloneRun) nameLast(projectDir string) error {
 		c.previous = id
 	}
 
-	if err := file.Truncate(0); err != nil {
+	if err := c.writeLast(filepath.Base(c.dir)); err != nil {
+		return err
+	}
+
+	// a longer file, edited by hand, keeps no tail. The ID comes first, so
+	// that the file is never empty in between.
+	if err := file.Truncate(int64(lastCloneBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", lastCloneFile, err)
 	}
 
-	return c.writeLast(filepath.Base(c.dir))
+	return nil
 }
 
 // restoreLast names the last session again in lastCloneFile, for a VM that
-// never connected.
+// never connected. A clone the person threw away stays unnamed, since the
+// VM may have replaced it before it could connect.
 func (c *cloneRun) restoreLast() error {
+	if !c.plan.keep && !c.plan.lastCameBack {
+		return nil
+	}
+
 	return c.writeLast(c.previous)
 }
 
+// lastCloneBytes is how long lastCloneFile is: an ID and a newline.
+const lastCloneBytes = len("20060102-150405-000000\n")
+
 // writeLast writes the ID, or nothing, padded to the length of an ID, so
 // that the file never needs to shrink: aibox can truncate no file once it
-// has locked itself down.
+// has locked itself down. It goes to the disk at once, since a session it
+// names must not be forgotten in a crash of the host.
 func (c *cloneRun) writeLast(id string) error {
-	if _, err := c.last.WriteAt(fmt.Appendf(nil, "%-*s\n", len("20060102-150405-000000"), id), 0); err != nil {
+	if _, err := c.last.WriteAt(fmt.Appendf(nil, "%-*s\n", lastCloneBytes-1, id), 0); err != nil {
+		return fmt.Errorf("write %s: %w", lastCloneFile, err)
+	}
+
+	if err := c.last.Sync(); err != nil {
 		return fmt.Errorf("write %s: %w", lastCloneFile, err)
 	}
 

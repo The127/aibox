@@ -119,10 +119,10 @@ changed its mise files.
 Each clone session gets a folder in `clones/` of the
 [project's folder](#what-aibox-keeps-for-a-project), with the bundle and
 `result.json`, and `last-clone` names the one whose clone is in the VM.
-aibox names a session there before its VM starts, and names the one before
-again if the VM never started, unless you threw that one away. It tells from those files whether the
-commits came back. The VM only sends `result.json` and the bundle, and
-can't change them afterwards.
+aibox names a session there before its VM starts. If the VM never starts,
+it names the session before again, unless you threw that one away. It
+tells from those files whether the commits came back. The VM only sends
+`result.json` and the bundle, and can't change them afterwards.
 
 ## Asking Claude Code about aibox
 

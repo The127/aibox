@@ -464,15 +464,16 @@ func (c *cloneRun) nameLast(projectDir string) error {
 		c.previous = id
 	}
 
-	// a longer file, edited by hand, keeps no tail. The ID comes first, so
-	// that the file is never empty in between. On a failure the folder of
-	// the new session goes, so the file names the last one again.
+	// the ID comes first, so that the file is never empty in between. On a
+	// failure the folder of the new session goes, so the file names the
+	// last one again, as far as it still can be written.
 	if err := c.writeLast(filepath.Base(c.dir)); err != nil {
 		_ = c.writeLast(c.previous)
 
 		return err
 	}
 
+	// a longer file, edited by hand, keeps no tail
 	if err := file.Truncate(int64(lastCloneBytes)); err != nil {
 		_ = c.writeLast(c.previous)
 

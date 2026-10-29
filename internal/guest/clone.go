@@ -5,6 +5,7 @@ package guest
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -32,7 +33,18 @@ func newCloneRun(sys Processes, options Options, request session.Request, stepNa
 }
 
 // cloneRun turns the steps of a task into those of a session on a clone.
+// Their git reads no git config of the home, which an earlier session could
+// have changed: a filter there would run on the checkout of a new clone and
+// could change the mise files the host approved for its commit.
 func cloneRun(t *taskRun, stepName string) *taskRun {
+	command := t.command
+	t.command = func(name string, args ...string) *exec.Cmd {
+		cmd := command(name, args...)
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_GLOBAL=/dev/null")
+
+		return cmd
+	}
+
 	t.branch = task.CloneBranch
 	t.actor = "the session"
 	t.stepName = stepName

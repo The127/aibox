@@ -96,6 +96,21 @@ func TestANewCloneIsOnItsBranchWithTheRemotesOfTheHost(t *testing.T) {
 	assert.FileExists(t, filepath.Join(f.project, "README"))
 }
 
+func TestANewCloneRunsNoFilterOfTheGitConfigOfTheHome(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	require.NoError(t, os.WriteFile(filepath.Join(f.home, "attributes"), []byte("* filter=planted\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(f.home, ".gitconfig"), []byte("[core]\n\tattributesFile = "+filepath.Join(f.home, "attributes")+"\n[filter \"planted\"]\n\tsmudge = touch "+marker+"; cat\n"), 0o600))
+
+	// act
+	err := f.prepare(vm.CloneNew)
+
+	// assert
+	require.NoError(t, err)
+	assert.NoFileExists(t, marker)
+}
+
 func TestANewCloneFailsWhenTheInputIsNotAtTheBase(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t, "")

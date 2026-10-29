@@ -85,8 +85,9 @@ same state disk and the same config. Some things differ:
 
 - The [IDE link](#in-your-ide) is off, because changes you accept in your
   IDE would go into your project folder, not the clone.
-- The [ports](config.md#ports) close when you quit, while the commits come
-  back.
+- The [ports](config.md#ports) close when you quit. The VM keeps its
+  network until its commits are back, which can take up to 15 minutes.
+  Ctrl+C stops it.
 - With [`mise`](config.md#mise), the VM installs the tools of the commit
   only if you approved its mise files in an `aibox run`.
 
@@ -110,9 +111,10 @@ tools of mise, since the last session could have changed its mise files.
 Each clone session gets a folder in `clones/` of the
 [project's folder](#what-aibox-keeps-for-a-project), with the bundle and
 `result.json`, and `last-clone` names the one whose clone is in the VM.
-aibox tells from those files alone whether the commits came back, never
-from the VM. A session whose VM never started leaves the last clone as it
-was.
+aibox names a session there before its VM starts, and names the one before
+again if the VM never started. It tells from those files whether the
+commits came back. The VM only sends `result.json` and the bundle, and
+can't change them afterwards.
 
 ## Asking Claude Code about aibox
 

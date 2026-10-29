@@ -88,7 +88,7 @@ func runMode(cmd *cli.Command, configured string) (string, error) {
 
 // runClone runs the session on a clone and then says what came back. A VM
 // that never connected left the clone of the last session as it was, so
-// its folder stays without counting as the last session.
+// lastCloneFile names that session again.
 func runClone(ctx context.Context, deps dependencies, r projectRun, spec backend.Spec, cwd string, plan clonePlan) error {
 	c, err := newCloneRun(r.project.Dir, cwd, plan)
 	if err != nil {
@@ -133,14 +133,14 @@ func runClone(ctx context.Context, deps dependencies, r projectRun, spec backend
 	defer func() { _ = host.Close() }()
 
 	if !attached.Load() {
+		if err := c.restoreLast(); err != nil {
+			_, _ = fmt.Fprintf(host, "%v\n", err)
+		}
+
 		return runErr
 	}
 
 	tellResume(deps.stderr, before, r.project.Home)
-
-	if err := c.connected(); err != nil {
-		_, _ = fmt.Fprintf(host, "%v\n", err)
-	}
 
 	// why the VM stopped comes first, before what is missing because of
 	// it. Its text may come from the VM.
@@ -217,9 +217,8 @@ type earlierClone struct {
 }
 
 // lastClone is the session on a clone whose clone the VM has, or nil when
-// it has none. last-clone in the project folder names it, and aibox writes
-// it once the VM of a session connected, since the VM replaces its clone
-// before that. Only aibox writes the folder of the project, never the VM.
+// it has none. last-clone in the project folder names it. Only aibox
+// writes the folder of the project, never the VM.
 func lastClone(projectDir string) (*earlierClone, error) {
 	content, err := os.ReadFile(filepath.Join(projectDir, lastCloneFile)) //nolint:gosec // aibox's own folder
 	if errors.Is(err, fs.ErrNotExist) || err == nil && len(content) == 0 {
@@ -345,8 +344,10 @@ type cloneRun struct {
 	plan    clonePlan
 	results map[string]*os.File
 	// last is lastCloneFile, open before the VM starts, since aibox can
-	// open no file once it has locked itself down
-	last *os.File
+	// open no file once it has locked itself down, and previous the session
+	// it named before, if any
+	last     *os.File
+	previous string
 }
 
 // newCloneRun makes the folder of a new session on a clone.
@@ -427,8 +428,8 @@ func newCloneRun(projectDir, cwd string, plan clonePlan) (*cloneRun, error) {
 		c.results[name] = file
 	}
 
-	if c.last, err = os.OpenFile(filepath.Join(projectDir, lastCloneFile), os.O_RDWR|os.O_CREATE, 0o600); err != nil { //nolint:gosec // the name is aibox's own
-		return nil, fmt.Errorf("open %s: %w", lastCloneFile, err)
+	if err := c.nameLast(projectDir); err != nil {
+		return nil, err
 	}
 
 	started = true
@@ -436,10 +437,46 @@ func newCloneRun(projectDir, cwd string, plan clonePlan) (*cloneRun, error) {
 	return c, nil
 }
 
-// connected names the session in lastCloneFile, since its VM has replaced
-// the clone. Every ID has the same length, so the new one covers the old.
-func (c *cloneRun) connected() error {
-	if _, err := c.last.WriteAt([]byte(filepath.Base(c.dir)+"\n"), 0); err != nil {
+// nameLast names the new session in lastCloneFile before the VM starts,
+// since the VM may replace its clone as soon as it runs, and an aibox that
+// is killed writes nothing afterwards. A new clone only replaces one whose
+// commits came back, or that the person threw away, so naming it early
+// loses nothing. The file stays open for restoreLast.
+func (c *cloneRun) nameLast(projectDir string) error {
+	file, err := os.OpenFile(filepath.Join(projectDir, lastCloneFile), os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // the name is aibox's own
+	if err != nil {
+		return fmt.Errorf("open %s: %w", lastCloneFile, err)
+	}
+
+	c.last = file
+
+	previous, err := io.ReadAll(io.LimitReader(file, 64))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", lastCloneFile, err)
+	}
+
+	if id := strings.TrimSpace(string(previous)); taskIDPattern.MatchString(id) {
+		c.previous = id
+	}
+
+	if err := file.Truncate(0); err != nil {
+		return fmt.Errorf("write %s: %w", lastCloneFile, err)
+	}
+
+	return c.writeLast(filepath.Base(c.dir))
+}
+
+// restoreLast names the last session again in lastCloneFile, for a VM that
+// never connected.
+func (c *cloneRun) restoreLast() error {
+	return c.writeLast(c.previous)
+}
+
+// writeLast writes the ID, or nothing, padded to the length of an ID, so
+// that the file never needs to shrink: aibox can truncate no file once it
+// has locked itself down.
+func (c *cloneRun) writeLast(id string) error {
+	if _, err := c.last.WriteAt(fmt.Appendf(nil, "%-*s\n", len("20060102-150405-000000"), id), 0); err != nil {
 		return fmt.Errorf("write %s: %w", lastCloneFile, err)
 	}
 

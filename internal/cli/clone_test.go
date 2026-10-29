@@ -458,3 +458,32 @@ func TestRunOnACloneTreatsALastCloneFileItCannotReadAsNotCameBack(t *testing.T) 
 	assert.Equal(t, filepath.Join(f.project(t).Dir, lastCloneFile), left.dir)
 	require.ErrorIs(t, f.clone("--clone-keep"), errUnknownStart)
 }
+
+func TestRunOnACloneNamesTheNewSessionBeforeTheVMRuns(t *testing.T) {
+	// arrange: an aibox killed during the session writes nothing after it
+	f := newTaskFixture(t)
+	f.cloneSucceeds(f.base)
+	require.NoError(t, f.clone())
+
+	first := filepath.Base(f.cloneDirs(t)[0])
+
+	var named string
+
+	f.launch.vm = func(context.Context, backend.Spec) error {
+		content, err := os.ReadFile(filepath.Join(f.project(t).Dir, lastCloneFile))
+		require.NoError(t, err)
+
+		named = strings.TrimSpace(string(content))
+
+		return errors.New("killed")
+	}
+
+	// act
+	_ = f.clone()
+
+	// assert
+	dirs := f.cloneDirs(t)
+	require.Len(t, dirs, 2)
+	assert.NotEqual(t, first, named)
+	assert.Contains(t, []string{filepath.Base(dirs[0]), filepath.Base(dirs[1])}, named)
+}

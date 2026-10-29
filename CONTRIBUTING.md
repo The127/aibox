@@ -124,6 +124,20 @@ Dependabot updates both. Pin a new action the same way:
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 ```
 
+## Fuzz tests
+
+Code that reads what the VM or another program sends has fuzz tests, Go's
+`func FuzzXxx`. Their seeds run with every `go test`. To fuzz one for a
+while:
+
+```
+go test -run='^$' -fuzz='^FuzzReadBundle$' -fuzztime=1m ./internal/task
+```
+
+A workflow fuzzes every target for 5 minutes each week. When one fails,
+its run has the input as an artifact. Put that file into the package's
+`testdata/fuzz/FuzzXxx` folder with the fix, so it stays a test.
+
 ## Commit messages and pull requests
 
 Plain [Conventional Commits](https://www.conventionalcommits.org/): a first

@@ -1,0 +1,61 @@
+name: fuzz
+
+on:
+  schedule:
+    - cron: "40 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # every Fuzz function of the module, so that a new one fuzzes without
+  # an edit here
+  targets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # pipefail, so that a package that fails to build fails the run
+      # instead of dropping out of the list
+      - id: list
+        shell: bash
+        run: |
+          targets=$(for pkg in $(go list ./...); do
+            go test -list '^Fuzz' "$pkg" | { grep '^Fuzz' || true; } | sed "s|^|$pkg |"
+          done | jq -R -s -c 'split("\n") | map(select(. != "") | split(" ") | {package: .[0], target: .[1]})')
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: targets
+    if: needs.targets.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.targets.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -run='^$' -fuzz="^${TARGET}\$" -fuzztime=5m "$PACKAGE"
+        env:
+          PACKAGE: ${{ matrix.package }}
+          TARGET: ${{ matrix.target }}
+      # the input that failed, to add to testdata/fuzz as a test of its own
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-${{ strategy.job-index }}-${{ matrix.target }}
+          path: "**/testdata/fuzz/**"

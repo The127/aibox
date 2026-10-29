@@ -32,10 +32,85 @@ all your files.
 | `--shell` | Opens a shell in the VM instead of Claude Code. |
 | `--resume <id>` | Goes on with the Claude Code session that has this ID. When you quit Claude Code, aibox prints the command to go on with the session you were in. |
 | `--name <name>`, `-n` | Names the Claude Code session. Claude Code shows the name in the prompt box, the `/resume` picker and the terminal title. With `--resume`, it renames the session. To name every run, set [`name`](config.md#name) in the config. |
+| `--mode <mode>` | `mount` shares the project folder, `clone` gives the VM a clone instead. See [Working on a clone](#working-on-a-clone). The default is `mount`, or what [`mode`](config.md#mode) in the config says. |
+| `--from <commit>` | With `--mode clone`, the branch, tag or commit the clone starts from. The default is `HEAD`. |
+| `--clone-keep` | With `--mode clone`, goes on with the clone of the last session. |
+| `--clone-discard` | With `--mode clone`, throws away the clone of the last session, although its commits never came back. |
 | `--memory` | Sets the VM's memory in MiB. The default is 2048, or what the config says. |
 | `--cpus` | Sets the VM's number of CPUs. The default is 2, or what the config says. |
 | `--image` | Boots a folder with `vmlinuz` and `os.ext4` instead of the image your package installed or aibox downloaded. aibox doesn't check its kernel. |
 | `--no-sandbox` | Runs QEMU without its bubblewrap sandbox, for debugging. Linux only. |
+
+## Working on a clone
+
+With `aibox run`, Claude Code changes your files as it goes. That's handy,
+but sometimes you want to try something with it and decide later what to
+keep, without it touching your working tree. Start it on a clone instead:
+
+```
+aibox run --mode clone
+```
+
+The VM gets a clone of the last commit at `/project`, on the branch
+`aibox/clone`, and not your project folder. You talk to Claude Code like
+you always do. When you quit, aibox commits what Claude Code left
+uncommitted, checks the commits the VM sends back and prints the command
+that fetches them:
+
+```
+the changes end at f3572af8c6df, fetch them with
+  git -c transfer.fsckObjects=true fetch .../changes.bundle aibox/clone:aibox/clone-20261029-101500-a1b2c3
+```
+
+The fetch adds one new branch to your repository. Your working tree and
+your other branches stay as they are. If Claude Code ended on another
+branch that has commits `aibox/clone` lacks, the command fetches that one
+too, as `aibox/clone-end-...`. To make every run a clone, set
+[`mode: clone`](config.md#mode) in the config.
+
+The clone starts from `HEAD` with its full history. Use `--from` to start
+from another branch, tag or commit. Changes you haven't committed and files
+git ignores stay out, so the VM has to build or install what it needs. Note
+that whatever `--from` names goes into the VM with its full history, a file
+you deleted in an earlier commit included. aibox refuses a shallow clone,
+because it lacks the history.
+
+The clone has the remotes of your repository, so git in the VM fetches and
+pushes through the [git list](git.md) like in `aibox run`. A remote whose
+address has a login in it, or that isn't HTTPS or SSH, stays out, and aibox
+tells you its name.
+
+Everything else is like `aibox run`: the same VM home with your login, the
+same state disk and the same config. Some things differ:
+
+- The [IDE link](#in-your-ide) is off, because changes you accept in your
+  IDE would go into your project folder, not the clone.
+- The [ports](config.md#ports) close when you quit, while the commits come
+  back.
+- With [`mise`](config.md#mise), the VM installs the tools of the commit
+  only if you approved its mise files in an `aibox run`.
+
+### When the commits don't come back
+
+The clone stays on the VM's disk until the next clone session replaces it.
+If a session ends before its commits come back, for example because your
+machine crashed, the next `aibox run --mode clone` stops instead of
+replacing the clone. Then choose one:
+
+```
+aibox run --mode clone --clone-keep
+aibox run --mode clone --clone-discard
+```
+
+`--clone-keep` starts the session on the old clone. Go on working, or quit
+right away, and you get all its commits at the end. `--clone-discard`
+throws the old clone away and starts a new one. A kept clone installs no
+tools of mise, since the last session could have changed its mise files.
+
+Each clone session gets a folder in `clones/` of the
+[project's folder](#what-aibox-keeps-for-a-project), with the bundle and
+`result.json`. aibox tells from that folder alone whether the commits came
+back, never from the VM.
 
 ## Asking Claude Code about aibox
 
@@ -57,10 +132,11 @@ The folder holds:
 |---|---|
 | `config.yaml` | The [project config](config.md). |
 | `home/` | The VM's home folder, so Claude Code's login and `~/.claude` survive restarts. Other projects don't see them. |
-| `state.ext4` | A disk for the VM's `/usr/local`, `~/.cache` and the tools of [mise](config.md#mise). |
+| `state.ext4` | A disk for the VM's `/usr/local`, `~/.cache`, the tools of [mise](config.md#mise) and the clone of the last [session on a clone](#working-on-a-clone). |
 | `console.log` | The kernel and init messages of the last run. |
 | `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. After 1000 different hosts of either kind, it only counts the rest, a request that names no valid host shows as "an invalid target", and one beyond [`max-connections`](config.md#max-connections) as "too many connections at once". |
 | `tasks/` | The project's [tasks](tasks.md). |
+| `clones/` | A folder for each [session on a clone](#working-on-a-clone), with the commits it sent back. |
 | `path` | The project's path, for `aibox projects list`. |
 | `mise.sha256` | The hash of the mise files you approved last. |
 | `run.lock`, `tasks.lock` | Locked while the project runs or a task runs, so that a reset or a remove leaves it alone. |

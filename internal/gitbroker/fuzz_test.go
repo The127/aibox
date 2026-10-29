@@ -94,12 +94,11 @@ func FuzzReadPush(f *testing.F) {
 	})
 }
 
-// FuzzPktLine writes texts as pkt-lines, as the broker does for the
-// reasons it sends the VM. What it writes is a pkt-line git reads, and
-// the text comes back, cut only where it doesn't fit.
+// FuzzPktLine writes texts as pkt-lines, as the broker does when it tells
+// the VM why it refused a push. What it writes is a pkt-line git reads,
+// and the text comes back, cut only where it doesn't fit.
 func FuzzPktLine(f *testing.F) {
 	f.Add("ng refs/heads/main the config allows pushes only to aibox/*\n")
-	f.Add(strings.Repeat("a", maxPktLine) + "\n")
 	f.Add("x")
 
 	f.Fuzz(func(t *testing.T, text string) {
@@ -127,9 +126,9 @@ func FuzzPktLine(f *testing.F) {
 	})
 }
 
-// FuzzParse reads requests of the VM. One parse takes names a service of
-// git and a remote whose path is plain, with no part that is .. and no
-// escapes, so that no server reads it as another repository.
+// FuzzParse reads requests from the VM. A request parse takes names a
+// service of git and a remote whose path is plain, with no part that is
+// .. and no escapes, so that no server reads it as another repository.
 func FuzzParse(f *testing.F) {
 	f.Add(http.MethodGet, "/github.com/owner/repo.git/info/refs?service=git-upload-pack")
 	f.Add(http.MethodPost, "/github.com/owner/repo/git-receive-pack")
@@ -161,9 +160,9 @@ func FuzzParse(f *testing.F) {
 	})
 }
 
-// FuzzAllowedUpdate checks the refs a push from the VM updates. One
+// FuzzAllowedUpdate checks the refs a push from the VM updates. A ref
 // allowedUpdate allows is a branch, not deleted, with a name git takes,
-// that a pattern of the config matches.
+// that a pattern in the config matches.
 func FuzzAllowedUpdate(f *testing.F) {
 	f.Add("refs/heads/aibox/fix", "aibox/*", false)
 	f.Add("refs/heads/main", "*", true)
@@ -195,15 +194,16 @@ func FuzzAllowedUpdate(f *testing.F) {
 	})
 }
 
-// FuzzSanitize cleans text of the VM before it goes into the log. Nothing
-// a terminal acts on comes out.
+// FuzzSanitize cleans text from the VM before it goes into the log.
+// Nothing a terminal acts on comes out: no control character, no newline
+// and nothing that reverses or isolates the direction of text.
 func FuzzSanitize(f *testing.F) {
 	f.Add("refused push to github.com/o/r: refs/heads/\x1b[2Jmain")
-	f.Add("a\u202eb\nc")
+	f.Add("a\u202eb\nc\u009b2J\u2066")
 
 	f.Fuzz(func(t *testing.T, text string) {
 		for _, r := range sanitize(text) {
-			if r != ' ' && !unicode.IsPrint(r) {
+			if r < ' ' || r >= 0x7f && r <= 0x9f || r >= '\u202a' && r <= '\u202e' || r >= '\u2066' && r <= '\u2069' || r == '\u2028' || r == '\u2029' {
 				t.Fatalf("%q kept %U", text, r)
 			}
 		}

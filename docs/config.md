@@ -230,7 +230,9 @@ well below 256.
 
 Beyond the limit, the proxy answers with `503 Service Unavailable` and
 closes the connection, so the program in the VM gets an error instead of
-waiting. `proxy.log` shows it as "too many connections at once".
+waiting. `proxy.log` shows it as "too many connections at once". A refused
+connection stays open for up to a second while the program reads the
+answer, so the proxy holds at most twice the limit.
 
 ## mounts
 

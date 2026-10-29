@@ -1070,6 +1070,79 @@ func TestServeTurnsAwayAConnectionBeyondTheLimit(t *testing.T) {
 	assert.Equal(t, proxy.TooManyConnections, <-refused)
 }
 
+func TestServeAnswersAConnectionBeyondTheLimitThatSendsMoreAfterItsRequest(t *testing.T) {
+	// arrange: what the client sent after its request must be read, or the
+	// close resets the connection and the client may lose the answer
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	first, _ := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", first)
+
+	// act
+	r, _ := request(t, address, "CONNECT localhost:3129 HTTP/1.1\r\nHost: localhost:3129\r\n\r\n"+strings.Repeat("x", 8<<10))
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 503 Service Unavailable", r.status)
+	assert.Equal(t, "aibox: "+proxy.TooManyConnections+"\n", r.body(t))
+}
+
+func TestServeClosesRefusedConnectionsBeyondTheLimitRightAway(t *testing.T) {
+	// arrange: one refused connection waits for its client, the next one
+	// beyond the limit is closed at once
+	proxy.SetDrainTimeout(t, time.Minute)
+
+	refused := make(chan string, 2)
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		OnRefused:      func(target string) { refused <- target },
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	first, _ := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", first)
+
+	waiting, _ := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 503 Service Unavailable", waiting)
+
+	// act
+	closed, _ := connect(t, address, "localhost:3129")
+
+	// assert
+	assert.Equal(t, "HTTP/1.1 503 Service Unavailable", closed)
+
+	select {
+	case <-refused:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("the second refused connection was not closed right away")
+	}
+
+	assert.Empty(t, refused, "the first refused connection still waits for its client")
+}
+
+func TestServeAnswersAConnectionBeyondTheLimitThatSendsNothing(t *testing.T) {
+	// arrange
+	address := serve(t, proxy.Options{
+		MaxConnections: 1,
+		Local: func(string, string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		},
+	})
+	first, _ := connect(t, address, "localhost:3129")
+	require.Equal(t, "HTTP/1.1 200 Connection Established", first)
+
+	// act
+	status, err := bufio.NewReader(dial(t, address)).ReadString('\n')
+
+	// assert
+	require.NoError(t, err)
+	assert.Equal(t, "HTTP/1.1 503 Service Unavailable\r\n", status)
+}
+
 func TestServeServesAgainOnceAConnectionClosed(t *testing.T) {
 	// arrange
 	address := serve(t, proxy.Options{

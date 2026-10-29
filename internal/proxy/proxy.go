@@ -24,6 +24,7 @@ import (
 const (
 	dialTimeout      = 30 * time.Second
 	handshakeTimeout = 10 * time.Second
+
 	// maxRequestBytes is how much of a CONNECT request the proxy reads, the
 	// default limit of Squid for the headers of a request. A real one is a
 	// few hundred bytes, and the VM can open many connections at once.
@@ -33,6 +34,12 @@ const (
 	// and the rest are only counted.
 	maxTargets = 1000
 )
+
+// drainTimeout is how long the proxy reads what a refused client still
+// sends after the 503. A client on the VM's loopback has sent its request
+// long before then, and closes once it has the answer. The tests change
+// it.
+var drainTimeout = time.Second
 
 // InvalidTarget is what the proxy reports for a request whose target is no
 // host and port, instead of its text, which can be as long as the request.
@@ -132,11 +139,14 @@ var (
 
 // Serve accepts connections until the context ends. A connection beyond
 // Options.MaxConnections gets a 503 and is closed, so that the client
-// learns why instead of waiting.
+// learns why instead of waiting. At most Options.MaxConnections refused
+// connections wait at once for their client to read the 503. The others
+// are closed right away.
 func Serve(ctx context.Context, listener net.Listener, options Options) error {
-	var open chan struct{}
+	var open, refusing chan struct{}
 	if options.MaxConnections > 0 {
 		open = make(chan struct{}, options.MaxConnections)
+		refusing = make(chan struct{}, options.MaxConnections)
 	}
 
 	return tunnel.Serve(ctx, listener, func(ctx context.Context, conn net.Conn) {
@@ -146,6 +156,13 @@ func Serve(ctx context.Context, listener net.Listener, options Options) error {
 				defer func() { <-open }()
 			default:
 				writeError(conn, http.StatusServiceUnavailable, "aibox: "+TooManyConnections+"\n")
+
+				select {
+				case refusing <- struct{}{}:
+					drain(conn)
+					<-refusing
+				default:
+				}
 
 				if options.OnRefused != nil {
 					options.OnRefused(TooManyConnections)
@@ -157,6 +174,19 @@ func Serve(ctx context.Context, listener net.Listener, options Options) error {
 
 		handle(ctx, conn, options)
 	})
+}
+
+// drain ends the writing half of the connection and reads what the client
+// still sends, until it closes or drainTimeout has passed. A close with
+// unread data resets the connection, and the client, at least on Windows,
+// then loses an answer it has not read yet.
+func drain(conn net.Conn) {
+	if half, ok := conn.(interface{ CloseWrite() error }); ok {
+		_ = half.CloseWrite()
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(drainTimeout))
+	_, _ = io.Copy(io.Discard, io.LimitReader(conn, maxRequestBytes))
 }
 
 // handle answers one CONNECT request and then joins the client with the

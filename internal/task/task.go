@@ -104,6 +104,8 @@ func isControl(r rune) bool {
 type Result struct {
 	// Base is the commit the task started from, Head the commit Branch
 	// points at in the end. They are equal when the task made no changes.
+	// For a session on a clone, Head is the commit of CloneBranch, and a
+	// commit of CloneEndBranch is in the bundle alone.
 	Base string `json:"base,omitempty"`
 	Head string `json:"head,omitempty"`
 	// ClaudeExitCode is missing when Claude Code did not run.

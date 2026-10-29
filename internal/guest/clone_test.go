@@ -56,6 +56,16 @@ func (f *taskFixture) fetchClone(r results) string {
 	return f.gitIn(f.source, "log", "--format=%s by %an", f.base+"..changes")
 }
 
+// fetchEnd is fetch for the last commit of a session that ended apart from
+// the branch of the clone.
+func (f *taskFixture) fetchEnd(r results) string {
+	bundle := filepath.Join(f.t.TempDir(), task.ChangesFile)
+	require.NoError(f.t, os.WriteFile(bundle, r.files[task.ChangesFile], 0o600))
+	f.gitIn(f.source, "fetch", "--quiet", bundle, task.CloneEndBranch+":refs/heads/end")
+
+	return f.gitIn(f.source, "log", "--format=%s by %an", f.base+"..end")
+}
+
 // bundleRefs are the names of the refs the bundle of the changes carries,
 // one per line.
 func (f *taskFixture) bundleRefs(r results) string {
@@ -250,6 +260,25 @@ func TestCollectSendsBothBranchesWhenTheSessionEndsOnABranchApart(t *testing.T) 
 	assert.Equal(t, 0, code, r.result.Error)
 	assert.Equal(t, task.CloneBranch+"\n"+task.CloneEndBranch+"\n", f.bundleRefs(r))
 	assert.Equal(t, "on the clone by Someone\n", f.fetchClone(r))
+	assert.Equal(t, "apart by Someone\n", f.fetchEnd(r))
+}
+
+func TestCollectSendsWhatWasLeftBehindTheBranchOfTheClone(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+	require.NoError(t, f.prepare(vm.CloneNew))
+	f.gitIn(f.project, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "work")
+	f.gitIn(f.project, "switch", "--quiet", "--detach", f.base)
+	require.NoError(t, os.WriteFile(filepath.Join(f.project, "NOTES"), []byte("todo\n"), 0o600))
+
+	// act
+	code, r := f.collect()
+
+	// assert
+	assert.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, "work by Someone\n", f.fetchClone(r))
+	assert.Equal(t, "aibox: what the session left uncommitted by aibox\n", f.fetchEnd(r))
+	assert.Equal(t, strings.TrimSpace(f.gitIn(f.project, "rev-parse", task.CloneBranch)), r.result.Head)
 }
 
 func TestCollectSendsNoBundleWithoutChanges(t *testing.T) {

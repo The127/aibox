@@ -413,6 +413,20 @@ elsewhere off. To change that, set:
 paste-alt-v: false
 ```
 
+## mode
+
+`aibox run` shares your project folder with the VM, so Claude Code changes
+your files right away. To give the VM a clone of the last commit instead,
+and get its commits back as a branch to fetch when the session ends, set:
+
+```yaml
+mode: clone
+```
+
+`aibox run --mode mount` or `--mode clone` picks one for a single run,
+whatever the config says. Read [Working on a clone](usage.md#working-on-a-clone)
+for what differs. Tasks always work on a clone.
+
 ## name
 
 Claude Code shows the folder it runs in at the top right of the prompt box

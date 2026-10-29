@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -82,12 +83,18 @@ type fixture struct {
 	attached chan attachResult
 }
 
+// setup is what a test may change before the fixture connects.
+type setup struct {
+	client  *session.Client
+	forward func(ctx context.Context, dial session.Dial)
+}
+
 type attachResult struct {
 	code int
 	err  error
 }
 
-func newFixture(t *testing.T, startErr error, clientOptions ...func(*session.Client)) *fixture {
+func newFixture(t *testing.T, startErr error, options ...func(*setup)) *fixture {
 	t.Helper()
 
 	output, prints := io.Pipe()
@@ -131,8 +138,9 @@ func newFixture(t *testing.T, startErr error, clientOptions ...func(*session.Cli
 		Env:     []string{"GOFLAGS=-mod=mod", "TOKEN=s3cret=with=equals"},
 	}
 
-	for _, option := range clientOptions {
-		option(&client)
+	setup := setup{client: &client}
+	for _, option := range options {
+		option(&setup)
 	}
 
 	guestSide, hostSide := connPair(t)
@@ -140,11 +148,24 @@ func newFixture(t *testing.T, startErr error, clientOptions ...func(*session.Cli
 	go func() { f.served <- session.Serve(guestSide, start) }()
 
 	go func() {
-		code, err := client.Attach(hostSide)
+		code, err := attach(hostSide, client, setup.forward)
 		f.attached <- attachResult{code, err}
 	}()
 
 	return f
+}
+
+// attach connects to the server, runs the client's session and closes the
+// connection.
+func attach(conn net.Conn, client session.Client, forward func(ctx context.Context, dial session.Dial)) (int, error) {
+	c, err := session.Connect(conn, forward)
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() { _ = c.Close() }()
+
+	return client.Attach(c)
 }
 
 // connPair is a pair of connected sockets. Unlike net.Pipe they buffer, which
@@ -268,7 +289,7 @@ func TestSessionTypesWhatTheClientSendsIntoTheProcess(t *testing.T) {
 func TestSessionTellsTheClientOfCtrlVAndStillTypesIt(t *testing.T) {
 	// arrange
 	pasted := make(chan struct{}, 1)
-	f := newFixture(t, nil, func(c *session.Client) { c.OnPaste = func() []byte { pasted <- struct{}{}; return nil } })
+	f := newFixture(t, nil, func(s *setup) { s.client.OnPaste = func() []byte { pasted <- struct{}{}; return nil } })
 	f.waitStarted(t)
 
 	// act
@@ -288,7 +309,7 @@ func TestSessionTellsTheClientOfCtrlVAndStillTypesIt(t *testing.T) {
 
 func TestSessionPastesTheTextOfTheClipboardInPlaceOfCtrlV(t *testing.T) {
 	// arrange: a program that turned bracketed paste on, as Claude Code does
-	f := newFixture(t, nil, func(c *session.Client) { c.OnPaste = func() []byte { return []byte("one\r\ntwo") } })
+	f := newFixture(t, nil, func(s *setup) { s.client.OnPaste = func() []byte { return []byte("one\r\ntwo") } })
 	f.waitStarted(t)
 
 	_, err := io.WriteString(f.prints, "\x1b[?2004h")
@@ -400,7 +421,7 @@ func (b *blockable) Write(p []byte) (int, error) {
 func TestSessionWaitsForAClientThatReadsSlowly(t *testing.T) {
 	// arrange
 	screen := &blockable{release: make(chan struct{})}
-	f := newFixture(t, nil, func(c *session.Client) { c.Out = screen })
+	f := newFixture(t, nil, func(s *setup) { s.client.Out = screen })
 	f.waitStarted(t)
 	output := strings.Repeat("x", 4<<20)
 
@@ -475,7 +496,7 @@ func TestAttachFailsWhenTheOtherSideIsNotASession(t *testing.T) {
 	}()
 
 	// act
-	_, err := session.Client{In: bytes.NewReader(nil), Out: io.Discard}.Attach(hostSide)
+	_, err := session.Connect(hostSide, nil)
 
 	// assert
 	assert.ErrorContains(t, err, "ssh handshake")

@@ -338,6 +338,33 @@ func TestLoadRejectsANameWithAControlCharacter(t *testing.T) {
 	assert.ErrorContains(t, err, "name")
 }
 
+func TestLoadReadsTheMode(t *testing.T) {
+	for content, want := range map[string]string{"mode: clone\n": config.ModeClone, "mode: mount\n": config.ModeMount, "": ""} {
+		t.Run(content, func(t *testing.T) {
+			// arrange
+			path := write(t, content)
+
+			// act
+			cfg, err := config.Load(path, "")
+
+			// assert
+			require.NoError(t, err)
+			assert.Equal(t, want, cfg.Mode)
+		})
+	}
+}
+
+func TestLoadRejectsAnUnknownMode(t *testing.T) {
+	// arrange
+	path := write(t, "mode: copy\n")
+
+	// act
+	_, err := config.Load(path, "")
+
+	// assert
+	assert.ErrorIs(t, err, config.ErrBadMode)
+}
+
 func TestLoadReadsThePath(t *testing.T) {
 	// arrange
 	path := write(t, "path:\n  - /opt/go/bin\n  - /opt/bin/\n  - PATH\n  - DIRENV_PATH\n")

@@ -124,6 +124,41 @@ func TestPrepareSharesATaskReadOnlyInsteadOfTheProjectAndHome(t *testing.T) {
 	}, m.Shares)
 }
 
+func TestPrepareSharesACloneReadOnlyInsteadOfTheProject(t *testing.T) {
+	for keep, mode := range map[bool]string{false: vm.CloneNew, true: vm.CloneKeep} {
+		// arrange
+		spec := backend.Spec{
+			Image:     imageFolder(t, "vmlinuz", "os.ext4"),
+			State:     statePath(t),
+			Project:   "/p",
+			Home:      "/aibox/home",
+			Clone:     "/aibox/clone",
+			KeepClone: keep,
+			Mounts:    []backend.Mount{{Host: "/sdk/go", Guest: "/opt/go"}},
+		}
+
+		// act
+		m, err := machine.Prepare(spec)
+
+		// assert
+		require.NoError(t, err)
+		assert.Equal(t, mode, m.Clone)
+		assert.Equal(t, []vm.Share{
+			{Tag: "clone", Dir: "/aibox/clone", ReadOnly: true},
+			{Tag: "home", Dir: "/aibox/home"},
+			{Tag: "mount0", Dir: "/sdk/go", Guest: "/opt/go"},
+		}, m.Shares)
+	}
+}
+
+func TestPrepareRefusesATaskOnAClone(t *testing.T) {
+	// act
+	_, err := machine.Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: statePath(t), Task: "/t", Clone: "/c"})
+
+	// assert
+	assert.ErrorIs(t, err, machine.ErrTaskAndClone)
+}
+
 func TestPrepareWithoutMountsSharesOnlyTheProjectAndHome(t *testing.T) {
 	// act
 	m, err := machine.Prepare(backend.Spec{Image: imageFolder(t, "vmlinuz", "os.ext4"), State: statePath(t), Project: "/p", Home: "/h"})

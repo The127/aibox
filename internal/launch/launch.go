@@ -86,8 +86,12 @@ type Options struct {
 	OnPaste   func() []byte
 	PasteAltV bool
 	// Forwards are listeners whose connections go into the VM while its
-	// session runs.
+	// sessions run.
 	Forwards []backend.Forward
+	// Then is a session without a terminal after the first one, or nil.
+	Then *backend.Then
+	// OnAttach is called once the VM has connected, or is nil.
+	OnAttach func()
 	// KVMDevice is the KVM device file QEMU gets. Empty means /dev/kvm.
 	KVMDevice string
 	// Bubblewrap is the program that runs QEMU in its sandbox. Empty means
@@ -235,6 +239,8 @@ func Run(ctx context.Context, machine vm.Machine, options Options) error {
 		OnPaste:   options.OnPaste,
 		PasteAltV: options.PasteAltV,
 		Forwards:  options.Forwards,
+		Then:      options.Then,
+		OnAttach:  options.OnAttach,
 	})
 	machine.TerminalPort = link.terminalPort
 

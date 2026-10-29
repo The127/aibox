@@ -56,6 +56,9 @@ change its own config.
 
 - `aibox run` starts Claude Code in your project folder, and you work with
   it like you always do.
+- `aibox run --mode clone` is the same, but on a clone of the last commit
+  instead of your project folder. When you quit, you get Claude Code's
+  commits back as a branch to fetch.
 - `aibox task` hands Claude Code a job to do on its own. It works on a clone
   of the last commit, or of any branch, tag or commit you name, and you get
   its commits back to review. The VM is deleted afterwards. You can give it

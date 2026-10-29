@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"time"
 
 	"github.com/the127/aibox/internal/proxy"
 )
@@ -59,6 +60,12 @@ type Spec struct {
 	// the Mounts, which are read-only too.
 	Task     string
 	Progress io.Writer
+	// Clone is the host folder of a session on a clone, shared read-only.
+	// The VM then has no Project: the project is a clone on the state
+	// disk, new from the clone share, or the one an earlier session left
+	// with KeepClone.
+	Clone     string
+	KeepClone bool
 	// RemoveState removes the state disk as soon as the VM has it open, so
 	// that it is gone with the VM. aibox can remove no file once the VM
 	// runs.
@@ -96,8 +103,24 @@ type Spec struct {
 	OnPaste   func() []byte
 	PasteAltV bool
 	// Forwards are listeners on the host whose connections go into the VM
-	// while its session runs.
+	// while its sessions run.
 	Forwards []Forward
+	// Then is a session without a terminal that runs once the session on
+	// the terminal ended, or nil.
+	Then *Then
+	// OnAttach is called once the VM has connected, before its session
+	// starts, or is nil. The VM has set up its disks by then.
+	OnAttach func()
+}
+
+// Then is a session without a terminal that runs once the session before
+// it ended. Stdout gets what its command prints, Stderr its standard error.
+// It is stopped after Timeout, unless that is 0, since the person has the
+// terminal back and a VM that never ends it would keep aibox waiting.
+type Then struct {
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Timeout time.Duration
 }
 
 // Forward is a listener on the host whose connections go to Port on the

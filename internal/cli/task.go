@@ -41,7 +41,7 @@ var (
 	errNoPromptFile = errors.New("the file of the prompt must be a plain file, use --file - for a pipe")
 	errClaudeFailed = errors.New("the task did not finish, see the transcript")
 	errNoCommit     = errors.New("task must start in a git repository, from a commit")
-	errShallow      = errors.New("a shallow clone lacks history the task needs, git fetch --unshallow fetches it")
+	errShallow      = errors.New("a shallow clone lacks history the VM needs, git fetch --unshallow fetches it")
 	errNoTimeout    = errors.New("--timeout must be at least a second and at most 30 days")
 )
 
@@ -209,7 +209,7 @@ func runTask(ctx context.Context, deps dependencies, cmd *cli.Command) (err erro
 	spec.ConsoleLog = filepath.Join(t.dir, "console.log")
 
 	if r.config.Mise {
-		spec.Mise = taskMise(host, cwd, base, r.project)
+		spec.Mise = miseOfCommit(host, cwd, base, r.project, "the task")
 	}
 
 	// the targets of this task, apart from those of other runs

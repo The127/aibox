@@ -57,8 +57,13 @@ type Session struct {
 	OnPaste   func() []byte
 	PasteAltV bool
 	// Forwards are listeners whose connections go into the VM while the
-	// session on the terminal runs. They are closed when it ends.
+	// first session runs. They are closed when it ends.
 	Forwards []backend.Forward
+	// Then is a session without a terminal that runs once the first
+	// session ended, or nil.
+	Then *backend.Then
+	// OnAttach is called once the VM has connected, or is nil.
+	OnAttach func()
 }
 
 // Outcome is how the terminal session went: whether the VM connected, the
@@ -112,8 +117,9 @@ func ServeTerminal(ctx context.Context, listener net.Listener, s Session) func()
 }
 
 // attach waits for the VM to connect and runs the session on the terminal
-// of the person. It reports whether the VM connected and the exit code of
-// the command. The connection is closed when the context ends.
+// of the person, then the session of Then. It reports whether the VM
+// connected and the exit code of the command of the first session. The
+// connection is closed when the context ends.
 func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	conn, err := listener.Accept()
 	if err != nil {
@@ -122,13 +128,65 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 
 	defer func() { _ = conn.Close() }()
 
+	// the VM connects once it has set up its disks
+	if s.OnAttach != nil {
+		s.OnAttach()
+	}
+
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
+	c, err := session.Connect(conn, func(ctx context.Context, dial session.Dial) {
+		forward(ctx, s.Forwards, dial)
+	})
+	if err != nil {
+		return Outcome{attached: true, err: err}
+	}
+
+	defer func() { _ = c.Close() }()
+
+	ended := runFirst(ctx, c, s)
+
+	// the person is done with the servers in the VM
+	for _, f := range s.Forwards {
+		_ = f.Listener.Close()
+	}
+
+	if ended.err != nil || s.Then == nil || ctx.Err() != nil {
+		return ended
+	}
+
+	thenCtx, cancel := context.WithCancel(ctx)
+	if s.Then.Timeout > 0 {
+		thenCtx, cancel = context.WithTimeout(ctx, s.Then.Timeout)
+	}
+
+	defer cancel()
+
+	stopThen := context.AfterFunc(thenCtx, func() { _ = conn.Close() })
+	defer stopThen()
+
+	// the command of Then says how it went in what it prints
+	then := session.Exec{Out: s.Then.Stdout, Errors: s.Then.Stderr}
+	if _, err := then.Run(c); err != nil {
+		switch {
+		case errors.Is(thenCtx.Err(), context.DeadlineExceeded):
+			ended.err = fmt.Errorf("the VM took longer than %v after the session", s.Then.Timeout)
+		case ctx.Err() == nil:
+			ended.err = err
+		}
+	}
+
+	return ended
+}
+
+// runFirst runs the first session, on the terminal of the person or, with
+// Errors, without one.
+func runFirst(ctx context.Context, c *session.Conn, s Session) Outcome {
 	if s.Errors != nil {
 		client := session.Exec{In: strings.NewReader(""), Out: s.Stdout, Errors: s.Errors, Env: s.Env}
 
-		code, err := client.Run(conn)
+		code, err := client.Run(c)
 		if err != nil && ctx.Err() == nil {
 			return Outcome{attached: true, err: err}
 		}
@@ -145,13 +203,7 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	client.OnPaste = s.OnPaste
 	client.PasteAltV = s.PasteAltV
 
-	if len(s.Forwards) > 0 {
-		client.Forward = func(ctx context.Context, dial session.Dial) {
-			forward(ctx, s.Forwards, dial)
-		}
-	}
-
-	code, err := client.Attach(conn)
+	code, err := client.Attach(c)
 
 	restore()
 

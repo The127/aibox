@@ -5,6 +5,10 @@ it's how you see Claude Code's changes right away. But it also means that
 anything in the project folder can come from the VM. Treat it like a pull
 request from a stranger until you've read it.
 
+With [`--mode clone`](usage.md#working-on-a-clone), the VM gets a clone
+instead and can't write to your project folder. What comes back is a branch
+you fetch and read first.
+
 This matters most for files that tools on your machine run without asking:
 
 - lefthook runs the commands in `lefthook.yml`

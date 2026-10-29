@@ -118,6 +118,26 @@ var reservedVariables = []string{
 // path on the host.
 const NamePath = "path"
 
+// The modes of aibox run: the project folder shared into the VM, or a
+// clone of it on the disk of the VM.
+const (
+	ModeMount = "mount"
+	ModeClone = "clone"
+)
+
+// ErrBadMode is a mode that is neither ModeMount nor ModeClone.
+var ErrBadMode = errors.New("the mode must be mount or clone")
+
+// CheckMode returns ErrBadMode unless the mode is one of aibox run, or
+// empty for the default.
+func CheckMode(mode string) error {
+	if mode != "" && mode != ModeMount && mode != ModeClone {
+		return fmt.Errorf("%q: %w", mode, ErrBadMode)
+	}
+
+	return nil
+}
+
 // ErrBadName is a session name with a control character, which the
 // terminal would act on in its title.
 var ErrBadName = errors.New("a session name must have no control characters")
@@ -326,6 +346,9 @@ type Config struct {
 	// Windows, whose terminals paste on Ctrl+V themselves, and not
 	// elsewhere.
 	PasteAltV *bool `yaml:"paste-alt-v"`
+	// Mode is how aibox run gives the VM the project: ModeMount, ModeClone,
+	// or empty for ModeMount.
+	Mode string `yaml:"mode"`
 	// Name is the name of the Claude Code session: NamePath for the
 	// project's path on the host, any other text as it is, or empty for
 	// none.
@@ -650,6 +673,13 @@ allow:
 # elsewhere off unless you turn it on:
 # paste-alt-v: true
 
+# How aibox run gives the VM the project. mount shares the project folder,
+# so Claude Code changes your files right away. clone gives the VM a clone
+# of the last commit instead, and you get its commits back as a git bundle
+# when the session ends. aibox run --mode picks one for a single run. It is
+# mount unless you set it:
+# mode: clone
+
 # The name of the Claude Code session, which it shows in the prompt box and
 # the terminal title. In the VM the project is always /project, so without a
 # name every session looks the same. path names it after the project's path
@@ -866,6 +896,10 @@ func parse(content []byte) (Config, error) {
 
 	if err := CheckName(cfg.Name); err != nil {
 		return Config{}, fmt.Errorf("name %w", err)
+	}
+
+	if err := CheckMode(cfg.Mode); err != nil {
+		return Config{}, fmt.Errorf("mode %w", err)
 	}
 
 	for i, entry := range cfg.Path {

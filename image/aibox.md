@@ -21,18 +21,12 @@ and show the lines to add.
 
 Files and tools:
 
-- /project is the project folder from the host. Changes there are real
-  changes to the person's files. Many small files are slow there, so put
-  scratch files in /tmp.
 - /home/user is your home, also from the host, kept between runs and separate
   for each project.
 - git commits with the name and email that git uses for the project on the
   host. aibox sets them in GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL,
   GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL, which win over any git
   config, so `git config user.name` shows nothing.
-- Do not change .git/config or .git/hooks of the project unless asked.
-  git on the host runs what they say. Use `git -c key=value` for one
-  command instead.
 - git fetches and pushes through aibox's git broker, never through the
   allow list. The project's config on the host has a git list: each entry
   names a repository, whether you may fetch it and the branches you may

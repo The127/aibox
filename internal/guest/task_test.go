@@ -76,6 +76,8 @@ type taskProcesses struct {
 	// of that path
 	failKill      error
 	failKillAfter string
+	// failKillOf fails the kills of that cgroup
+	failKillOf string
 }
 
 type startedIn struct {
@@ -126,6 +128,10 @@ func (p *taskProcesses) Kill(cgroup string) error {
 
 	if p.failKill != nil {
 		return p.failKill
+	}
+
+	if cgroup == p.failKillOf {
+		return errors.New("still populated")
 	}
 
 	if p.failKillAfter != "" && p.running.Path == p.failKillAfter {
@@ -738,8 +744,13 @@ func TestTaskSendsItsResultsAndWhatItDoesOverASession(t *testing.T) {
 
 	client := session.Exec{In: strings.NewReader(""), Out: &out, Errors: &progress}
 
+	conn, err := session.Connect(hostSide, nil)
+	require.NoError(t, err)
+
+	defer func() { _ = conn.Close() }()
+
 	// act
-	code, err := client.Run(hostSide)
+	code, err := client.Run(conn)
 
 	// assert
 	require.NoError(t, err)

@@ -134,7 +134,8 @@ has the details.
   that your approved `mise.toml` runs, or a tool on the state disk.
   `aibox projects reset --logout` clears both. See
   [Starting over](usage.md#starting-over). Tasks get a new home and state
-  disk each time.
+  disk each time. With `--mode clone`, that includes the clone a session
+  leaves on the state disk, which `--clone-keep` goes on with.
 - What the VM's servers send to your browser through the
   [ports](config.md#ports). A page from the VM shares the cookies of your
   other local servers on the same name, and it can make your browser send

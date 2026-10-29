@@ -22,6 +22,8 @@ var (
 	// ErrKernel is a kernel that is not the one this aibox was released
 	// with.
 	ErrKernel = errors.New("the kernel is not the one of this release")
+	// ErrTaskAndClone is a spec of a task that is a session on a clone too.
+	ErrTaskAndClone = errors.New("a run is a task or a session on a clone, not both")
 )
 
 // Image returns the kernel and the root disk in the folder.
@@ -42,6 +44,10 @@ func Image(dir string) (kernel, rootfs string, err error) {
 // and turns the spec into the machine to boot. Owner and the ports are left
 // to the backend.
 func Prepare(spec backend.Spec) (vm.Machine, error) {
+	if spec.Task != "" && spec.Clone != "" {
+		return vm.Machine{}, ErrTaskAndClone
+	}
+
 	kernel, rootfs, err := Image(spec.Image)
 	if err != nil {
 		return vm.Machine{}, err
@@ -62,6 +68,18 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		shares = []vm.Share{{Tag: "task", Dir: spec.Task, ReadOnly: true}}
 	}
 
+	// a session on a clone has the clone on the state disk in place of the
+	// project
+	cloneMode := ""
+	if spec.Clone != "" {
+		shares = []vm.Share{{Tag: "clone", Dir: spec.Clone, ReadOnly: true}, {Tag: "home", Dir: spec.Home}}
+		cloneMode = vm.CloneNew
+
+		if spec.KeepClone {
+			cloneMode = vm.CloneKeep
+		}
+	}
+
 	// the guest learns the path of a mount from the kernel command line, so
 	// the tag only has to be unique
 	for i, mount := range spec.Mounts {
@@ -79,6 +97,7 @@ func Prepare(spec backend.Spec) (vm.Machine, error) {
 		Shell:        spec.Shell,
 		Resume:       spec.Resume,
 		Task:         spec.Task != "",
+		Clone:        cloneMode,
 		Mise:         spec.Mise,
 		Loopback:     spec.Loopback,
 	}, nil

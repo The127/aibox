@@ -50,8 +50,8 @@ func TestAConnectionReachesAPortOnTheLoopbackOfTheVM(t *testing.T) {
 	dials := make(chan session.Dial, 1)
 	ended := make(chan struct{})
 
-	f := newFixture(t, nil, func(c *session.Client) {
-		c.Forward = func(ctx context.Context, dial session.Dial) {
+	f := newFixture(t, nil, func(s *setup) {
+		s.forward = func(ctx context.Context, dial session.Dial) {
 			dials <- dial
 			<-ctx.Done()
 			close(ended)
@@ -159,16 +159,16 @@ func TestASessionEndsWhileTheVMLeavesAConnectionUnanswered(t *testing.T) {
 	asked := make(chan struct{})
 	exit := make(chan struct{})
 
-	client := session.Client{Forward: func(_ context.Context, dial session.Dial) {
+	forward := func(_ context.Context, dial session.Dial) {
 		if conn, err := dial(5173); err == nil {
 			_ = conn.Close()
 		}
-	}}
+	}
 
 	attached := make(chan error, 1)
 
 	go func() {
-		_, err := client.Attach(hostSide)
+		_, err := attach(hostSide, session.Client{}, forward)
 		attached <- err
 	}()
 

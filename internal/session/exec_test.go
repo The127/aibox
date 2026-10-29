@@ -101,7 +101,7 @@ func newExecFixture(t *testing.T, input io.Reader, options ...func(*fakePiped)) 
 	go func() { f.served <- session.Serve(guestSide, start) }()
 
 	go func() {
-		code, err := client.Run(hostSide)
+		code, err := run(hostSide, client)
 		f.ran <- attachResult{code, err}
 	}()
 
@@ -112,6 +112,18 @@ func newExecFixture(t *testing.T, input io.Reader, options ...func(*fakePiped)) 
 	}
 
 	return f
+}
+
+// run connects to the server, runs the command and closes the connection.
+func run(conn net.Conn, client session.Exec) (int, error) {
+	c, err := session.Connect(conn, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() { _ = c.Close() }()
+
+	return client.Run(c)
 }
 
 // end closes the output of the process, lets it exit with the code and

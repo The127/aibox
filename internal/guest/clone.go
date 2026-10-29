@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/the127/aibox/internal/session"
@@ -127,6 +128,10 @@ func (t *taskRun) prepareClone(mode string) error {
 	if head != clone.Base {
 		return fmt.Errorf("the input starts at %s, not at the base %s", head, clone.Base)
 	}
+
+	// the files of the checkout would come back empty after a crash, and
+	// the leftovers of the next session would take that for a change
+	syscall.Sync()
 
 	return nil
 }

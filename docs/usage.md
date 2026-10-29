@@ -105,7 +105,12 @@ aibox run --mode clone --clone-discard
 
 `--clone-keep` starts the session on the old clone. Go on working, or quit
 right away, and you get all its commits at the end. `--clone-discard`
-throws the old clone away and starts a new one. A kept clone installs no
+throws the old clone away and starts a new one.
+
+Note that a crash can't wait for the VM to save its files. The commits are
+safe, but a file that changed in the last seconds before the crash may
+come back empty. aibox commits such files with the other uncommitted
+changes, so read that commit before you use it. A kept clone installs no
 tools of mise, since the last session could have changed its mise files.
 
 Each clone session gets a folder in `clones/` of the

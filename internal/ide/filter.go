@@ -42,7 +42,7 @@ var tools = map[string]tool{
 				return false
 			}
 
-			f.tabs[args.str("tab_name")] = true
+			f.tabs.put(args.str("tab_name"), true)
 
 			return true
 		},
@@ -52,17 +52,15 @@ var tools = map[string]tool{
 		// only a tab the VM opened, not any tab of the person
 		fit: func(f *filter, args message) bool {
 			name := args.str("tab_name")
-			if !f.tabs[name] {
+			if _, opened := f.tabs.take(name); !opened {
 				return false
 			}
-
-			delete(f.tabs, name)
 
 			return true
 		},
 	},
 	"closeAllDiffTabs": {fit: func(f *filter, _ message) bool {
-		clear(f.tabs)
+		f.tabs.clear()
 
 		return true
 	}},
@@ -123,13 +121,13 @@ type filter struct {
 
 	mu      sync.Mutex
 	next    int
-	pending map[string]request
+	pending *kept[request]
 	// tabs are the diff tabs the VM opened
-	tabs map[string]bool
+	tabs *kept[bool]
 }
 
 func newFilter(p paths) *filter {
-	return &filter{paths: p, host: hostPattern(p.host), pending: map[string]request{}, tabs: map[string]bool{}}
+	return &filter{paths: p, host: hostPattern(p.host), pending: newKept[request](), tabs: newKept[bool]()}
 }
 
 // toIDE decides about a message of the VM: what goes on to the IDE, or
@@ -173,16 +171,16 @@ func (f *filter) toIDE(data []byte) (forward, reply []byte, err error) {
 		if t, known := tools[name]; known {
 			// only the arguments the filter knows, so that no other path
 			// slips by
-			kept := message{}
+			allowed := message{}
 			for _, key := range t.args {
 				if value, has := args[key]; has {
-					kept[key] = value
+					allowed[key] = value
 				}
 			}
 
-			if why = errOutside; t.fit(f, kept) {
+			if why = errOutside; t.fit(f, allowed) {
 				why = nil
-				encoded, _ := json.Marshal(kept)
+				encoded, _ := json.Marshal(allowed)
 				m = message{"jsonrpc": m["jsonrpc"], "method": m["method"]}
 				m["params"], _ = json.Marshal(message{"name": params["name"], "arguments": encoded})
 			}
@@ -210,7 +208,7 @@ func (f *filter) toIDE(data []byte) (forward, reply []byte, err error) {
 	if hasID {
 		f.next++
 		own := strconv.Itoa(f.next)
-		f.pending[own] = request{id: id, kind: kind}
+		f.pending.put(own, request{id: id, kind: kind})
 		m["id"] = json.RawMessage(own)
 	}
 
@@ -264,8 +262,7 @@ func (f *filter) answer(m message) bool {
 	}
 
 	f.mu.Lock()
-	r, waiting := f.pending[string(id)]
-	delete(f.pending, string(id))
+	r, waiting := f.pending.take(string(id))
 	f.mu.Unlock()
 
 	if !waiting {

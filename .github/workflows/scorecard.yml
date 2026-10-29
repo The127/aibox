@@ -18,6 +18,9 @@ concurrency:
 # the actions it approves
 permissions: {}
 
+# nothing here needs a cache, and none can be poisoned for the job then
+cache-mode: none
+
 jobs:
   analysis:
     runs-on: ubuntu-latest

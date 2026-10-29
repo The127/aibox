@@ -21,6 +21,11 @@ const (
 	flush = "0000"
 	// maxPktLine is the longest pkt-line git sends.
 	maxPktLine = 65520
+	// maxPushCommandBytes is how much of the commands of a push the broker
+	// reads and keeps, since it checks them all before the push goes on. A
+	// push may only update the branches of the git list, usually a handful,
+	// and a MiB holds several thousand.
+	maxPushCommandBytes = 1 << 20
 )
 
 var (
@@ -30,6 +35,7 @@ var (
 	errPushOptions  = errors.New("push options, which aibox does not pass on")
 	errNoCommands   = errors.New("a push that updates nothing")
 	errMixedObjects = errors.New("object IDs of two lengths in one command")
+	errLongPush     = fmt.Errorf("a push that updates more refs than fit into %d MiB", maxPushCommandBytes>>20)
 )
 
 // command is one ref a push updates from the object old to new.
@@ -56,6 +62,10 @@ func readPush(r *bufio.Reader) (push, error) {
 		line, raw, err := readPktLine(r)
 		if err != nil {
 			return push{}, err
+		}
+
+		if len(p.raw)+len(raw) > maxPushCommandBytes {
+			return push{}, errLongPush
 		}
 
 		p.raw = append(p.raw, raw...)

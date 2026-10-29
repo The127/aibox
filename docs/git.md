@@ -28,7 +28,8 @@ git:
 
 aibox refuses pushes to other branches, deletes, tags, and pushes from a
 shallow clone. If one branch of a push is refused, the whole push is. aibox
-also refuses repositories the list doesn't name.
+also refuses repositories the list doesn't name, and a push that updates
+more than a few thousand refs at once.
 
 ## Using it
 

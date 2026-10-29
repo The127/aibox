@@ -231,7 +231,7 @@ func (t *taskRun) sendChanges(base string) error {
 
 	t.say("bundling the changes\n")
 
-	return t.bundle(base)
+	return t.bundle(base, t.branch)
 }
 
 // setIdentity puts the git identity of the task into the git config of the
@@ -438,8 +438,8 @@ func (t *taskRun) commitLeftovers() error {
 	return nil
 }
 
-// bundle keeps a git bundle of the branch from the base on.
-func (t *taskRun) bundle(base string) error {
+// bundle keeps a git bundle of the branches from the base on.
+func (t *taskRun) bundle(base string, branches ...string) error {
 	changes, err := t.create(task.ChangesFile, maxChangesBytes)
 	if err != nil {
 		return err
@@ -447,7 +447,12 @@ func (t *taskRun) bundle(base string) error {
 
 	defer changes.close()
 
-	if err := t.git(changes, "bundle", "create", "--quiet", "-", base+".."+t.branch); err != nil {
+	args := []string{"bundle", "create", "--quiet", "-"}
+	for _, branch := range branches {
+		args = append(args, base+".."+branch)
+	}
+
+	if err := t.git(changes, args...); err != nil {
 		return fmt.Errorf("bundle the changes: %w", err)
 	}
 

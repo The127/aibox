@@ -12,12 +12,16 @@ import (
 // InputBundle. When the session on the terminal has ended, a second
 // session without a terminal sends the results, as a task does, without
 // TranscriptFile and LogFile. ChangesFile is a bundle of CloneBranch from
-// Clone.Base on.
+// Clone.Base on, and of CloneEndBranch.
 const (
 	// CloneFile holds the Clone as JSON.
 	CloneFile = "clone.json"
 	// CloneBranch is the branch a session on a clone works on.
 	CloneBranch = "refs/heads/aibox/clone"
+	// CloneEndBranch is the last commit of a session that ended on a
+	// branch that does not go on from CloneBranch. ChangesFile carries it
+	// too then.
+	CloneEndBranch = "refs/heads/aibox/clone-end"
 )
 
 // Clone is what the VM needs to make the clone and send what was done on

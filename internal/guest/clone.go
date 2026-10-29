@@ -135,5 +135,59 @@ func (t *taskRun) collect() error {
 
 	t.gitDeadline = time.Now().Add(t.gitTimeout)
 
-	return t.sendChanges(clone.Base)
+	return t.sendClone(clone.Base)
+}
+
+// sendClone commits what was left uncommitted and keeps a bundle of the
+// branch of the clone from the base on. When the session ended on another
+// branch, the branch of the clone moves to its last commit if that only
+// goes further, and else the bundle carries that commit as
+// task.CloneEndBranch too, so that no commit is left behind.
+func (t *taskRun) sendClone(base string) error {
+	if err := t.commitLeftovers(); err != nil {
+		warning := fmt.Sprintf("commit what %s left uncommitted: %v", t.actor, err)
+		t.result.Warnings = append(t.result.Warnings, warning)
+		t.say("%s\n", warning)
+	}
+
+	end, err := t.commit("HEAD")
+	if err != nil {
+		return err
+	}
+
+	branches := []string{t.branch}
+
+	branch, err := t.commit(t.branch)
+
+	switch {
+	case err != nil, t.isAncestor(branch, end):
+		if err := t.git(nil, "update-ref", t.branch, end); err != nil {
+			return fmt.Errorf("point %s at the last commit: %w", t.branch, err)
+		}
+
+		branch = end
+	case !t.isAncestor(end, branch):
+		if err := t.git(nil, "update-ref", task.CloneEndBranch, end); err != nil {
+			return fmt.Errorf("point %s at the last commit: %w", task.CloneEndBranch, err)
+		}
+
+		branches = append(branches, task.CloneEndBranch)
+	}
+
+	t.result.Head = branch
+
+	if len(branches) == 1 && branch == base {
+		t.say("%s made no changes\n", t.actor)
+
+		return nil
+	}
+
+	t.say("bundling the changes\n")
+
+	return t.bundle(base, branches...)
+}
+
+// isAncestor says whether the commit a is b or comes before it.
+func (t *taskRun) isAncestor(a, b string) bool {
+	return t.git(nil, "merge-base", "--is-ancestor", a, b) == nil
 }

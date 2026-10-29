@@ -56,6 +56,21 @@ func (f *taskFixture) fetchClone(r results) string {
 	return f.gitIn(f.source, "log", "--format=%s by %an", f.base+"..changes")
 }
 
+// bundleRefs are the names of the refs the bundle of the changes carries,
+// one per line.
+func (f *taskFixture) bundleRefs(r results) string {
+	bundle := filepath.Join(f.t.TempDir(), task.ChangesFile)
+	require.NoError(f.t, os.WriteFile(bundle, r.files[task.ChangesFile], 0o600))
+
+	var names []string
+	for line := range strings.SplitSeq(strings.TrimSpace(f.gitIn(f.source, "bundle", "list-heads", bundle)), "\n") {
+		_, name, _ := strings.Cut(line, " ")
+		names = append(names, name)
+	}
+
+	return strings.Join(names, "\n") + "\n"
+}
+
 func TestANewCloneIsOnItsBranchWithTheRemotesOfTheHost(t *testing.T) {
 	// arrange
 	f := newCloneFixture(t, task.Remote{Name: "origin", URL: "https://github.com/owner/repo.git"}, task.Remote{Name: "fork", URL: "git@github.com:me/repo.git"})
@@ -202,6 +217,39 @@ func TestCollectSendsTheLastCommitOfAnotherBranch(t *testing.T) {
 	// assert
 	assert.Equal(t, 0, code, r.result.Error)
 	assert.Equal(t, "on another branch by Someone\n", f.fetchClone(r))
+}
+
+func TestCollectKeepsTheBranchOfTheCloneWhenTheSessionEndsBehindIt(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+	require.NoError(t, f.prepare(vm.CloneNew))
+	f.gitIn(f.project, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "work")
+	f.gitIn(f.project, "switch", "--quiet", "--detach", f.base)
+
+	// act
+	code, r := f.collect()
+
+	// assert
+	assert.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, "work by Someone\n", f.fetchClone(r))
+	assert.Equal(t, task.CloneBranch+"\n", f.bundleRefs(r))
+}
+
+func TestCollectSendsBothBranchesWhenTheSessionEndsOnABranchApart(t *testing.T) {
+	// arrange
+	f := newCloneFixture(t)
+	require.NoError(t, f.prepare(vm.CloneNew))
+	f.gitIn(f.project, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "on the clone")
+	f.gitIn(f.project, "switch", "--quiet", "--create", "apart", f.base)
+	f.gitIn(f.project, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "apart")
+
+	// act
+	code, r := f.collect()
+
+	// assert
+	assert.Equal(t, 0, code, r.result.Error)
+	assert.Equal(t, task.CloneBranch+"\n"+task.CloneEndBranch+"\n", f.bundleRefs(r))
+	assert.Equal(t, "on the clone by Someone\n", f.fetchClone(r))
 }
 
 func TestCollectSendsNoBundleWithoutChanges(t *testing.T) {

@@ -3,8 +3,9 @@ The project:
 - /project is a git clone of the project on the disk of this VM, on the
   branch aibox/clone. It is not the person's folder. Changes you make
   there stay in the VM. Only commits come back to the person, as a git
-  bundle of the branch you end on, when the session ends. Commit your
-  work with clear messages as you go.
+  bundle, when the session ends. Commit your work with clear messages as
+  you go, and stay on aibox/clone. The bundle carries aibox/clone, and
+  the branch you end on too when it doesn't just go on from aibox/clone.
 - When the session ends, aibox commits what is left uncommitted as one
   commit of its own, apart from files git ignores.
 - The clone has only what the commit it started from has. Files git

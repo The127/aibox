@@ -97,7 +97,7 @@ func (t *taskRun) prepareClone(mode string) error {
 	}
 
 	bundle := filepath.Join(t.input, task.InputBundle)
-	if err := t.git(nil, "-c", "advice.detachedHead=false", "-c", "core.fsync="+fsyncWhat, "clone", "--quiet", "--", bundle, "."); err != nil {
+	if err := t.git(nil, "-c", "advice.detachedHead=false", "clone", "--quiet", "--", bundle, "."); err != nil {
 		return fmt.Errorf("clone the input: %w", err)
 	}
 

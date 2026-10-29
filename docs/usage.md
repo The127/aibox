@@ -107,17 +107,20 @@ aibox run --mode clone --clone-discard
 right away, and you get all its commits at the end. `--clone-discard`
 throws the old clone away and starts a new one.
 
-Note that a crash can't wait for the VM to save its files. The commits are
-safe, but a file that changed in the last seconds before the crash may
-come back empty. aibox commits such files with the other uncommitted
-changes, so read that commit before you use it. A kept clone installs no
-tools of mise, since the last session could have changed its mise files.
+Note that a crash can't wait for the VM to save its files. git saves each
+commit to the disk at once, so commits made before the crash almost always
+survive. A file that changed in the last seconds before the crash may come
+back empty, though. aibox commits such files with the other uncommitted
+changes, so read that commit before you use it.
+
+A kept clone installs no tools of mise, since the last session could have
+changed its mise files.
 
 Each clone session gets a folder in `clones/` of the
 [project's folder](#what-aibox-keeps-for-a-project), with the bundle and
 `result.json`, and `last-clone` names the one whose clone is in the VM.
 aibox names a session there before its VM starts, and names the one before
-again if the VM never started. It tells from those files whether the
+again if the VM never started, unless you threw that one away. It tells from those files whether the
 commits came back. The VM only sends `result.json` and the bundle, and
 can't change them afterwards.
 

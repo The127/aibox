@@ -522,6 +522,14 @@ func TestRunOnACloneKeepsNamingADiscardedSessionWhoseVMNeverConnected(t *testing
 
 	// assert
 	require.NoError(t, err)
-	assert.NotEqual(t, first, strings.TrimSpace(string(content)))
-	assert.Len(t, content, lastCloneBytes)
+
+	var second string
+
+	for _, dir := range f.cloneDirs(t) {
+		if filepath.Base(dir) != first {
+			second = filepath.Base(dir)
+		}
+	}
+
+	assert.Equal(t, second+"\n", string(content))
 }

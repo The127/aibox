@@ -114,6 +114,16 @@ git commit -s
 
 Commits without a sign-off are rejected by the commit-msg hook.
 
+## Workflows
+
+The workflows in `.github/workflows` pin each action by its commit, with
+the version as a comment, because a tag can move to other code.
+Dependabot updates both. Pin a new action the same way:
+
+```yaml
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+```
+
 ## Commit messages and pull requests
 
 Plain [Conventional Commits](https://www.conventionalcommits.org/): a first

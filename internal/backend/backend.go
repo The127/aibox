@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"time"
 
 	"github.com/the127/aibox/internal/proxy"
 )
@@ -111,9 +112,12 @@ type Spec struct {
 
 // Then is a session without a terminal that runs once the session before
 // it ended. Stdout gets what its command prints, Stderr its standard error.
+// It is stopped after Timeout, since the person has the terminal back and
+// a VM that never ends it would keep aibox waiting.
 type Then struct {
-	Stdout io.Writer
-	Stderr io.Writer
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Timeout time.Duration
 }
 
 // Forward is a listener on the host whose connections go to Port on the

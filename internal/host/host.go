@@ -57,7 +57,7 @@ type Session struct {
 	OnPaste   func() []byte
 	PasteAltV bool
 	// Forwards are listeners whose connections go into the VM while the
-	// sessions run. They are closed when the sessions are over.
+	// first session runs. They are closed when it ends.
 	Forwards []backend.Forward
 	// Then is a session without a terminal that runs once the first
 	// session ended, or nil.
@@ -139,14 +139,31 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 	defer func() { _ = c.Close() }()
 
 	ended := runFirst(ctx, c, s)
+
+	// the person is done with the servers in the VM
+	for _, f := range s.Forwards {
+		_ = f.Listener.Close()
+	}
+
 	if ended.err != nil || s.Then == nil || ctx.Err() != nil {
 		return ended
 	}
 
+	thenCtx, cancel := context.WithTimeout(ctx, s.Then.Timeout)
+	defer cancel()
+
+	stopThen := context.AfterFunc(thenCtx, func() { _ = conn.Close() })
+	defer stopThen()
+
 	// the command of Then says how it went in what it prints
 	then := session.Exec{Out: s.Then.Stdout, Errors: s.Then.Stderr}
-	if _, err := then.Run(c); err != nil && ctx.Err() == nil {
-		ended.err = err
+	if _, err := then.Run(c); err != nil {
+		switch {
+		case errors.Is(thenCtx.Err(), context.DeadlineExceeded):
+			ended.err = fmt.Errorf("the VM took longer than %v after the session", s.Then.Timeout)
+		case ctx.Err() == nil:
+			ended.err = err
+		}
 	}
 
 	return ended

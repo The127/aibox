@@ -182,6 +182,41 @@ func TestCheckRefusesABundleThatIsNotTheBranchFromTheBase(t *testing.T) {
 	}
 }
 
+func TestCheckCloneTakesTheBranchAndTheOptionalOnes(t *testing.T) {
+	for _, refs := range []map[string]string{
+		{task.CloneBranch: head},
+		{task.CloneBranch: head, task.CloneEndBranch: base},
+	} {
+		// arrange
+		bundle := task.Bundle{Prerequisites: []string{base}, Refs: refs}
+
+		// act
+		got, err := bundle.CheckClone(base, task.CloneBranch, task.CloneEndBranch)
+
+		// assert
+		require.NoError(t, err)
+		assert.Equal(t, refs, got)
+	}
+}
+
+func TestCheckCloneRefusesABundleThatIsNotTheBranchesFromTheBase(t *testing.T) {
+	tests := map[string]task.Bundle{
+		"only the optional branch": {Prerequisites: []string{base}, Refs: map[string]string{task.CloneEndBranch: head}},
+		"another ref":              {Prerequisites: []string{base}, Refs: map[string]string{task.CloneBranch: head, "refs/heads/main": head}},
+		"another prerequisite":     {Prerequisites: []string{head}, Refs: map[string]string{task.CloneBranch: head}},
+	}
+
+	for name, bundle := range tests {
+		t.Run(name, func(t *testing.T) {
+			// act
+			_, err := bundle.CheckClone(base, task.CloneBranch, task.CloneEndBranch)
+
+			// assert
+			assert.ErrorIs(t, err, task.ErrBadBundle)
+		})
+	}
+}
+
 func TestCleanTextLeavesNoControlOrFormatCharacters(t *testing.T) {
 	// act
 	got := task.CleanText("ok\x1b]52;c;x\x07\tdone\u202eevil\u200b\u0085\xff\nnext")

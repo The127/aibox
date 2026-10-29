@@ -162,13 +162,13 @@ func TestTaskMiseTakesOnlyFilesApprovedBefore(t *testing.T) {
 	var out strings.Builder
 
 	// act
-	before := taskMise(&out, dir, commit, p)
+	before := miseOfCommit(&out, dir, commit, p, "the task")
 
 	files, err := readCommitMiseFiles(dir, commit)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(p.Mise, []byte(hashMiseFiles(files)+"\n"), 0o600))
 
-	after := taskMise(&out, dir, commit, p)
+	after := miseOfCommit(&out, dir, commit, p, "the task")
 
 	// assert
 	assert.False(t, before)

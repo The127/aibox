@@ -157,18 +157,35 @@ func ReadBundle(r io.Reader) (Bundle, error) {
 // needs no commit but base, the one the task started from. It returns the
 // commit of Branch.
 func (b Bundle) Check(base string) (string, error) {
-	head, ok := b.Refs[Branch]
-	if !ok || len(b.Refs) != 1 {
-		return "", fmt.Errorf("%w: it must carry %s and nothing else", ErrBadBundle, Branch)
+	heads, err := b.CheckClone(base, Branch)
+	if err != nil {
+		return "", err
+	}
+
+	return heads[Branch], nil
+}
+
+// CheckClone returns ErrBadBundle unless the bundle carries the branch,
+// maybe the optional branches, and nothing else, and needs no commit but
+// base. It returns the commits of the branches it carries.
+func (b Bundle) CheckClone(base, branch string, optional ...string) (map[string]string, error) {
+	if _, ok := b.Refs[branch]; !ok {
+		return nil, fmt.Errorf("%w: it must carry %s", ErrBadBundle, branch)
+	}
+
+	for ref := range b.Refs {
+		if ref != branch && !slices.Contains(optional, ref) {
+			return nil, fmt.Errorf("%w: it carries %q", ErrBadBundle, CleanText(ref))
+		}
 	}
 
 	for _, prerequisite := range b.Prerequisites {
 		if prerequisite != base {
-			return "", fmt.Errorf("%w: it needs %s, not only the commit the task started from", ErrBadBundle, prerequisite)
+			return nil, fmt.Errorf("%w: it needs %s, not only the commit the work started from", ErrBadBundle, prerequisite)
 		}
 	}
 
-	return head, nil
+	return b.Refs, nil
 }
 
 // CleanText makes text from the VM safe to show on a terminal: a CRLF

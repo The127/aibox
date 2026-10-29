@@ -65,11 +65,15 @@ const (
 func runCommand(deps dependencies) *cli.Command {
 	return &cli.Command{
 		Name:  "run",
-		Usage: "boot the VM with the current folder shared into it",
+		Usage: "boot the VM with the current folder shared into it, or a clone of it",
 		Flags: append(vmFlags(),
 			&cli.BoolFlag{Name: "shell", Usage: "open a shell in the VM instead of Claude Code"},
 			&cli.StringFlag{Name: "resume", Usage: "go on with the Claude Code session with this ID"},
 			&cli.StringFlag{Name: "name", Aliases: []string{"n"}, Usage: "name the Claude Code session, instead of what the name setting of the config says"},
+			&cli.StringFlag{Name: "mode", Usage: "mount to share the project folder, clone to give the VM a clone of a commit and get its commits back as a bundle", DefaultText: "the mode setting of the config, else mount"},
+			&cli.StringFlag{Name: "from", Usage: "with --mode clone, the branch, tag or commit the clone starts from", Value: "HEAD"},
+			&cli.BoolFlag{Name: "clone-keep", Usage: "with --mode clone, go on with the clone of the last session"},
+			&cli.BoolFlag{Name: "clone-discard", Usage: "with --mode clone, throw away the clone of the last session, although its commits did not come back"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return run(ctx, deps, cmd)
@@ -138,6 +142,20 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer r.close()
 
+	mode, err := runMode(cmd, r.config.Mode)
+	if err != nil {
+		return err
+	}
+
+	clone := mode == config.ModeClone
+
+	var plan clonePlan
+	if clone {
+		if plan, err = planClone(cmd, cwd, r.project.Dir, deps.stderr); err != nil {
+			return err
+		}
+	}
+
 	r.env = append(r.env, identityVariables(deps.gitIdentity(cwd), r.env)...)
 
 	// a shell has no session to name, and would get the variable
@@ -150,14 +168,19 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	// git in the VM reads the files of the project as git on the host wrote
 	// them, with the line endings the config of the host chose; without it,
 	// every file differs from the repository in the VM. A task clones the
-	// repository in the VM, which writes them as the VM's git does.
-	if value := deps.gitAutoCRLF(cwd); value != "" {
+	// repository in the VM, which writes them as the VM's git does. So
+	// does a clone.
+	if value := deps.gitAutoCRLF(cwd); value != "" && !clone {
 		r.env = addAutoCRLF(r.env, value)
 	}
 
 	shareClaudeSetup(home, r.project.Home, r.config, deps.stderr)
 
-	if r.config.IDE {
+	// the IDE shows the project folder, where the changes the person
+	// accepts in it would land
+	if r.config.IDE && clone {
+		_, _ = fmt.Fprintln(deps.stderr, "aibox: the IDE link is off with --mode clone, since changes you accept in the IDE would go into the project folder, not the clone")
+	} else if r.config.IDE {
 		if err := checkIDE(r.config.Allow.LoopbackPorts(), r.env); err != nil {
 			return err
 		}
@@ -194,13 +217,29 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 	spec.Home = r.project.Home
 	// for the files the VM may have changed and the session to go on with
 	spec.Read = []string{cwd, r.project.Home}
+
+	if clone {
+		spec.Project, spec.Read = "", []string{r.project.Home}
+	}
+
 	spec.Shell = cmd.Bool("shell")
 	spec.Resume = resume
 	spec.ConsoleLog = r.project.ConsoleLog
 	spec.Stdin = os.Stdin
 	spec.Stdout = os.Stdout
 
-	if r.config.Mise {
+	switch {
+	case r.config.Mise && clone && plan.keep:
+		_, _ = fmt.Fprintln(deps.stderr, "aibox: the clone of the last session starts without the tools of mise, since that session could have changed its mise files")
+	case r.config.Mise && clone:
+		var out strings.Builder
+
+		spec.Mise = miseOfCommit(&out, cwd, plan.base, r.project, "the clone")
+
+		for line := range strings.Lines(out.String()) {
+			_, _ = fmt.Fprint(deps.stderr, "aibox: "+line)
+		}
+	case r.config.Mise:
 		if spec.Mise, err = approveMise(ctx, deps, cwd, r.project); err != nil {
 			return err
 		}
@@ -214,19 +253,28 @@ func run(ctx context.Context, deps dependencies, cmd *cli.Command) error {
 
 	defer closeForwards(spec.Forwards)
 
+	if clone {
+		return runClone(ctx, deps, r, spec, cwd, plan)
+	}
+
 	watch := append(slices.Clone(watched), r.config.Watch...)
 	files := takeSnapshot(cwd, watch)
 	before := sessions(r.project.Home)
 	err = deps.backend.Run(ctx, spec)
 	r.proxyLog.Summarize()
 
-	if id, ok := lastSession(before, sessions(r.project.Home)); ok {
-		_, _ = fmt.Fprintf(deps.stderr, "aibox: to go on with this session, run aibox run --resume %s\n", id)
-	}
-
+	tellResume(deps.stderr, before, r.project.Home)
 	reportChanges(deps.stderr, files, takeSnapshot(cwd, watch))
 
 	return err
+}
+
+// tellResume says how to go on with the Claude Code session that ran, if
+// one did.
+func tellResume(stderr io.Writer, before map[string]time.Time, vmHome string) {
+	if id, ok := lastSession(before, sessions(vmHome)); ok {
+		_, _ = fmt.Fprintf(stderr, "aibox: to go on with this session, run aibox run --resume %s\n", id)
+	}
 }
 
 // sessionName is the name of the Claude Code session: the --name flag, also

@@ -175,12 +175,14 @@ func approveMise(ctx context.Context, deps dependencies, dir string, p project.P
 	return true, nil
 }
 
-// taskMise says whether the VM of a task installs the tools of the commit.
-// A task can't ask, so only files the person approved in aibox run go in.
-func taskMise(out io.Writer, dir, commit string, p project.Project) bool {
+// miseOfCommit says whether a VM that starts from the commit, which what
+// names, installs its tools. A task can't ask, and the files of a clone
+// may differ from those of the working tree aibox run asks about, so only
+// files the person approved in aibox run go in.
+func miseOfCommit(out io.Writer, dir, commit string, p project.Project, what string) bool {
 	files, err := readCommitMiseFiles(dir, commit)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "the task starts without the tools of mise: %v\n", err)
+		_, _ = fmt.Fprintf(out, "%s starts without the tools of mise: %v\n", what, err)
 
 		return false
 	}
@@ -191,7 +193,7 @@ func taskMise(out io.Writer, dir, commit string, p project.Project) bool {
 
 		return false
 	case !approvedMise(p, hashMiseFiles(files)):
-		_, _ = fmt.Fprintf(out, "the task starts without the tools of mise: approve the mise files of the commit in aibox run first\n")
+		_, _ = fmt.Fprintf(out, "%s starts without the tools of mise: approve the mise files of the commit in aibox run first\n", what)
 
 		return false
 	}

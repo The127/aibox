@@ -109,8 +109,10 @@ tools of mise, since the last session could have changed its mise files.
 
 Each clone session gets a folder in `clones/` of the
 [project's folder](#what-aibox-keeps-for-a-project), with the bundle and
-`result.json`. aibox tells from that folder alone whether the commits came
-back, never from the VM.
+`result.json`, and `last-clone` names the one whose clone is in the VM.
+aibox tells from those files alone whether the commits came back, never
+from the VM. A session whose VM never started leaves the last clone as it
+was.
 
 ## Asking Claude Code about aibox
 
@@ -137,6 +139,7 @@ The folder holds:
 | `proxy.log` | Every host and port the proxy connected to or refused, the first time in each run. When the run ends, a summary says how often and when last. A killed aibox writes no summary. After 1000 different hosts of either kind, it only counts the rest, a request that names no valid host shows as "an invalid target", and one beyond [`max-connections`](config.md#max-connections) as "too many connections at once". |
 | `tasks/` | The project's [tasks](tasks.md). |
 | `clones/` | A folder for each [session on a clone](#working-on-a-clone), with the commits it sent back. |
+| `last-clone` | The ID of the session whose clone is on the state disk. |
 | `path` | The project's path, for `aibox projects list`. |
 | `mise.sha256` | The hash of the mise files you approved last. |
 | `run.lock`, `tasks.lock` | Locked while the project runs or a task runs, so that a reset or a remove leaves it alone. |

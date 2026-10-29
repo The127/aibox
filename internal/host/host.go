@@ -62,6 +62,8 @@ type Session struct {
 	// Then is a session without a terminal that runs once the first
 	// session ended, or nil.
 	Then *backend.Then
+	// OnAttach is called once the VM has connected, or is nil.
+	OnAttach func()
 }
 
 // Outcome is how the terminal session went: whether the VM connected, the
@@ -138,6 +140,10 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 
 	defer func() { _ = c.Close() }()
 
+	if s.OnAttach != nil {
+		s.OnAttach()
+	}
+
 	ended := runFirst(ctx, c, s)
 
 	// the person is done with the servers in the VM
@@ -149,7 +155,11 @@ func attach(ctx context.Context, listener net.Listener, s Session) Outcome {
 		return ended
 	}
 
-	thenCtx, cancel := context.WithTimeout(ctx, s.Then.Timeout)
+	thenCtx, cancel := context.WithCancel(ctx)
+	if s.Then.Timeout > 0 {
+		thenCtx, cancel = context.WithTimeout(ctx, s.Then.Timeout)
+	}
+
 	defer cancel()
 
 	stopThen := context.AfterFunc(thenCtx, func() { _ = conn.Close() })

@@ -108,12 +108,15 @@ type Spec struct {
 	// Then is a session without a terminal that runs once the session on
 	// the terminal ended, or nil.
 	Then *Then
+	// OnAttach is called once the VM has connected, before its session
+	// starts, or is nil. The VM has set up its disks by then.
+	OnAttach func()
 }
 
 // Then is a session without a terminal that runs once the session before
 // it ended. Stdout gets what its command prints, Stderr its standard error.
-// It is stopped after Timeout, since the person has the terminal back and
-// a VM that never ends it would keep aibox waiting.
+// It is stopped after Timeout, unless that is 0, since the person has the
+// terminal back and a VM that never ends it would keep aibox waiting.
 type Then struct {
 	Stdout  io.Writer
 	Stderr  io.Writer

@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,9 +25,21 @@ func (f *taskFixture) clone(args ...string) error {
 // that order.
 func (f *taskFixture) cloneSends(results map[string]string, names ...string) {
 	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		spec.OnAttach()
+
 		if spec.Then != nil {
 			writeResults(spec.Then.Stdout, results, names)
 		}
+
+		return nil
+	}
+}
+
+// cloneSendsNothing makes the VM connect and end without results, as one
+// does whose session broke off.
+func (f *taskFixture) cloneSendsNothing() {
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		spec.OnAttach()
 
 		return nil
 	}
@@ -183,6 +196,7 @@ func TestRunOnACloneRefusesABundleThatIsNotTheBranchesFromTheBase(t *testing.T) 
 func TestRunOnACloneSaysWhenItsCommitsDidNotComeBack(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
+	f.cloneSendsNothing()
 
 	// act
 	err := f.clone()
@@ -195,6 +209,7 @@ func TestRunOnACloneSaysWhenItsCommitsDidNotComeBack(t *testing.T) {
 func TestRunOnACloneStopsWhenTheCommitsOfTheLastOneDidNotComeBack(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
+	f.cloneSendsNothing()
 	require.Error(t, f.clone())
 	f.launch.called = false
 
@@ -211,6 +226,7 @@ func TestRunOnACloneStopsWhenTheCommitsOfTheLastOneDidNotComeBack(t *testing.T) 
 func TestRunOnACloneGoesOnWithTheLastCloneWithCloneKeep(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
+	f.cloneSendsNothing()
 	require.Error(t, f.clone())
 	f.git(t, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "--quiet", "--allow-empty", "--message", "two")
 	f.cloneSucceeds(f.base)
@@ -229,6 +245,7 @@ func TestRunOnACloneGoesOnWithTheLastCloneWithCloneKeep(t *testing.T) {
 func TestRunOnACloneStartsANewCloneWithCloneDiscard(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
+	f.cloneSendsNothing()
 	require.Error(t, f.clone())
 	f.cloneSucceeds(f.base)
 
@@ -332,6 +349,7 @@ func TestRunOnACloneTurnsTheIDELinkOff(t *testing.T) {
 func TestRunOnAKeptCloneInstallsNoToolsOfMise(t *testing.T) {
 	// arrange
 	f := newTaskFixture(t)
+	f.cloneSendsNothing()
 	require.Error(t, f.clone())
 	f.writeConfig(t, "mise: true\n")
 	f.cloneSucceeds(f.base)
@@ -380,4 +398,63 @@ func TestRunRefusesTheFlagsOfACloneWithoutTheModeClone(t *testing.T) {
 			assert.False(t, f.launch.called)
 		})
 	}
+}
+
+func TestRunOnACloneWhoseVMNeverConnectedLeavesTheLastCloneAsTheLast(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.cloneSucceeds(f.base)
+	require.NoError(t, f.clone())
+
+	f.launch.vm = nil
+	f.launch.err = errors.New("the image is broken")
+	require.ErrorContains(t, f.clone(), "the image is broken")
+	assert.NotContains(t, f.stderr.String(), "--clone-keep")
+
+	f.launch.err = nil
+	f.cloneSucceeds(f.base)
+
+	// act
+	err := f.clone()
+
+	// assert
+	require.NoError(t, err, "the first session came back, the second never ran")
+	assert.False(t, f.launch.spec.KeepClone)
+}
+
+func TestRunOnACloneSaysWhyTheVMStoppedBeforeWhatIsMissing(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.launch.vm = func(_ context.Context, spec backend.Spec) error {
+		spec.OnAttach()
+
+		return errors.New("the VM took longer than 15m0s after the session\x1b[2J")
+	}
+
+	// act
+	err := f.clone()
+
+	// assert
+	require.ErrorIs(t, err, task.ErrBadResults)
+
+	stderr := f.stderr.String()
+	took := strings.Index(stderr, "the VM took longer than 15m0s after the session?[2J")
+	missing := strings.Index(stderr, "the commits of the clone did not come back")
+	assert.True(t, took >= 0 && missing > took, stderr)
+}
+
+func TestRunOnACloneTreatsALastCloneFileItCannotReadAsNotCameBack(t *testing.T) {
+	// arrange
+	f := newTaskFixture(t)
+	f.writeConfig(t, "")
+	require.NoError(t, os.WriteFile(filepath.Join(f.project(t).Dir, lastCloneFile), []byte("../../elsewhere\n"), 0o600))
+
+	// act
+	err := f.clone()
+
+	// assert
+	var left cloneLeftError
+	require.ErrorAs(t, err, &left)
+	assert.Equal(t, filepath.Join(f.project(t).Dir, lastCloneFile), left.dir)
+	require.ErrorIs(t, f.clone("--clone-keep"), errUnknownStart)
 }

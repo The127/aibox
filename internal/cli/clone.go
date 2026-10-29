@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -20,8 +22,15 @@ import (
 )
 
 // clonesFolder is the folder of the project folder that holds a folder for
-// each session on a clone.
-const clonesFolder = "clones"
+// each session on a clone, and lastCloneFile the file that names the one
+// whose clone the VM has.
+const (
+	clonesFolder  = "clones"
+	lastCloneFile = "last-clone"
+)
+
+// taskIDPattern matches the IDs taskID makes.
+var taskIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
 // cloneTimeout is how long the VM may take after the session on a clone to
 // send what it did: its git steps have 10 minutes, and a bundle of up to
@@ -77,10 +86,9 @@ func runMode(cmd *cli.Command, configured string) (string, error) {
 	return mode, nil
 }
 
-// runClone runs the session on a clone and then says what came back. The
-// folder of the session is made last, so that a run that fails before the
-// VM starts leaves none that would count as one whose commits did not
-// come back.
+// runClone runs the session on a clone and then says what came back. A VM
+// that never connected left the clone of the last session as it was, so
+// its folder stays without counting as the last session.
 func runClone(ctx context.Context, deps dependencies, r projectRun, spec backend.Spec, cwd string, plan clonePlan) error {
 	c, err := newCloneRun(r.project.Dir, cwd, plan)
 	if err != nil {
@@ -106,9 +114,12 @@ func runClone(ctx context.Context, deps dependencies, r projectRun, spec backend
 		received <- err
 	}()
 
+	var attached atomic.Bool
+
 	spec.Clone = c.share
 	spec.KeepClone = plan.keep
 	spec.Then = &backend.Then{Stdout: resultsWriter, Stderr: vm, Timeout: cloneTimeout}
+	spec.OnAttach = func() { attached.Store(true) }
 
 	before := sessions(r.project.Home)
 	runErr := deps.backend.Run(ctx, spec)
@@ -119,23 +130,34 @@ func runClone(ctx context.Context, deps dependencies, r projectRun, spec backend
 
 	_ = vm.Close()
 
-	tellResume(deps.stderr, before, r.project.Home)
+	defer func() { _ = host.Close() }()
 
-	var reportErr error
-
-	switch {
-	case receiveErr != nil:
-		reportErr = fmt.Errorf("the commits of the clone did not come back, aibox run --mode clone --clone-keep goes on with it and gets them: %w", receiveErr)
-		_, _ = fmt.Fprintf(host, "%v\n", reportErr)
-	default:
-		if reportErr = c.report(host, vm); reportErr != nil {
-			_, _ = fmt.Fprintf(host, "%v\n", reportErr)
-		}
+	if !attached.Load() {
+		return runErr
 	}
 
-	_ = host.Close()
+	tellResume(deps.stderr, before, r.project.Home)
+
+	if err := c.connected(); err != nil {
+		_, _ = fmt.Fprintf(host, "%v\n", err)
+	}
+
+	// why the VM stopped comes first, before what is missing because of
+	// it. Its text may come from the VM.
+	var exit *backend.ExitError
+	if runErr != nil && !errors.As(runErr, &exit) {
+		_, _ = fmt.Fprintf(host, "%s\n", task.CleanLine(runErr.Error()))
+		runErr = printedError{runErr}
+	}
+
+	reportErr := c.report(host, vm)
+	if receiveErr != nil {
+		reportErr = fmt.Errorf("the commits of the clone did not come back, aibox run --mode clone --clone-keep goes on with it and gets them: %w", receiveErr)
+	}
 
 	if reportErr != nil {
+		_, _ = fmt.Fprintf(host, "%v\n", reportErr)
+
 		return printedError{reportErr}
 	}
 
@@ -194,37 +216,28 @@ type earlierClone struct {
 	done bool
 }
 
-// lastClone is the newest session on a clone of the project, or nil. The
-// names of the folders start with the time, so the newest sorts last.
-// Only aibox writes the folders, never the VM.
+// lastClone is the session on a clone whose clone the VM has, or nil when
+// it has none. last-clone in the project folder names it, and aibox writes
+// it once the VM of a session connected, since the VM replaces its clone
+// before that. Only aibox writes the folder of the project, never the VM.
 func lastClone(projectDir string) (*earlierClone, error) {
-	clones := filepath.Join(projectDir, clonesFolder)
-
-	entries, err := os.ReadDir(clones)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil //nolint:nilnil // no session ran
+	content, err := os.ReadFile(filepath.Join(projectDir, lastCloneFile)) //nolint:gosec // aibox's own folder
+	if errors.Is(err, fs.ErrNotExist) || err == nil && len(content) == 0 {
+		return nil, nil //nolint:nilnil // no session on a clone connected yet
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("look for the last session on a clone: %w", err)
+		return nil, fmt.Errorf("read the last session on a clone: %w", err)
 	}
 
-	newest := ""
-
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() > newest {
-			newest = entry.Name()
-		}
+	// a name aibox could not have written counts as a session whose
+	// commits did not come back
+	id := strings.TrimSpace(string(content))
+	if !taskIDPattern.MatchString(id) {
+		return &earlierClone{dir: filepath.Join(projectDir, lastCloneFile)}, nil
 	}
 
-	if newest == "" {
-		return nil, nil //nolint:nilnil // no session ran
-	}
-
-	c := &earlierClone{dir: filepath.Join(clones, newest)}
-
-	// a folder aibox could not finish counts as one whose commits did not
-	// come back
+	c := &earlierClone{dir: filepath.Join(projectDir, clonesFolder, id)}
 	if c.base = cloneBase(c.dir); c.base != "" {
 		c.done = cameBack(c.dir, c.base)
 	}
@@ -331,6 +344,9 @@ type cloneRun struct {
 	share   string
 	plan    clonePlan
 	results map[string]*os.File
+	// last is lastCloneFile, open before the VM starts, since aibox can
+	// open no file once it has locked itself down
+	last *os.File
 }
 
 // newCloneRun makes the folder of a new session on a clone.
@@ -411,9 +427,23 @@ func newCloneRun(projectDir, cwd string, plan clonePlan) (*cloneRun, error) {
 		c.results[name] = file
 	}
 
+	if c.last, err = os.OpenFile(filepath.Join(projectDir, lastCloneFile), os.O_RDWR|os.O_CREATE, 0o600); err != nil { //nolint:gosec // the name is aibox's own
+		return nil, fmt.Errorf("open %s: %w", lastCloneFile, err)
+	}
+
 	started = true
 
 	return c, nil
+}
+
+// connected names the session in lastCloneFile, since its VM has replaced
+// the clone. Every ID has the same length, so the new one covers the old.
+func (c *cloneRun) connected() error {
+	if _, err := c.last.WriteAt([]byte(filepath.Base(c.dir)+"\n"), 0); err != nil {
+		return fmt.Errorf("write %s: %w", lastCloneFile, err)
+	}
+
+	return nil
 }
 
 func (c *cloneRun) writers() map[string]io.Writer {
@@ -429,10 +459,15 @@ func (c *cloneRun) close() {
 	for _, file := range c.results {
 		_ = file.Close()
 	}
+
+	if c.last != nil {
+		_ = c.last.Close()
+	}
 }
 
 // report tells the person what came back from the clone and how to fetch
-// it, and returns an error when the commits did not come back.
+// it, and returns an error when the commits did not come back or their
+// bundle is not one aibox takes.
 func (c *cloneRun) report(host, vm io.Writer) error {
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(host, format, args...) }
 
@@ -452,11 +487,9 @@ func (c *cloneRun) report(host, vm io.Writer) error {
 
 	heads, err := c.changes()
 
-	// the VM said already when there are no changes
-	switch {
-	case err != nil:
-		say("%v\n", err)
-	case heads != nil:
+	// the VM said already when there are no changes, and the caller tells
+	// the error
+	if err == nil && heads != nil {
 		id := filepath.Base(c.dir)
 		refspecs := []string{refspec(task.CloneBranch, id)}
 

@@ -182,3 +182,50 @@ func TestTheForwardedPortsCloseBeforeThen(t *testing.T) {
 	require.NoError(t, <-served)
 	end()
 }
+
+func TestOnAttachIsCalledOnceTheVMConnected(t *testing.T) {
+	// arrange
+	listener := listen(t)
+	attached := 0
+	end := host.ServeTerminal(context.Background(), listener, host.Session{Stdout: &syncBuffer{}, EndDelay: 5 * time.Second, OnAttach: func() { attached++ }})
+	served := guest(t, listener, "", 0)
+
+	// act
+	require.NoError(t, <-served)
+	end()
+
+	// assert
+	assert.Equal(t, 1, attached)
+}
+
+func TestOnAttachIsNotCalledForAVMThatNeverConnected(t *testing.T) {
+	// arrange
+	attached := false
+	end := host.ServeTerminal(context.Background(), listen(t), host.Session{Stdout: &syncBuffer{}, EndDelay: time.Second, OnAttach: func() { attached = true }})
+
+	// act
+	end()
+
+	// assert
+	assert.False(t, attached)
+}
+
+func TestThenWithoutATimeoutRunsToItsEnd(t *testing.T) {
+	// arrange
+	listener := listen(t)
+	results := &syncBuffer{}
+	end := host.ServeTerminal(context.Background(), listener, host.Session{
+		Stdout:   &syncBuffer{},
+		EndDelay: 5 * time.Second,
+		Then:     &backend.Then{Stdout: results, Stderr: &syncBuffer{}},
+	})
+	served := guestThen(t, listener, "", 0)
+
+	// act
+	require.NoError(t, <-served)
+	ended := end()
+
+	// assert
+	require.NoError(t, host.Result(nil, ended, ""))
+	assert.Equal(t, "results", results.String())
+}

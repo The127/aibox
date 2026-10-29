@@ -170,7 +170,8 @@ func parse(r *http.Request) (request, bool) {
 
 	req.remote = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(p, req.suffix), "/"), ".git")
 
-	return req, req.remote != ""
+	// .git after a slash or a dot leaves a path that is no longer clean
+	return req, req.remote != "" && path.Clean("/"+req.remote) == "/"+req.remote
 }
 
 func (b *broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {

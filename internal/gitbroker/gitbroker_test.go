@@ -621,3 +621,25 @@ func TestEventLogKeepsEachEventOnOnePlainLine(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out.String(), "\n"))
 	assert.Contains(t, out.String(), "refused push to a?b?[31m?31m?c")
 }
+
+func TestParseTakesNoRemoteThatIsNoCleanPath(t *testing.T) {
+	// .git after a slash or a dot leaves a path that is no longer clean
+	for _, target := range []string{
+		"/example.com/owner/repo/.git/info/refs?service=git-upload-pack",
+		"/..git/info/refs?service=git-upload-pack",
+		"/example.com/owner/..git/git-upload-pack",
+	} {
+		// arrange
+		u, err := url.ParseRequestURI(target)
+		require.NoError(t, err)
+
+		// act
+		_, ok := parse(&http.Request{Method: http.MethodPost, URL: u})
+		if strings.Contains(target, "info/refs") {
+			_, ok = parse(&http.Request{Method: http.MethodGet, URL: u})
+		}
+
+		// assert
+		assert.False(t, ok, target)
+	}
+}

@@ -291,6 +291,22 @@ func TestFilterTakesThePathOfTheHostOutOfAnError(t *testing.T) {
 	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"error":{"code":-1,"message":"cannot read /project/main.go"}}`, string(forward))
 }
 
+func TestFilterTakesThePathOfTheHostOutOfAnErrorWithEscapes(t *testing.T) {
+	// arrange: some encoders escape every letter past ASCII, which a user
+	// name may have, and JSON may escape any character
+	host, f := project(t)
+	_, _, err := f.toIDE([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"getDiagnostics","arguments":{}}}`))
+	require.NoError(t, err)
+
+	escaped := strings.ReplaceAll(host, "/", `\u002f`)
+
+	// act
+	forward, _ := f.toVM([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"cannot read ` + escaped + `\u002fmain.go"}}`))
+
+	// assert
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":5,"error":{"code":-1,"message":"cannot read /project/main.go"}}`, string(forward))
+}
+
 func TestFilterTakesThePathOfTheHostOutOfAnswers(t *testing.T) {
 	// arrange
 	host, f := project(t)

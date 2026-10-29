@@ -313,19 +313,55 @@ func (f *filter) answer(m message) bool {
 }
 
 // hidden is the JSON with the path of the project on the host turned into
-// /project wherever it shows up, as it is written in JSON.
+// /project wherever it shows up. It looks at the strings as JSON decodes
+// them. JSON can write the same path with escapes, and some encoders do
+// that for every letter past ASCII.
 func (f *filter) hidden(raw json.RawMessage) json.RawMessage {
 	if f.host == nil || len(raw) == 0 {
 		return raw
 	}
 
-	return f.host.ReplaceAll(raw, []byte(vmProject+"$1"))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	var value any
+	if decoder.Decode(&value) != nil {
+		return json.RawMessage("null")
+	}
+
+	hidden, err := json.Marshal(f.hide(value))
+	if err != nil {
+		return json.RawMessage("null")
+	}
+
+	return hidden
 }
 
-// hostPattern finds the path of the project on the host in JSON, the way
-// Go writes it and the way an IDE may, with & < > as they are, and also
-// the path its symlinks lead to. Only the whole name of the folder counts,
-// so that a folder next to it like aibox-old stays as it is.
+// hide is the value with the path of the project on the host turned into
+// /project in its strings and keys, at any depth.
+func (f *filter) hide(value any) any {
+	switch v := value.(type) {
+	case string:
+		return f.host.ReplaceAllString(v, vmProject+"$1")
+	case []any:
+		for i, item := range v {
+			v[i] = f.hide(item)
+		}
+	case map[string]any:
+		hidden := make(map[string]any, len(v))
+		for key, item := range v {
+			hidden[f.host.ReplaceAllString(key, vmProject+"$1")] = f.hide(item)
+		}
+
+		return hidden
+	}
+
+	return value
+}
+
+// hostPattern finds the path of the project on the host in a text, and
+// also the path its symlinks lead to. Only the whole name of the folder
+// counts. A folder next to it like aibox-old stays as it is.
 func hostPattern(host string) *regexp.Regexp {
 	if host == "" {
 		return nil
@@ -336,25 +372,15 @@ func hostPattern(host string) *regexp.Regexp {
 		names = append(names, resolved)
 	}
 
-	var needles []string
-
-	for _, name := range names {
-		for _, escapeHTML := range []bool{true, false} {
-			var b bytes.Buffer
-
-			encoder := json.NewEncoder(&b)
-			encoder.SetEscapeHTML(escapeHTML)
-			_ = encoder.Encode(name)
-
-			quoted := strings.TrimSpace(b.String())
-			needles = append(needles, regexp.QuoteMeta(quoted[1:len(quoted)-1]))
-		}
+	needles := make([]string, len(names))
+	for i, name := range names {
+		needles[i] = regexp.QuoteMeta(name)
 	}
 
 	// the longest first, since the first that matches wins
 	slices.SortFunc(needles, func(a, b string) int { return len(b) - len(a) })
 
-	return regexp.MustCompile(`(?:` + strings.Join(needles, "|") + `)([/"\\]|$)`)
+	return regexp.MustCompile(`(?:` + strings.Join(needles, "|") + `)([/\\]|\z)`)
 }
 
 // diagnostics keeps of the diagnostics the IDE reports, a JSON list in a

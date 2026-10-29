@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Remote is a repository the VM may use, named as host/path without a
@@ -364,8 +365,12 @@ func validBranch(name string) bool {
 		}
 	}
 
-	return !strings.ContainsFunc(name, func(r rune) bool {
-		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r)
+	// git takes control and format characters past ASCII too, but they
+	// could make a branch from the VM look like another one, in a terminal
+	// or on the server's pages
+	return utf8.ValidString(name) && !strings.ContainsFunc(name, func(r rune) bool {
+		return r <= ' ' || r == 0x7f || strings.ContainsRune(`~^:?*[\`, r) ||
+			unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 	})
 }
 

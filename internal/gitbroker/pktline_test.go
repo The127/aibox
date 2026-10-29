@@ -134,6 +134,12 @@ func TestAllowedUpdateChecksTheBranch(t *testing.T) {
 		"a question mark":     {command{oldID, newID, "refs/heads/aibox/a?"}, false},
 		"a bracket":           {command{oldID, newID, "refs/heads/aibox/a[b"}, false},
 		"a backslash":         {command{oldID, newID, "refs/heads/aibox/a\\b"}, false},
+		"a C1 control":        {command{oldID, newID, "refs/heads/aibox/a\u009b2J"}, false},
+		"a format character":  {command{oldID, newID, "refs/heads/aibox/a\u202eb"}, false},
+		"a zero width space":  {command{oldID, newID, "refs/heads/aibox/a\u200bb"}, false},
+		"a line separator":    {command{oldID, newID, "refs/heads/aibox/a\u2028b"}, false},
+		"no UTF-8":            {command{oldID, newID, "refs/heads/aibox/a\xffb"}, false},
+		"letters of a script": {command{oldID, newID, "refs/heads/aibox/f\u00fcr-gr\u00fc\u00dfe"}, true},
 	}
 
 	for name, c := range cases {

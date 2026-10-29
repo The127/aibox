@@ -94,6 +94,7 @@ func TestANewCloneIsOnItsBranchWithTheRemotesOfTheHost(t *testing.T) {
 	assert.Equal(t, f.base+"\n", f.gitIn(f.project, "rev-parse", "HEAD"))
 	assert.Equal(t, "fork\tgit@github.com:me/repo.git (fetch)\nfork\tgit@github.com:me/repo.git (push)\norigin\thttps://github.com/owner/repo.git (fetch)\norigin\thttps://github.com/owner/repo.git (push)\n", f.gitIn(f.project, "remote", "--verbose"))
 	assert.FileExists(t, filepath.Join(f.project, "README"))
+	assert.Equal(t, "committed\n", f.gitIn(f.project, "config", "core.fsync"), "a commit survives a VM that ends without flushing its disk")
 }
 
 func TestANewCloneRunsNoFilterOfTheGitConfigOfTheHome(t *testing.T) {

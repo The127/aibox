@@ -101,6 +101,13 @@ func (t *taskRun) prepareClone(mode string) error {
 		return fmt.Errorf("remove the remote of the input: %w", err)
 	}
 
+	// a VM ends without flushing its disk when aibox is killed, which
+	// would leave empty objects behind and a clone whose commits can't
+	// come back
+	if err := t.git(nil, "config", "core.fsync", "committed"); err != nil {
+		return fmt.Errorf("make git flush its commits: %w", err)
+	}
+
 	for _, remote := range clone.Remotes {
 		if err := t.git(nil, "remote", "add", "--", remote.Name, remote.URL); err != nil {
 			return fmt.Errorf("add the remote %s: %w", remote.Name, err)

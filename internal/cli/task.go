@@ -989,9 +989,11 @@ func gitBytes(dir, writable string, args ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	// git may repeat what the repository says, which the VM may have
+	// written, and the error ends up on the terminal
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, task.CleanLine(stderr.String()))
 	}
 
 	return out, nil

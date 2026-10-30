@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.0](https://github.com/The127/aibox/compare/v2.2.0...v2.3.0) (2026-10-29)
+
+
+### Features
+
+* work with Claude Code on a clone with aibox run --mode clone ([#218](https://github.com/The127/aibox/issues/218)) ([cd388f1](https://github.com/The127/aibox/commit/cd388f1f3ab85c06f4b2ab27c9ef69de8c8b92b7))
+
+
+### Bug Fixes
+
+* cap how much of a push the git broker reads ([#224](https://github.com/The127/aibox/issues/224)) ([88682b7](https://github.com/The127/aibox/commit/88682b7e21b1c5c3eaaecdbb27ec77269298fdb2))
+* clean what git prints before it goes into an aibox error ([#226](https://github.com/The127/aibox/issues/226)) ([553979c](https://github.com/The127/aibox/commit/553979cc82f25090d59d10e9d0eaaffabfbc5939))
+* keep the IDE filter from growing with what the VM sends ([#225](https://github.com/The127/aibox/issues/225)) ([2add565](https://github.com/The127/aibox/commit/2add56538399b3a51c49dae76dca0a90b42a6e30))
+* let a refused client read its 503 before the proxy closes ([#222](https://github.com/The127/aibox/issues/222)) ([df739e8](https://github.com/The127/aibox/commit/df739e8918ad5c8c45f29bb05fef14200f9bc374))
+* Scorecard quick fixes: x/net, x/text and the automerge token ([#221](https://github.com/The127/aibox/issues/221)) ([a36dcaa](https://github.com/The127/aibox/commit/a36dcaaef9d1b961c038db8fef22e69f61844b8c))
+
 ## [2.2.0](https://github.com/The127/aibox/compare/v2.1.1...v2.2.0) (2026-10-23)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/The127/aibox/compare/v2.3.0...v2.3.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* update Go to 1.27.4 for GO-2026-6859 ([#237](https://github.com/The127/aibox/issues/237)) ([70882ed](https://github.com/The127/aibox/commit/70882edb42e84d62172e75a9451f3812d1324523))
+
 ## [2.3.0](https://github.com/The127/aibox/compare/v2.2.0...v2.3.0) (2026-10-29)
 
 

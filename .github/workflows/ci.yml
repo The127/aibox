@@ -37,7 +37,7 @@ jobs:
       - run: pipx install "reuse[charset-normalizer]==6.2.0"
       # `just docs` builds the documentation site with mdbook and
       # mdbook-mermaid, which the devenv has locally
-      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: mdbook@0.5.4,mdbook-mermaid@0.17.1
       # tests that need vsock namespaces, Landlock network rules, KVM or the
